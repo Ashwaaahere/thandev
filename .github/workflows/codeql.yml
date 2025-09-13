@@ -6,24 +6,67 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '25 2 * * 4'
+    - cron: '0 6 * * 1'  # weekly Monday 06:00 UTC
+
+permissions:
+  contents: read
+  security-events: write
 
 jobs:
   analyze:
-    name: Analyze
+    name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
     strategy:
       fail-fast: false
       matrix:
-        language: [ 'python', 'javascript' ]
+        language: [ 'javascript-typescript', 'python' ]
+
     steps:
-    - uses: actions/checkout@v4
-    - uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-    - uses: github/codeql-action/autobuild@v3
-    - uses: github/codeql-action/analyze@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Install deps per language for better results (esp. JS/TS)
+      - name: Setup Node for JS/TS
+        if: matrix.language == 'javascript-typescript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend deps (if present)
+        if: matrix.language == 'javascript-typescript'
+        working-directory: frontend
+        run: |
+          if [ -f package.json ]; then
+            npm ci
+            npm run build --if-present
+          fi
+
+      - name: Setup Python for backend
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install backend deps (if requirements.txt present)
+        if: matrix.language == 'python'
+        working-directory: backend
+        run: |
+          if [ -f requirements.txt ]; then
+            pip install -U pip
+            pip install -r requirements.txt
+          fi
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # For JS monorepos, setting queries is optional. Keep defaults.
+
+      # For JS/TS, autobuild often works; for Python, there is nothing to build.
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
