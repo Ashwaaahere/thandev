@@ -1,4 +1,4 @@
-name: "CodeQL"
+name: CodeQL
 
 on:
   push:
@@ -6,24 +6,88 @@ on:
   pull_request:
     branches: [ "main" ]
   schedule:
-    - cron: '25 2 * * 4'
+    - cron: "0 6 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
 
 jobs:
-  analyze:
-    name: Analyze
+  codeql-js:
+    name: CodeQL (JS/TS)
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-    strategy:
-      fail-fast: false
-      matrix:
-        language: [ 'python', 'javascript' ]
     steps:
-    - uses: actions/checkout@v4
-    - uses: github/codeql-action/init@v3
-      with:
-        languages: ${{ matrix.language }}
-    - uses: github/codeql-action/autobuild@v3
-    - uses: github/codeql-action/analyze@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Not strictly required, but helps resolve imports
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/yarn.lock
+            frontend/pnpm-lock.yaml
+
+      - name: Install frontend deps (best-effort)
+        working-directory: frontend
+        run: |
+          if [ -f pnpm-lock.yaml ]; then corepack enable && pnpm install --frozen-lockfile || pnpm install; \
+          elif [ -f yarn.lock ]; then corepack enable && yarn install --frozen-lockfile || yarn install; \
+          elif [ -f package-lock.json ]; then npm ci; \
+          elif [ -f package.json ]; then npm install; \
+          else echo "No package.json in frontend/, skipping"; fi
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # optional: queries: security-extended,security-and-quality
+
+      # JS/TS does not need autobuild; skip it intentionally
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:javascript"
+
+  codeql-py:
+    name: CodeQL (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend deps (best-effort)
+        working-directory: backend
+        run: |
+          if [ -f requirements.txt ]; then
+            python -m pip install -U pip
+            pip install -r requirements.txt
+          else
+            echo "No requirements.txt in backend/, skipping"
+          fi
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python
+
+      # Python also doesn't need autobuild; skip it
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python"
