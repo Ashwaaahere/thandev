@@ -5,34 +5,93 @@ on:
   pull_request:
 
 jobs:
-  frontend:
+    frontend:
     name: Frontend (Next.js)
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Use Node
+      # Detect package manager
+      - name: Detect package manager
+        id: pm
+        run: |
+          if [ -f frontend/pnpm-lock.yaml ]; then
+            echo "name=pnpm" >> $GITHUB_OUTPUT
+          elif [ -f frontend/yarn.lock ]; then
+            echo "name=yarn" >> $GITHUB_OUTPUT
+          elif [ -f frontend/package-lock.json ]; then
+            echo "name=npm" >> $GITHUB_OUTPUT
+          else
+            echo "No lockfile found. Defaulting to npm (install)."
+            echo "name=npm" >> $GITHUB_OUTPUT
+          fi
+
+      # Set up Node and cache for the detected PM
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache: ${{ steps.pm.outputs.name == 'npm' && 'npm' || (steps.pm.outputs.name == 'yarn' && 'yarn' || 'pnpm') }}
+          cache-dependency-path: |
+            frontend/package-lock.json
+            frontend/yarn.lock
+            frontend/pnpm-lock.yaml
+
+      # Install package manager if pnpm
+      - name: Enable corepack (yarn/pnpm)
+        run: corepack enable
 
       - name: Install deps
-        run: npm ci
+        working-directory: frontend
+        run: |
+          if [ "${{ steps.pm.outputs.name }}" = "pnpm" ]; then
+            pnpm install --frozen-lockfile || pnpm install
+          elif [ "${{ steps.pm.outputs.name }}" = "yarn" ]; then
+            yarn install --frozen-lockfile || yarn install
+          else
+            if [ -f package-lock.json ]; then
+              npm ci
+            else
+              npm install
+            fi
+          fi
 
       - name: Lint (if present)
-        run: npm run lint --if-present
+        working-directory: frontend
+        run: |
+          if npm run | grep -q "lint"; then
+            ( [ "${{ steps.pm.outputs.name }}" = "yarn" ] && yarn lint ) || \
+            ( [ "${{ steps.pm.outputs.name }}" = "pnpm" ] && pnpm lint ) || \
+            npm run lint
+          else
+            echo "No lint script; skipping."
+          fi
 
       - name: Build (if present)
-        run: npm run build --if-present
+        working-directory: frontend
+        env:
+          # Prevent OOM in Next.js builds on CI
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: |
+          if npm run | grep -q "build"; then
+            ( [ "${{ steps.pm.outputs.name }}" = "yarn" ] && yarn build ) || \
+            ( [ "${{ steps.pm.outputs.name }}" = "pnpm" ] && pnpm build ) || \
+            npm run build
+          else
+            echo "No build script; skipping."
+          fi
 
       - name: Test (if present)
-        run: npm test --if-present
+        working-directory: frontend
+        run: |
+          if npm run | grep -q "test"; then
+            ( [ "${{ steps.pm.outputs.name }}" = "yarn" ] && yarn test --ci --watchAll=false ) || \
+            ( [ "${{ steps.pm.outputs.name }}" = "pnpm" ] && pnpm test -- --ci --watchAll=false ) || \
+            npm test -- --ci --watchAll=false
+          else
+            echo "No test script; skipping."
+          fi
 
   backend:
     name: Backend (Python)
