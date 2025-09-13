@@ -1,21 +1,340 @@
-export default async function Home() {
-  const api = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000";
-  const res = await fetch(`${api}/news?q=&limit=10`, { cache: "no-store" }).catch(() => null);
-  let items: any[] = [];
-  if (res && res.ok) items = await res.json();
+"use client";
+import { useEffect, useRef } from "react";
+import type { ReactNode, MouseEventHandler } from "react";
+import Link from "next/link";
+import { motion } from "framer-motion";
 
+/**
+ * Decorative animated background orbs (pure client-side, no Tailwind config needed)
+ */
+function Orbs() {
+  const orbs = [
+    { className: "bg-cyan-500/25", size: 280, x: -180, y: -60, delay: 0 },
+    { className: "bg-indigo-500/20", size: 360, x: 120, y: -100, delay: 0.4 },
+    { className: "bg-emerald-400/20", size: 220, x: 220, y: 120, delay: 0.8 },
+  ];
   return (
-    <main style={{ padding: 24 }}>
-      <h1>Thandev Feed</h1>
-      <p>Realtime security items (CVE/KEV/PoCs). This is a placeholder UI.</p>
-      <ul>
-        {items.map((i) => (
-          <li key={i.id}>
-            <strong>{i.title}</strong>
-            {i.is_kev ? " 🔔 KEV" : ""} {i.has_exploit ? " 💣 Exploit" : ""}
-          </li>
-        ))}
-      </ul>
+    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
+      {orbs.map((o, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 1.2, delay: o.delay }}
+          className={`absolute blur-3xl ${o.className} rounded-full`}
+          style={{ width: o.size, height: o.size, left: `calc(50% + ${o.x}px)`, top: `calc(30% + ${o.y}px)` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Soft spotlight under the hero headline
+ */
+function Spotlight() {
+  return (
+    <div aria-hidden className="absolute -top-32 left-1/2 -translate-x-1/2 h-[480px] w-[840px] rounded-full opacity-30 blur-3xl"
+      style={{
+        background: "radial-gradient(50% 50% at 50% 50%, rgba(99,102,241,0.35) 0%, rgba(15,23,42,0) 70%)",
+      }}
+    />
+  );
+}
+
+/**
+ * Simple, safe in-page anchor link with smooth scroll & history guards
+ */
+function AnchorLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
+  const onClick: MouseEventHandler<HTMLAnchorElement> = (e) => {
+    if (!href || !href.startsWith("#")) return;
+    if (typeof document === "undefined") return;
+    const id = href.slice(1);
+    let el: HTMLElement | null = null;
+    try { el = document.getElementById(id); } catch { el = null; }
+    if (el && typeof (el as any).scrollIntoView === "function") {
+      e.preventDefault();
+      try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+      if (typeof window !== "undefined" && typeof window.history?.replaceState === "function") {
+        try { window.history.replaceState(null, "", href); } catch {}
+      }
+    }
+  };
+  return <a href={href} onClick={onClick} className={className}>{children}</a>;
+}
+
+/**
+ * Developer-only diagnostics to ensure anchor IDs exist
+ */
+function Diagnostics() {
+  useEffect(() => {
+    const required = ["product","features","developers","pricing","faq","signup","demo"];
+    const missing = required.filter((id) => !document.getElementById(id));
+    const holder = document.getElementById("dev-tests");
+    if (holder) holder.setAttribute("data-tests", JSON.stringify({ missing }));
+    // eslint-disable-next-line no-console
+    console.debug("[Thandev Diagnostics]", { missing });
+  }, []);
+  return <div id="dev-tests" data-tests="{}" className="hidden"/>;
+}
+
+/**
+ * Animated horizontal ticker for the hero (fake content for now)
+ */
+function NewsTicker() {
+  const items = [
+    "CVE-2025-1234 RCE in ExampleCMS", "KEV: VendorX auth bypass actively exploited", "PoC released for CVE-2025-2222",
+    "Zero-day in WidgetOS mitigated", "High EPSS spike for CVE-2025-0420",
+  ];
+  const row = (
+    <div className="flex shrink-0 items-center gap-6 pr-6">
+      {items.map((t, i) => (
+        <span key={i} className="whitespace-nowrap text-xs text-slate-300/80">
+          <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400"/>{t}
+        </span>
+      ))}
+    </div>
+  );
+  return (
+    <div aria-label="Live ticker" className="relative mt-8 overflow-hidden rounded-xl border border-white/10 bg-white/5">
+      <motion.div
+        className="flex"
+        animate={{ x: [0, -800] }}
+        transition={{ duration: 18, ease: "linear", repeat: Infinity }}
+      >
+        {row}
+        {row}
+        {row}
+      </motion.div>
+    </div>
+  );
+}
+
+/**
+ * Subtle parallax wrapper for the hero right card
+ */
+function ParallaxCard({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ y: 16, opacity: 0 }}
+      whileInView={{ y: 0, opacity: 1 }}
+      viewport={{ once: true, amount: 0.4 }}
+      transition={{ duration: 0.7, ease: "easeOut" }}
+      whileHover={{ y: -4 }}
+      className="relative"
+    >
+      {children}
+    </motion.div>
+  );
+}
+
+export default function ThandevLanding() {
+  return (
+    <main className="min-h-screen bg-slate-950 text-slate-100 scroll-smooth">
+      <Diagnostics />
+
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/70 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
+            <span className="text-lg font-semibold tracking-tight">Thandev</span>
+          </motion.div>
+          <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
+            {[
+              { href: "#product", label: "Product" },
+              { href: "#features", label: "Features" },
+              { href: "#developers", label: "Developers" },
+              { href: "#pricing", label: "Pricing" },
+              { href: "#faq", label: "FAQ" },
+            ].map((item, i) => (
+              <motion.div key={item.href} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }}>
+                <AnchorLink href={item.href} className="hover:text-white">{item.label}</AnchorLink>
+              </motion.div>
+            ))}
+          </nav>
+          <div className="flex items-center gap-3">
+            <AnchorLink href="#signup" className="rounded-xl px-3 py-2 text-sm text-slate-300 hover:text-white">Sign in</AnchorLink>
+            <AnchorLink href="#signup" className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200">Get started</AnchorLink>
+          </div>
+        </div>
+      </header>
+
+      {/* HERO */}
+      <section id="product" className="relative overflow-hidden">
+        <Spotlight />
+        <Orbs />
+        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-6 py-20 md:grid-cols-2 md:py-28">
+          <div>
+            <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
+              See cyberspace in real time.<br/>Scan early. Ship safe.
+            </motion.h1>
+            <motion.p initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.05 }} className="mt-4 max-w-xl text-slate-300">
+              Thandev is a developer‑first security space: watch live cyber news (CVE, KEV, PoCs), run instant web scans, and scan work‑in‑progress builds to fix exploits before release.
+            </motion.p>
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }} className="mt-6 flex flex-wrap gap-3">
+              <AnchorLink href="#signup" className="rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 px-5 py-3 font-semibold text-slate-900 hover:opacity-90">Start free</AnchorLink>
+              <AnchorLink href="#demo" className="rounded-2xl border border-white/10 px-5 py-3 font-semibold text-white hover:bg-white/5">View demo</AnchorLink>
+            </motion.div>
+            <NewsTicker />
+          </div>
+
+          <ParallaxCard>
+            <div className="relative rounded-3xl border border-white/10 bg-slate-900 p-5 shadow-2xl">
+              <div className="font-semibold">Quick Start</div>
+              <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-white/15 to-transparent" />
+              <pre className="mt-4 overflow-x-auto rounded-xl bg-black/50 p-4 text-[12.5px] leading-relaxed text-slate-200">
+{`# Browse live news feed
+${process.env.NEXT_PUBLIC_API_BASE ?? "https://api.thandev.dev"}/news
+
+# Run a site scan in browser
+Go to Dashboard → New Scan → Enter URL
+
+# Scan development build in browser
+Go to Dashboard → Upload Build → Start Scan`}
+              </pre>
+              <div className="mt-4 flex items-center gap-3 text-xs text-slate-300">
+                <span className="rounded bg-emerald-400/10 px-2 py-0.5 text-emerald-300">MVP online</span>
+                <span className="rounded bg-indigo-400/10 px-2 py-0.5 text-indigo-300">LLM soon</span>
+              </div>
+            </div>
+          </ParallaxCard>
+        </div>
+      </section>
+
+      {/* FEATURES */}
+      <section id="features" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
+        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Everything in one security space</h2>
+        <div className="mt-10 grid gap-6 md:grid-cols-3">
+          {[
+            {
+              title: "Live Cyber News Feed",
+              body: "Real‑time CVE, KEV, vendor advisories, PoCs — all in one feed. Filter by product, severity, exploit activity, and tags.",
+            },
+            {
+              title: "Instant Site & App Scans",
+              body: "Kick off Nuclei/ZAP scans right from the dashboard. Results link to known CVEs and live exploit intel so you prioritize real risk.",
+            },
+            {
+              title: "Scan During Development (Shift‑Left)",
+              body: "Scan local builds and preview deployments directly in the browser to catch exploitable issues before they hit production.",
+            },
+          ].map((card, i) => (
+            <motion.div
+              key={card.title}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.2 }}
+              transition={{ duration: 0.6, delay: i * 0.05 }}
+              whileHover={{ y: -4 }}
+              className="rounded-2xl border border-white/10 bg-white/5 p-6"
+            >
+              <div className="text-sm text-slate-400">{`0${i + 1}`}</div>
+              <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
+              <p className="mt-2 text-sm text-slate-300">{card.body}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* DEVELOPERS / SECURITY TEAMS */}
+      <section id="developers" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
+        <div className="grid gap-8 md:grid-cols-2">
+          {[
+            {
+              title: "Simple Web Dashboard",
+              body: "Manage scans, view results, and track issues all in a clean web UI — no CLI needed.",
+            },
+            {
+              title: "Real Risk, Not Noise",
+              body: "Cross‑link findings with KEV and exploit activity. Prioritize what’s actually dangerous, not just high‑CVSS.",
+            },
+          ].map((card, i) => (
+            <motion.div
+              key={card.title}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.2 }}
+              transition={{ duration: 0.6, delay: i * 0.05 }}
+              whileHover={{ y: -4 }}
+              className="rounded-2xl border border-white/10 bg-white/5 p-6"
+            >
+              <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
+              <p className="mt-2 text-sm text-slate-300">{card.body}</p>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* PRICING */}
+      <section id="pricing" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
+        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Simple pricing</h2>
+        <div className="mt-8 grid gap-6 md:grid-cols-3">
+          {[
+            { name: "Free", price: "$0", features: ["Live feed", "Manual scans", "Community"], cta: "Start free" },
+            { name: "Personal", price: "$9/mo", features: ["Scheduled scans", "Saved filters", "Email alerts"], cta: "Upgrade" },
+            { name: "Team", price: "$49/mo", features: ["API access", "Slack alerts", "SAML/SSO"], cta: "Contact sales" }
+          ].map((p, i) => (
+            <motion.div key={i} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.6, delay: i * 0.05 }} whileHover={{ y: -4 }} className="rounded-2xl border border-white/10 p-6 bg-white/5">
+              <div className="text-sm text-slate-300">{p.name}</div>
+              <div className="mt-2 text-3xl font-semibold">{p.price}</div>
+              <ul className="mt-4 space-y-2 text-sm text-slate-300">
+                {p.features.map((f, j) => (
+                  <li key={j}>{f}</li>
+                ))}
+              </ul>
+              <AnchorLink href="#signup" className="mt-6 inline-block rounded-xl bg-white px-4 py-2 font-semibold text-slate-900 hover:bg-slate-200">{p.cta}</AnchorLink>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section id="faq" className="mx-auto max-w-5xl px-6 py-16 md:py-24">
+        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">FAQ</h2>
+        <div className="mt-6 space-y-4">
+          {[
+            { q: "Is Thandev open‑source?", a: "The feed and scanner connectors aim to be OSS‑friendly; enterprise features are paid." },
+            { q: "How is this different from a news aggregator?", a: "We enrich with EPSS/KEV/PoC signals and link directly to your scans." },
+            { q: "When is the AI assistant coming?", a: "Soon. We’re adding pgvector & RAG for remediation chat and semantic search." },
+          ].map((f, i) => (
+            <motion.div key={i} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.6, delay: i * 0.05 }} className="rounded-2xl border border-white/10 bg-white/5 p-5">
+              <div className="font-medium">{f.q}</div>
+              <div className="mt-1 text-sm text-slate-300">{f.a}</div>
+            </motion.div>
+          ))}
+        </div>
+      </section>
+
+      {/* SIGNUP */}
+      <section id="signup" className="mx-auto max-w-3xl px-6 pb-20">
+        <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.6 }} className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+          <h3 className="text-xl font-semibold">Ready to see your attack surface?</h3>
+          <p className="mt-2 text-sm text-slate-300">Create an account to stream the live feed, run your first scan, and set up dev‑time checks.</p>
+          <div className="mt-4 flex justify-center gap-3">
+            <Link href="/signup" className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-900 hover:bg-slate-200">Create account</Link>
+            <Link href="/docs" className="rounded-xl border border-white/10 px-4 py-2 font-semibold hover:bg-white/5">Read docs</Link>
+          </div>
+        </motion.div>
+      </section>
+
+      {/* FOOTER */}
+      <footer className="border-t border-white/10">
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-10 text-sm text-slate-400 md:flex-row">
+          <div className="flex items-center gap-2">
+            <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
+            <span>© {new Date().getFullYear()} Thandev</span>
+          </div>
+          <div className="flex items-center gap-6">
+            <a href="#" className="hover:text-slate-200">Privacy</a>
+            <a href="#" className="hover:text-slate-200">Security</a>
+            <a href="#" className="hover:text-slate-200">Docs</a>
+            <a href="#" className="hover:text-slate-200">GitHub</a>
+          </div>
+        </div>
+      </footer>
     </main>
   );
 }
