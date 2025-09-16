@@ -1,1 +1,1 @@
-self.__REACT_LOADABLE_MANIFEST="{}"
+self.__REACT_LOADABLE_MANIFEST="{\"app\\\\page.tsx -> @/components/BreakingNews\":{\"id\":\"app\\\\page.tsx -> @/components/BreakingNews\",\"files\":[\"static/chunks/_app-pages-browser_components_BreakingNews_tsx.js\"]}}"
