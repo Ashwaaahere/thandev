@@ -135,33 +135,6 @@ export default function ThandevLanding() {
     <main className="min-h-screen bg-slate-950 text-slate-100 scroll-smooth">
       <Diagnostics />
 
-      {/* NAVBAR */}
-      <header className="sticky top-0 z-50 border-b border-white/10 bg-slate-950/70 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="flex items-center gap-2">
-            <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
-            <span className="text-lg font-semibold tracking-tight">Thandev</span>
-          </motion.div>
-          <nav className="hidden items-center gap-6 text-sm text-slate-300 md:flex">
-            {[
-              { href: "#product", label: "Product" },
-              { href: "#features", label: "Features" },
-              { href: "#developers", label: "Developers" },
-              { href: "#pricing", label: "Pricing" },
-              { href: "#faq", label: "FAQ" },
-            ].map((item, i) => (
-              <motion.div key={item.href} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * i }}>
-                <AnchorLink href={item.href} className="hover:text-white">{item.label}</AnchorLink>
-              </motion.div>
-            ))}
-          </nav>
-          <div className="flex items-center gap-3">
-            <AnchorLink href="#signup" className="rounded-xl px-3 py-2 text-sm text-slate-300 hover:text-white">Sign in</AnchorLink>
-            <AnchorLink href="#signup" className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200">Get started</AnchorLink>
-          </div>
-        </div>
-      </header>
-
       {/* HERO */}
       <section id="product" className="relative overflow-hidden">
         <Spotlight />

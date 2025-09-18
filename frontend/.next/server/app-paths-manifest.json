@@ -1,5 +1,8 @@
 {
   "/page": "app/page.js",
   "/news/page": "app/news/page.js",
-  "/api/news/route": "app/api/news/route.js"
+  "/news/a/[id]/page": "app/news/a/[id]/page.js",
+  "/_not-found/page": "app/_not-found/page.js",
+  "/api/news/route": "app/api/news/route.js",
+  "/api/article/route": "app/api/article/route.js"
 }
