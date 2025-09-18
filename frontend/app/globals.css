@@ -1,4 +1,203 @@
 @import "tailwindcss";
 
-html { scroll-behavior: smooth; }
-body { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+/* -------- Theme tokens -------- */
+:root {
+  /* Light (cream) */
+  --bg: #fffaf0;              /* page background */
+  --fg: #0f172a;              /* main text */
+  --muted: #475569;           /* subtext */
+  --brand: #3b82f6;           /* buttons/links */
+  --brand-600: #2563eb;
+  --brand-700: #1d4ed8;
+
+  /* Surfaces */
+  --surface: #ffffff;         /* cards, panels */
+  --surface-2: #fff7e6;       /* soft cream panel alt */
+  --border: rgba(15,23,42,.10);
+  --hairline: rgba(15,23,42,.08);
+
+  /* Shadows */
+  --shadow-1: 0 1px 2px rgba(0,0,0,.06), 0 6px 18px rgba(0,0,0,.06);
+  --shadow-2: 0 8px 24px rgba(15,23,42,.08), 0 2px 8px rgba(15,23,42,.06);
+
+  /* Hero “aurora” */
+  --hero-glow: radial-gradient(50% 65% at 50% 35%,
+    rgba(56,189,248,.45) 0%,
+    rgba(99,102,241,.40) 35%,
+    rgba(255,255,255,0) 70%);
+    --orb-cyan: rgba(34,211,238,.38);
+    --orb-indigo: rgba(99,102,241,.36);
+    --orb-emerald: rgba(52,211,153,.32);
+
+  /* Accents */
+  --accent-cream: linear-gradient(180deg,#fffdf7 0%,#fff7e6 100%);
+  --ring: rgba(37,99,235,.4);
+
+  /* Selection */
+  --selection-bg: #fde68a;    /* amber-200 */
+  --selection-fg: #111827;
+}
+
+.dark {
+  /* Dark */
+  --bg: #0b1220;
+  --fg: #e5e7eb;
+  --muted: #94a3b8;
+  --brand: #7dd3fc;
+  --brand-600: #22d3ee;
+  --brand-700: #06b6d4;
+
+  --surface: rgba(255,255,255,.06);
+  --surface-2: rgba(255,255,255,.08);
+  --border: rgba(255,255,255,.10);
+  --hairline: rgba(255,255,255,.08);
+
+  --shadow-1: 0 1px 2px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.28);
+  --shadow-2: 0 14px 36px rgba(0,0,0,.35), 0 4px 10px rgba(0,0,0,.25);
+
+  --hero-glow: radial-gradient(50% 60% at 50% 35%,
+    rgba(56,189,248,.25) 0%,
+    rgba(99,102,241,.25) 35%,
+    rgba(255,255,255,0) 70%);
+  --orb-cyan: rgba(34,211,238,.20);
+  --orb-indigo: rgba(99,102,241,.18);
+  --orb-emerald: rgba(52,211,153,.18);
+
+  --ring: rgba(125,211,252,.45);
+  --selection-bg: #1f2937;
+  --selection-fg: #e5e7eb;
+}
+
+/* Base */
+html { transition: background-color .3s, color .3s; }
+body { background: var(--bg); color: var(--fg); }
+::selection { background: var(--selection-bg); color: var(--selection-fg); }
+
+/* Surfaces & borders */
+.card        { background: var(--surface); border: 1px solid var(--border); border-radius: 1rem; }
+.card-alt    { background: var(--surface-2); border: 1px solid var(--border); border-radius: 1rem; }
+.card-border { border-color: var(--border); }
+.hairline    { border-color: var(--hairline); }
+
+/* Shadows */
+.shadow-soft { box-shadow: var(--shadow-1); }
+.shadow-deep { box-shadow: var(--shadow-2); }
+
+/* Buttons / links */
+.btn-brand {
+  background: var(--brand);
+  color: white;
+  border-radius: 0.75rem;
+  padding: .625rem 1rem;
+  font-weight: 600;
+  transition: filter .2s, transform .2s, box-shadow .2s;
+  box-shadow: 0 6px 16px rgba(37,99,235,.20);
+}
+.btn-brand:hover { filter: brightness(1.05); transform: translateY(-1px); }
+.btn-ghost {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  padding: .625rem 1rem;
+  font-weight: 600;
+}
+a { color: var(--brand); }
+a:hover { color: var(--brand-700); }
+
+/* Fancy separators */
+.section-sep {
+  height: 1px;
+  background: linear-gradient(90deg,rgba(0,0,0,0), var(--hairline), rgba(0,0,0,0));
+}
+
+/* Nice focus ring */
+:where(button,a,input,select,textarea):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--ring);
+  border-radius: .75rem;
+}
+
+/* Gentle hover lift (CSS only, no libs) */
+.hoverlift {
+  will-change: transform, box-shadow, filter;
+  transform: translateZ(0);
+  transition: transform .22s cubic-bezier(.22,.68,0,1.01), box-shadow .22s, filter .22s, background-color .22s, border-color .22s;
+}
+.hoverlift:hover { transform: translateY(-4px); filter: saturate(1.02); }
+
+/* Hero “glass” panel */
+.hero-surface {
+  border: 1px solid var(--border);
+  border-radius: 1.5rem;
+  backdrop-filter: saturate(180%) blur(16px);
+  background: color-mix(in oklab, var(--bg) 65%, white 35%);
+  /* fallback for browsers without color-mix */
+  background: rgba(255, 255, 255, 0.65);
+  box-shadow: 0 8px 28px rgba(0,0,0,.08), inset 0 0 0 1px rgba(255,255,255,.12);
+}
+.dark .hero-surface {
+  background: rgba(255, 255, 255, 0.06);
+}
+.light .hero-surface pre {
+  background: color-mix(in oklab, white 45%, transparent);
+  
+}
+/* Force readable code text inside the Quick Start card in LIGHT mode */
+.light .hero-surface pre,
+.light .hero-surface pre * {
+  color: #334155 !important;   /* slate-700 */
+  opacity: 1 !important;       /* kill any inherited opacity */
+}
+
+
+/* nicer mono for the code block */
+@font-face {
+  font-family: ui-mono;
+  src: local("ui-monospace"), local("SFMono-Regular"), local("Menlo"),
+       local("Monaco"), local("Consolas"), local("Liberation Mono"), local("Courier New");
+  font-display: swap;
+}
+.font-code { font-family: ui-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+
+/* slightly softer inner lighting on frosted blocks */
+.hero-surface .shadow-soft { box-shadow: var(--shadow-1), inset 0 0 0 1px rgba(255,255,255,.10); }
+.hero-surface .shadow-deep { box-shadow: var(--shadow-2), inset 0 0 0 1px rgba(255,255,255,.10); }
+
+/* --- Live dot --- */
+.live-dot{
+  width: 10px; height: 10px; border-radius: 9999px;
+  background: #ef4444; /* red-500 */
+  box-shadow: 0 0 0 0 rgba(239,68,68,.7);
+  animation: live-pulse 1.6s ease-out infinite;
+}
+@keyframes live-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(239,68,68,.7) }
+  70%  { box-shadow: 0 0 0 8px rgba(239,68,68,0) }
+  100% { box-shadow: 0 0 0 0 rgba(239,68,68,0) }
+}
+
+/* --- Timeline spine + items --- */
+.timeline::before{
+  content:""; position:absolute; left:0; top:4px; bottom:4px;
+  width:2px; background: var(--hairline);
+}
+.timeline-item{
+  position: relative;
+  display: flex;
+  gap: .75rem;
+  padding-left: 1rem; /* space for spine + pin */
+  padding-bottom: .9rem;
+}
+.timeline-item:last-child{ padding-bottom: 0; }
+
+.timeline-pin{
+  position: absolute; left:-5px; top:4px;
+  width:10px; height:10px; border-radius:9999px;
+  background: #f59e0b; /* amber-500 */
+  border: 2px solid color-mix(in oklab, var(--bg) 75%, white 25%);
+  box-shadow: 0 0 0 2px var(--surface);
+}
+.dark .timeline-pin{
+  border-color: color-mix(in oklab, var(--bg) 82%, white 18%);
+}

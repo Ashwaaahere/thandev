@@ -2,10 +2,11 @@
 
 export default function Footer() {
   return (
-    <footer className="border-t border-white/10 bg-slate-950 text-slate-300">
-      <div className="mx-auto max-w-7xl px-6 py-8">
+    <footer className="border-t card-border"
+        style={{ background: 'color-mix(in oklab, var(--bg) 92%, white 8%)' }}>
+      <div className="mx-auto max-w-7xl px-6 py-10 text-sm text-[var(--muted)]">
         <div className="flex flex-col items-center justify-between gap-4 md:flex-row">
-          <div className="flex items-center gap-2 text-slate-400">
+          <div className="flex items-center gap-2 ">
             <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
             <span>© {new Date().getFullYear()} Thandev</span>
           </div>

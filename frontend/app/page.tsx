@@ -5,6 +5,8 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
 const BreakingNews = dynamic(() => import("@/components/BreakingNews"), { ssr: false });
+import HeroAurora from '@/components/HeroAurora';
+import AnimatedCard from '@/components/AnimatedCard';
 
 
 
@@ -136,50 +138,78 @@ function ParallaxCard({ children }: { children: ReactNode }) {
 
 export default function ThandevLanding() {
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 scroll-smooth">
+    <main className="min-h-screen scroll-smooth">
+    
       <Diagnostics />
 
       {/* HERO */}
-      <section id="product" className="relative overflow-hidden">
-        <Spotlight />
-        <Orbs />
-        <div className="mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-6 py-20 md:grid-cols-2 md:py-28">
-          <div>
-            <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }} className="text-4xl font-semibold leading-tight tracking-tight md:text-6xl">
-              See cyberspace in real time.<br/>Scan early. Ship safe.
-            </motion.h1>
-            <motion.p initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.05 }} className="mt-4 max-w-xl text-slate-300">
-              Thandev is a developer‑first security space: watch live cyber news (CVE, KEV, PoCs), run instant web scans, and scan work‑in‑progress builds to fix exploits before release.
-            </motion.p>
-            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }} className="mt-6 flex flex-wrap gap-3">
-              <AnchorLink href="#signup" className="rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 px-5 py-3 font-semibold text-slate-900 hover:opacity-90">Start free</AnchorLink>
-              <AnchorLink href="#demo" className="rounded-2xl border border-white/10 px-5 py-3 font-semibold text-white hover:bg-white/5">View demo</AnchorLink>
-            </motion.div>
-            <NewsTicker />
+        <section id="product" className="relative overflow-hidden">
+          {/* background glow & blobs */}
+          <div className="absolute inset-0 z-0">
+            <HeroAurora />
           </div>
 
-          <ParallaxCard>
-            <div className="relative rounded-3xl border border-white/10 bg-slate-900 p-5 shadow-2xl">
-              <div className="font-semibold">Quick Start</div>
-              <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-white/15 to-transparent" />
-              <pre className="mt-4 overflow-x-auto rounded-xl bg-black/50 p-4 text-[12.5px] leading-relaxed text-slate-200">
-{`# Browse live news feed
-${process.env.NEXT_PUBLIC_API_BASE ?? "https://api.thandev.dev"}/news
-
-# Run a site scan in browser
-Go to Dashboard → New Scan → Enter URL
-
-# Scan development build in browser
-Go to Dashboard → Upload Build → Start Scan`}
-              </pre>
-              <div className="mt-4 flex items-center gap-3 text-xs text-slate-300">
-                <span className="rounded bg-emerald-400/10 px-2 py-0.5 text-emerald-300">MVP online</span>
-                <span className="rounded bg-indigo-400/10 px-2 py-0.5 text-indigo-300">LLM soon</span>
+          <div className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-6 py-20 md:grid-cols-2 md:py-28">
+            <div>
+              <h1 className="text-4xl md:text-6xl font-semibold tracking-tight">See cyberspace in real time.<br/>Scan early. Ship safe.</h1>
+              <p className="mt-4 max-w-xl text-[var(--muted)]">
+                Thandev is a developer-first security space: live feed, instant scans, and dev-time checks.
+              </p>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <a href="#signup" className="btn-brand">Start free</a>
+                <a href="#demo" className="btn-ghost">View demo</a>
               </div>
             </div>
-          </ParallaxCard>
-        </div>
-      </section>
+
+            <div className="hero-surface p-5 shadow-deep">
+              <AnimatedCard className="hero-surface p-5 shadow-deep">
+  <div className="flex items-center justify-between">
+    <h3 className="text-lg font-semibold">Quick Start</h3>
+    {/* subtle toolbar pills */}
+    <div className="hidden sm:flex items-center gap-1.5">
+      <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+      <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+    </div>
+  </div>
+
+  <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
+
+  {/* Frosted code block with toolbar */}
+  <figure className="mt-4 overflow-hidden rounded-2xl border card-border shadow-soft">
+    <div className="flex items-center justify-between px-3 py-2 backdrop-blur-md bg-white/45 dark:bg-slate-900/30">
+      <div className="text-xs font-mono text-[var(--muted)]">Thandev • guide</div>
+      
+    </div>
+
+   <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5
+             backdrop-blur-md
+             dark:text-slate-100 dark:bg-slate-900/35">
+      {`# Browse live news feed
+    ${process.env.NEXT_PUBLIC_API_BASE ?? "https://api.thandev.dev"}/news
+
+    # Run a site scan in browser
+    Dashboard → New Scan → Enter URL
+
+    # Scan development build in browser
+    Dashboard → Upload Build → Start Scan`}
+    </pre>
+
+  </figure>
+
+  <div className="mt-4 flex items-center gap-3 text-xs text-[var(--muted)]">
+    <span className="rounded-full px-2.5 py-1 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300 border border-emerald-400/20">MVP online</span>
+    <span className="rounded-full px-2.5 py-1 bg-indigo-400/10 text-indigo-700 dark:text-indigo-300 border border-indigo-400/20">LLM soon</span>
+  </div>
+              </AnimatedCard>
+
+            </div>
+          </div>
+
+          <div className="section-sep mx-auto mt-6 w-[90%]" />
+        </section>
+
+
 
       {/* BREAKING NEWS (compact) */}
       <section id="breaking" className="mx-auto max-w-7xl px-6 py-10">
@@ -189,6 +219,7 @@ Go to Dashboard → Upload Build → Start Scan`}
 
       {/* FEATURES */}
       <section id="features" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
+        
         <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Everything in one security space</h2>
         <div className="mt-10 grid gap-6 md:grid-cols-3">
           {[
@@ -212,12 +243,14 @@ Go to Dashboard → Upload Build → Start Scan`}
               viewport={{ once: true, amount: 0.2 }}
               transition={{ duration: 0.6, delay: i * 0.05 }}
               whileHover={{ y: -4 }}
-              className="rounded-2xl border border-white/10 bg-white/5 p-6"
+              className="mt-4 space-y-2 text-sm muted"
+
             >
-              <div className="text-sm text-slate-400">{`0${i + 1}`}</div>
+              <div className="text-sm muted">{`0${i + 1}`}</div>
               <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
-              <p className="mt-2 text-sm text-slate-300">{card.body}</p>
+              <p className="mt-2 text-sm muted">{card.body}</p>
             </motion.div>
+
           ))}
         </div>
       </section>
@@ -244,10 +277,10 @@ Go to Dashboard → Upload Build → Start Scan`}
               viewport={{ once: true, amount: 0.2 }}
               transition={{ duration: 0.6, delay: i * 0.05 }}
               whileHover={{ y: -4 }}
-              className="rounded-2xl border border-white/10 bg-white/5 p-6"
+              className="card p-6 shadow-sm transition-colors"
             >
               <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
-              <p className="mt-2 text-sm text-slate-300">{card.body}</p>
+              <p className="mt-2 text-sm ">{card.body}</p>
             </motion.div>
           ))}
         </div>
@@ -263,9 +296,9 @@ Go to Dashboard → Upload Build → Start Scan`}
             { name: "Team", price: "$49/mo", features: ["API access", "Slack alerts", "SAML/SSO"], cta: "Contact sales" }
           ].map((p, i) => (
             <motion.div key={i} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.6, delay: i * 0.05 }} whileHover={{ y: -4 }} className="rounded-2xl border border-white/10 p-6 bg-white/5">
-              <div className="text-sm text-slate-300">{p.name}</div>
+              <div className="text-sm ">{p.name}</div>
               <div className="mt-2 text-3xl font-semibold">{p.price}</div>
-              <ul className="mt-4 space-y-2 text-sm text-slate-300">
+              <ul className="mt-4 space-y-2 text-sm ">
                 {p.features.map((f, j) => (
                   <li key={j}>{f}</li>
                 ))}
@@ -281,17 +314,26 @@ Go to Dashboard → Upload Build → Start Scan`}
         <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">FAQ</h2>
         <div className="mt-6 space-y-4">
           {[
-            { q: "Is Thandev open‑source?", a: "The feed and scanner connectors aim to be OSS‑friendly; enterprise features are paid." },
-            { q: "How is this different from a news aggregator?", a: "We enrich with EPSS/KEV/PoC signals and link directly to your scans." },
-            { q: "When is the AI assistant coming?", a: "Soon. We’re adding pgvector & RAG for remediation chat and semantic search." },
+            { q: 'Is Thandev open-source?', a: 'The feed and scanner connectors aim to be OSS-friendly; enterprise features are paid.' },
+            { q: 'How is this different from a news aggregator?', a: 'We enrich with EPSS/KEV/PoC signals and link directly to your scans.' },
+            { q: 'When is the AI assistant coming?', a: 'Soon. We’re adding pgvector & RAG for remediation chat and semantic search.' },
           ].map((f, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.6, delay: i * 0.05 }} className="rounded-2xl border border-white/10 bg-white/5 p-5">
+            <motion.div
+              key={i}
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.2 }}
+              transition={{ duration: 0.6, delay: i * 0.05 }}
+              className="card p-5 transition-colors shadow-sm"
+            >
               <div className="font-medium">{f.q}</div>
-              <div className="mt-1 text-sm text-slate-300">{f.a}</div>
+              <div className="mt-1 text-sm muted">{f.a}</div>
             </motion.div>
           ))}
         </div>
       </section>
+
+
 
       {/* SIGNUP */}
       <section id="signup" className="mx-auto max-w-3xl px-6 pb-20">
@@ -305,21 +347,7 @@ Go to Dashboard → Upload Build → Start Scan`}
         </motion.div>
       </section>
 
-      {/* FOOTER */}
-      <footer className="border-t border-white/10">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-4 px-6 py-10 text-sm text-slate-400 md:flex-row">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
-            <span>© {new Date().getFullYear()} Thandev</span>
-          </div>
-          <div className="flex items-center gap-6">
-            <a href="#" className="hover:text-slate-200">Privacy</a>
-            <a href="#" className="hover:text-slate-200">Security</a>
-            <a href="#" className="hover:text-slate-200">Docs</a>
-            <a href="#" className="hover:text-slate-200">GitHub</a>
-          </div>
-        </div>
-      </footer>
+      
     </main>
   );
 }
