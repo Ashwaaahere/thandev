@@ -3,6 +3,10 @@ import { useEffect, useRef } from "react";
 import type { ReactNode, MouseEventHandler } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import dynamic from "next/dynamic";
+const BreakingNews = dynamic(() => import("@/components/BreakingNews"), { ssr: false });
+
+
 
 /**
  * Decorative animated background orbs (pure client-side, no Tailwind config needed)
@@ -177,6 +181,12 @@ Go to Dashboard → Upload Build → Start Scan`}
         </div>
       </section>
 
+      {/* BREAKING NEWS (compact) */}
+      <section id="breaking" className="mx-auto max-w-7xl px-6 py-10">
+        <BreakingNews />
+      </section>
+
+
       {/* FEATURES */}
       <section id="features" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
         <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Everything in one security space</h2>
@@ -211,6 +221,8 @@ Go to Dashboard → Upload Build → Start Scan`}
           ))}
         </div>
       </section>
+      
+
 
       {/* DEVELOPERS / SECURITY TEAMS */}
       <section id="developers" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
