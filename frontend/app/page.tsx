@@ -218,73 +218,74 @@ export default function ThandevLanding() {
 
 
       {/* FEATURES */}
-      <section id="features" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
-        
-        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Everything in one security space</h2>
-        <div className="mt-10 grid gap-6 md:grid-cols-3">
-          {[
-            {
-              title: "Live Cyber News Feed",
-              body: "Real‑time CVE, KEV, vendor advisories, PoCs — all in one feed. Filter by product, severity, exploit activity, and tags.",
-            },
-            {
-              title: "Instant Site & App Scans",
-              body: "Kick off Nuclei/ZAP scans right from the dashboard. Results link to known CVEs and live exploit intel so you prioritize real risk.",
-            },
-            {
-              title: "Scan During Development (Shift‑Left)",
-              body: "Scan local builds and preview deployments directly in the browser to catch exploitable issues before they hit production.",
-            },
-          ].map((card, i) => (
-            <motion.div
-              key={card.title}
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.2 }}
-              transition={{ duration: 0.6, delay: i * 0.05 }}
-              whileHover={{ y: -4 }}
-              className="mt-4 space-y-2 text-sm muted"
+      {/* FEATURES — minimal rows in a soft band */}
+      <section id="features" className="band">
+        <div className="mx-auto max-w-7xl px-6 py-20 md:py-28">
+          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
+            Your security control room
+          </h2>
 
-            >
-              <div className="text-sm muted">{`0${i + 1}`}</div>
-              <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
-              <p className="mt-2 text-sm muted">{card.body}</p>
-            </motion.div>
-
-          ))}
+          {/* 3 feature rows, no boxed cards */}
+          <div className="mt-8 md:mt-10 grid gap-6 md:grid-cols-3">
+            {[
+              {
+                title: "Live Cyber News Feed",
+                body:
+                  "Real-time CVE, KEV, vendor advisories, and PoCs. Filter by product, severity, exploit activity, and tags.",
+              },
+              {
+                title: "Instant Site & App Scans",
+                body:
+                  "Kick off Nuclei/ZAP scans from the dashboard. Findings link to CVEs and live exploit intel so you fix what matters.",
+              },
+              {
+                title: "Scan During Development (Shift-Left)",
+                body:
+                  "Scan local builds and preview deployments in the browser to catch exploitable issues before release.",
+              },
+            ].map((f, i) => (
+              <div key={f.title} className="tile">
+                <div className="text-sm muted mb-1">{`0${i + 1}`}</div>
+                <h3 className="text-lg md:text-xl font-semibold flex items-center">
+                  <span className="dot" /> {f.title}
+                </h3>
+                <p className="mt-2 text-sm muted">{f.body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
+
       
 
 
-      {/* DEVELOPERS / SECURITY TEAMS */}
-      <section id="developers" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
-        <div className="grid gap-8 md:grid-cols-2">
-          {[
-            {
-              title: "Simple Web Dashboard",
-              body: "Manage scans, view results, and track issues all in a clean web UI — no CLI needed.",
-            },
-            {
-              title: "Real Risk, Not Noise",
-              body: "Cross‑link findings with KEV and exploit activity. Prioritize what’s actually dangerous, not just high‑CVSS.",
-            },
-          ].map((card, i) => (
-            <motion.div
-              key={card.title}
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, amount: 0.2 }}
-              transition={{ duration: 0.6, delay: i * 0.05 }}
-              whileHover={{ y: -4 }}
-              className="card p-6 shadow-sm transition-colors"
-            >
-              <h3 className="mt-1 text-xl font-semibold">{card.title}</h3>
-              <p className="mt-2 text-sm ">{card.body}</p>
-            </motion.div>
-          ))}
+      {/* DEVELOPERS — contrasting band with 2 wide tiles */}
+      <section id="developers" className="band-alt">
+        <div className="mx-auto max-w-7xl px-6 py-20 md:py-28">
+          <div className="grid gap-10 md:grid-cols-2">
+            {[
+              {
+                title: "Actionable insights",
+                body:
+                  "Every finding is enriched with CVE, KEV, exploit and EPSS context so you know exactly what to fix first.",
+              },
+              {
+                title: "Seamless workflow",
+                body:
+                  "Works with your tools — GitHub, Slack and CI/CD. Assign, track and resolve without breaking your flow.",
+              },
+            ].map((card) => (
+              <div key={card.title} className="tile">
+                <h3 className="text-xl font-semibold flex items-center">
+                  <span className="dot" /> {card.title}
+                </h3>
+                <p className="mt-2 text-sm muted">{card.body}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
+
 
       {/* PRICING */}
       <section id="pricing" className="mx-auto max-w-7xl px-6 py-16 md:py-24">

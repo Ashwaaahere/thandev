@@ -201,3 +201,39 @@ a:hover { color: var(--brand-700); }
 .dark .timeline-pin{
   border-color: color-mix(in oklab, var(--bg) 82%, white 18%);
 }
+
+/* Section “bands” (soft stripes like GitHub) */
+.band {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg) 90%, white 10%), var(--bg));
+}
+.dark .band {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg) 80%, black 20%), var(--bg));
+}
+
+.band-alt {
+  background:
+    linear-gradient(180deg, var(--surface-2), color-mix(in oklab, var(--surface-2) 40%, var(--bg) 60%));
+}
+.dark .band-alt {
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--bg) 86%, white 14%), var(--bg));
+}
+
+/* Minimal “row tile” (no border box) */
+.tile {
+  padding: 1rem 0;
+}
+.tile + .tile {
+  border-top: 1px dashed var(--hairline);
+}
+.tile h3 { font-weight: 600; }
+.tile p { color: var(--muted); }
+
+/* Tiny colored dot icon */
+.dot {
+  display:inline-block; width:.5rem; height:.5rem; border-radius:9999px;
+  background: var(--brand);
+  margin-right:.5rem;
+}
