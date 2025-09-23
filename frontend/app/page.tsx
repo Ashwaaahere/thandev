@@ -200,7 +200,7 @@ function useLiveStats(): LiveStats {
 
   useEffect(() => {
     const API =
-      process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8000";
+      process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "https://thandev-backend.fly.dev";
 
     (async () => {
       try {
