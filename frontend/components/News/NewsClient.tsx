@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import NewsList from '../app/news/NewsList';
+import NewsList from '../../app/news/NewsList';
 import RightSidebar from './RightSidebar';
 
 type NewsItem = {
