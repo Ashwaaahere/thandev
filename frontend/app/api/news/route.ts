@@ -91,7 +91,14 @@ export async function GET(req: Request) {
     SOURCES_RSS.map(async (s) => {
       if (category && s.category !== category) return;
       try {
-        const feed = await parser.parseURL(s.url);
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout')), 10000)
+        );
+        
+        const feedPromise = parser.parseURL(s.url);
+        const feed = await Promise.race([feedPromise, timeoutPromise]) as any;
+        
         for (const it of feed.items || []) {
           const n = normalizeRSS(it, s);
           if (n) items.push(n);
