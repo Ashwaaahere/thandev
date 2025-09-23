@@ -117,3 +117,8 @@ def trigger_ingestion():
             "status": "error", 
             "message": f"Failed to start ingestion: {str(e)}"
         }, status_code=500)
+
+@app.get("/_health")
+def health_check():
+    """Health check endpoint for Fly.io"""
+    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
