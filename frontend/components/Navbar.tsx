@@ -15,7 +15,7 @@ export default function Navbar() {
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
           <Link href="/news" className="hover:opacity-100">News</Link>
           <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
-          <Link href="/pricing" className="hover:opacity-100">Docs</Link>
+          <Link href="/docs" className="hover:opacity-100">Docs</Link>
         </nav>
 
         <div className="flex items-center gap-3">

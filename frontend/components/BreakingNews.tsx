@@ -20,7 +20,7 @@ export default function BreakingNews() {
 
   const load = async () => {
     try {
-      const res = await fetch('/api/news?strict=1&category=cyber&breaking=1&limit=8', { cache: 'no-store' });
+      const res = await fetch('/api/news?category=cyber&limit=8', { cache: 'no-store' });
       if (!res.ok) throw new Error('Failed to load breaking news');
       const data = await res.json();
       setItems(data.items as Item[]);

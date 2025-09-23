@@ -15,25 +15,32 @@ const sidebarFilters = [
   { label: "SANS ISC Diary", q: { source: "SANS ISC Diary" } },
 ];
 async function getNews() {
-  // Prefer explicit base from env, else infer from the incoming request
-  const explicit = process.env.NEXT_PUBLIC_API_BASE;         // e.g. https://api.thandev.dev
-  const h = headers();
-  const proto = h.get("x-forwarded-proto") ?? "http";
-  const host  = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
-  const inferredBase = `${proto}://${host}`;
-  const base = explicit || inferredBase;
+  try {
+    // Prefer explicit base from env, else infer from the incoming request
+    const explicit = process.env.NEXT_PUBLIC_API_BASE;         // e.g. https://api.thandev.dev
+    const h = headers();
+    const proto = h.get("x-forwarded-proto") ?? "http";
+    const host  = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+    const inferredBase = `${proto}://${host}`;
+    const base = explicit || inferredBase;
 
-  // Build a proper absolute URL
-  const url = new URL("/api/news", base);
-  url.searchParams.set("strict", "1");
-  url.searchParams.set("category", "cyber");
+    // Build a proper absolute URL
+    const url = new URL("/api/news", base);
+    url.searchParams.set("category", "cyber");
 
-  const res = await fetch(url.toString(), { next: { revalidate: 60 } });
-  if (!res.ok) throw new Error("news fetch failed");
+    const res = await fetch(url.toString(), { next: { revalidate: 60 } });
+    if (!res.ok) {
+      console.error("News fetch failed:", res.status, res.statusText);
+      return []; // Return empty array on failure
+    }
 
-  const data = await res.json().catch(() => ({}));
-  // Always return an array to keep the UI defensive
-  return Array.isArray(data?.items) ? data.items : [];
+    const data = await res.json().catch(() => ({}));
+    // Always return an array to keep the UI defensive
+    return Array.isArray(data?.items) ? data.items : [];
+  } catch (error) {
+    console.error("News fetch error:", error);
+    return []; // Return empty array on error
+  }
 }
 
 
