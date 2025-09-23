@@ -19,7 +19,7 @@ app = FastAPI(title="Thandev Exploit Feed - safe API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ALLOW_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=os.environ.get("CORS_ALLOW_ORIGINS", "http://localhost:3000,https://thandev.vercel.app").split(","),
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
