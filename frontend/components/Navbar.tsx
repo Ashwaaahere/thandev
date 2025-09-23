@@ -14,16 +14,16 @@ export default function Navbar() {
 
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
           <Link href="/news" className="hover:opacity-100">News</Link>
-          <Link href="/docs" className="hover:opacity-100">Docs</Link>
-          <Link href="/pricing" className="hover:opacity-100">Pricing</Link>
+          <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
+          <Link href="/pricing" className="hover:opacity-100">Docs</Link>
         </nav>
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
-          <Link href="/signin" className="rounded-xl px-3 py-2 text-sm opacity-80 hover:opacity-100">Sign in</Link>
+          {/* <Link href="/signin" className="rounded-xl px-3 py-2 text-sm opacity-80 hover:opacity-100">Sign in</Link>
           <Link href="/signup" className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 hover:bg-slate-200">
             Get started
-          </Link>
+          </Link> */}
         </div>
       </div>
     </header>

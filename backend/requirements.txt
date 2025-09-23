@@ -8,3 +8,4 @@ python-dotenv==1.0.1
 celery==5.4.0
 redis==5.0.8
 requests==2.32.3
+schedule==1.2.0

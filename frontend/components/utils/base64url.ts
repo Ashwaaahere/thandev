@@ -1,19 +1,15 @@
-// Make sure a raw URL becomes a safe http(s) URL
-export function b64urlEncode(raw: string): string {
-  if (!raw) return '#';
-  let s = raw.trim();
+// components/utils/base64urls.ts
+export function b64urlEncode(input: string): string {
+  if (!input) return "";
+  const b64 = Buffer.from(input, "utf8").toString("base64");
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
 
-  // protocol-relative => https
-  if (s.startsWith('//')) s = 'https:' + s;
-
-  // add https if missing a scheme
-  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
-
-  // Validate/normalize; fall back to encodeURI (handles spaces, unicode)
-  try {
-    const u = new URL(s);
-    return u.toString();
-  } catch {
-    return encodeURI(s);
-  }
+export function b64urlDecode(input: string): string {
+  if (!input) return "";
+  // allow both url-safe and standard base64
+  let s = input.replace(/-/g, "+").replace(/_/g, "/");
+  // pad
+  while (s.length % 4 !== 0) s += "=";
+  return Buffer.from(s, "base64").toString("utf8");
 }

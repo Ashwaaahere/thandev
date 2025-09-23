@@ -1,26 +1,18 @@
-// app/components/utils/urls.ts
+// components/utils/urls.ts
+export function normalizeExternalUrl(raw?: string | null): string {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  if (!s) return "";
+  // If it already has a scheme, keep it; else assume https
+  if (/^https?:\/\//i.test(s)) return s;
+  return "https://" + s.replace(/^\/+/, "");
+}
 
-/**
- * Normalize any raw URL into a proper http(s) URL
- * - Adds https:// if missing
- * - Handles protocol-relative links (//example.com)
- * - Ensures it’s safe for use in href
- */
-export function normalizeExternalUrl(raw: string): string {
-  if (!raw) return '#';
-  let s = raw.trim();
-
-  // protocol-relative → https://
-  if (s.startsWith('//')) s = 'https:' + s;
-
-  // add https:// if no scheme
-  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
-
-  // Validate/normalize; fallback to encodeURI
+export function isHttpUrl(u: string): boolean {
   try {
-    const u = new URL(s);
-    return u.toString();
+    const url = new URL(u);
+    return url.protocol === "http:" || url.protocol === "https:";
   } catch {
-    return encodeURI(s);
+    return false;
   }
 }

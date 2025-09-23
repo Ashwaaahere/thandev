@@ -1,312 +1,1064 @@
 "use client";
-import { useEffect, useRef } from "react";
-import type { ReactNode, MouseEventHandler } from "react";
+
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type MouseEventHandler,
+} from "react";
 import Link from "next/link";
-import { motion } from "framer-motion";
 import dynamic from "next/dynamic";
-const BreakingNews = dynamic(() => import("@/components/BreakingNews"), { ssr: false });
-import HeroAurora from '@/components/HeroAurora';
-import AnimatedCard from '@/components/AnimatedCard';
+import {
+  motion,
+  useScroll,
+  useTransform,
+  useSpring,
+  type Variants,
+} from "framer-motion";
+
+const BreakingNews = dynamic(() => import("@/components/BreakingNews"), {
+  ssr: false,
+});
+import HeroAurora from "@/components/Exploits/HeroAurora";
+import AnimatedCard from "@/components/AnimatedCard";
 
 
+/* ------------------------------------------------------------------ */
+/* Easing + variants                                                   */
+/* ------------------------------------------------------------------ */
 
-/**
- * Decorative animated background orbs (pure client-side, no Tailwind config needed)
- */
-function Orbs() {
-  const orbs = [
-    { className: "bg-cyan-500/25", size: 280, x: -180, y: -60, delay: 0 },
-    { className: "bg-indigo-500/20", size: 360, x: 120, y: -100, delay: 0.4 },
-    { className: "bg-emerald-400/20", size: 220, x: 220, y: 120, delay: 0.8 },
-  ];
+const OUT = [0.16, 1, 0.3, 1] as const;
+const makeItemVariants = (from: "left" | "right"): Variants => ({
+  hidden: {
+    opacity: 0,
+    y: 18,
+    x: from === "left" ? -40 : 40,
+    scale: 0.98,
+    filter: "blur(2px)",
+  },
+  show: {
+    opacity: 1,
+    y: 0,
+    x: 0,
+    scale: 1,
+    filter: "blur(0px)",
+    transition: { duration: 0.7, ease: OUT },
+  },
+});
+
+/* ------------------------------------------------------------------ */
+/* Safe anchor (no SSR breakage, no errors if ID missing)              */
+/* ------------------------------------------------------------------ */
+
+function AnchorLink({
+  href,
+  className,
+  children,
+}: {
+  href: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const onClick: MouseEventHandler<HTMLAnchorElement> = (e) => {
+    if (!href?.startsWith("#") || typeof document === "undefined") return;
+    const id = href.slice(1);
+    let el: HTMLElement | null = null;
+    try {
+      el = document.getElementById(id);
+    } catch {
+      el = null;
+    }
+    if (el?.scrollIntoView) {
+      e.preventDefault();
+      try {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      } catch {}
+      if (typeof window !== "undefined" && window.history?.replaceState) {
+        try {
+          window.history.replaceState(null, "", href);
+        } catch {}
+      }
+    }
+  };
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-      {orbs.map((o, i) => (
-        <motion.div
-          key={i}
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.2, delay: o.delay }}
-          className={`absolute blur-3xl ${o.className} rounded-full`}
-          style={{ width: o.size, height: o.size, left: `calc(50% + ${o.x}px)`, top: `calc(30% + ${o.y}px)` }}
-        />
-      ))}
+    <a href={href} onClick={onClick} className={className}>
+      {children}
+    </a>
+  );
+}
+
+function CursorGlow() {
+  const dotRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const dot = dotRef.current;
+    const host = document.getElementById('product');
+    if (!dot || !host) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const onMove = (e: PointerEvent) => {
+      const r = host.getBoundingClientRect();
+      const x = e.clientX - r.left;
+      const y = e.clientY - r.top;
+      dot.style.transform = `translate(${x}px, ${y}px)`;
+      dot.style.opacity = '0.65';
+    };
+    const onLeave = () => { dot.style.opacity = '0'; };
+    host.addEventListener('pointermove', onMove, { passive: true });
+    host.addEventListener('pointerleave', onLeave, { passive: true });
+    return () => {
+      host.removeEventListener('pointermove', onMove as any);
+      host.removeEventListener('pointerleave', onLeave as any);
+    };
+  }, []);
+
+  return (
+    <div aria-hidden>
+      <div
+        ref={dotRef}
+        className="cursor-glow"
+        style={{ transform: 'translate(-9999px,-9999px)', opacity: 0 }}
+      />
     </div>
   );
 }
 
-/**
- * Soft spotlight under the hero headline
- */
-function Spotlight() {
-  return (
-    <div aria-hidden className="absolute -top-32 left-1/2 -translate-x-1/2 h-[480px] w-[840px] rounded-full opacity-30 blur-3xl"
-      style={{
-        background: "radial-gradient(50% 50% at 50% 50%, rgba(99,102,241,0.35) 0%, rgba(15,23,42,0) 70%)",
-      }}
-    />
-  );
-}
+function HeroSparkles() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const ctx = c.getContext('2d'); if (!ctx) return;
+    let w = c.width = c.offsetWidth; let h = c.height = c.offsetHeight;
+    const onResize = () => { w = c.width = c.offsetWidth; h = c.height = c.offsetHeight; };
+    window.addEventListener('resize', onResize, { passive: true });
 
-/**
- * Simple, safe in-page anchor link with smooth scroll & history guards
- */
-function AnchorLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
-  const onClick: MouseEventHandler<HTMLAnchorElement> = (e) => {
-    if (!href || !href.startsWith("#")) return;
-    if (typeof document === "undefined") return;
-    const id = href.slice(1);
-    let el: HTMLElement | null = null;
-    try { el = document.getElementById(id); } catch { el = null; }
-    if (el && typeof (el as any).scrollIntoView === "function") {
-      e.preventDefault();
-      try { el.scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
-      if (typeof window !== "undefined" && typeof window.history?.replaceState === "function") {
-        try { window.history.replaceState(null, "", href); } catch {}
+    const N = 60;
+    const stars = Array.from({ length: N }).map(() => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      r: Math.random() * 1.4 + 0.3,
+      t: Math.random() * Math.PI * 2,
+      s: 0.6 + Math.random() * 0.6,
+    }));
+
+    let raf = 0;
+    const loop = () => {
+      ctx.clearRect(0, 0, w, h);
+      for (const s of stars) {
+        s.t += 0.02 * s.s;
+        const a = (Math.sin(s.t) * 0.5 + 0.5) * 0.8 + 0.2;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = 'rgba(125,211,252,1)';
+        ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
       }
-    }
-  };
-  return <a href={href} onClick={onClick} className={className}>{children}</a>;
+      ctx.globalAlpha = 1;
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => { cancelAnimationFrame(raf); window.removeEventListener('resize', onResize); };
+  }, []);
+
+  return <canvas ref={ref} className="absolute right-0 top-0 h-[60%] w-[60%] opacity-45 mix-blend-screen" />;
 }
 
-/**
- * Developer-only diagnostics to ensure anchor IDs exist
- */
 function Diagnostics() {
   useEffect(() => {
-    const required = ["product","features","developers","pricing","faq","signup","demo"];
+    const required = ["product", "features", "developers", "how", "faq", "signup", "demo"];
     const missing = required.filter((id) => !document.getElementById(id));
     const holder = document.getElementById("dev-tests");
     if (holder) holder.setAttribute("data-tests", JSON.stringify({ missing }));
     // eslint-disable-next-line no-console
     console.debug("[Thandev Diagnostics]", { missing });
   }, []);
-  return <div id="dev-tests" data-tests="{}" className="hidden"/>;
+  return <div id="dev-tests" data-tests="{}" className="hidden" />;
 }
 
-/**
- * Animated horizontal ticker for the hero (fake content for now)
- */
-function NewsTicker() {
-  const items = [
-    "CVE-2025-1234 RCE in ExampleCMS", "KEV: VendorX auth bypass actively exploited", "PoC released for CVE-2025-2222",
-    "Zero-day in WidgetOS mitigated", "High EPSS spike for CVE-2025-0420",
-  ];
-  const row = (
-    <div className="flex shrink-0 items-center gap-6 pr-6">
-      {items.map((t, i) => (
-        <span key={i} className="whitespace-nowrap text-xs text-slate-300/80">
-          <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-cyan-400"/>{t}
-        </span>
+/* ------------------------------------------------------------------ */
+/* Live data fetchers                                                  */
+/* ------------------------------------------------------------------ */
+
+type LiveStats = {
+  signalsToday: number | null;
+  exploitsToday: number | null;
+  vendorsToday: number | null;
+  checksPerRun: number | null;        // reserved (soon)
+  issuesPrevented: number | null;     // reserved (soon)
+};
+
+function unique<T>(arr: T[]) {
+  return Array.from(new Set(arr));
+}
+
+function useLiveStats(): LiveStats {
+  const [stats, setStats] = useState<LiveStats>({
+    signalsToday: null,
+    exploitsToday: null,
+    vendorsToday: null,
+    checksPerRun: null,
+    issuesPrevented: null,
+  });
+
+  useEffect(() => {
+    const API =
+      process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "http://localhost:8000";
+
+    (async () => {
+      try {
+        // 1) Try a dedicated stats endpoint
+        let signals: number | null = null;
+        let exploits: number | null = null;
+        let vendors: number | null = null;
+        let checks: number | null = null;
+        let prevented: number | null = null;
+
+        try {
+          const s = await fetch(`${API}/stats`).then((r) => (r.ok ? r.json() : null));
+          if (s) {
+            signals = s?.signals_today ?? null;
+            exploits = s?.exploits_today ?? null;
+            vendors = s?.vendors_today ?? null;
+            checks = s?.checks_per_run ?? null;
+            prevented = s?.issues_prevented_7d ?? null;
+          }
+        } catch {}
+
+        // 2) Fallbacks for MVP:
+        //    - signalsToday from /news count (limit large enough)
+        //    - exploitsToday + vendorsToday from /exploits/daily OR derive from /news items with tags
+        if (signals == null || exploits == null || vendors == null) {
+          // news
+          let news: any[] = [];
+          try {
+            const n = await fetch(`${API}/news?limit=400`).then((r) =>
+              r.ok ? r.json() : []
+            );
+            if (Array.isArray(n)) news = n;
+          } catch {}
+
+          if (signals == null) {
+            signals = news.length || null;
+          }
+
+          // try dedicated exploits endpoint(s)
+          let exp: any[] | null = null;
+          try {
+            const e = await fetch(`${API}/exploits/daily`).then((r) =>
+              r.ok ? r.json() : null
+            );
+            if (Array.isArray(e)) exp = e;
+          } catch {}
+          if (exp == null) {
+            try {
+              const e2 = await fetch(`${API}/exploits?period=today`).then((r) =>
+                r.ok ? r.json() : null
+              );
+              if (Array.isArray(e2)) exp = e2;
+            } catch {}
+          }
+
+          // derive from exploits; fallback to news tags
+          if (exp) {
+            exploits = exp.length;
+            const vendorsList = unique(
+              exp
+                .map((x) => x.vendor || x.org || x.affected_vendor)
+                .filter(Boolean)
+            );
+            vendors = vendorsList.length || null;
+          } else {
+            // heuristic: news items tagged with exploit/poc
+            const todayEx = news.filter((n) => {
+              const tags = (n?.tags || n?.labels || []) as string[];
+              const title = `${n?.title || ""}`.toLowerCase();
+              return (
+                tags.some((t) => /exploit|poc|kev/i.test(t)) ||
+                /exploit|proof[-\s]?of[-\s]?concept|poc/.test(title)
+              );
+            });
+            exploits = todayEx.length || null;
+
+            const vendorsList = unique(
+              todayEx
+                .map((n) => (n?.vendor || n?.org || n?.source || "").toString())
+                .filter(Boolean)
+            );
+            vendors = vendorsList.length || null;
+          }
+        }
+
+        setStats({
+          signalsToday: typeof signals === "number" ? signals : null,
+          exploitsToday: typeof exploits === "number" ? exploits : null,
+          vendorsToday: typeof vendors === "number" ? vendors : null,
+          checksPerRun: typeof checks === "number" ? checks : null, // may stay null (soon)
+          issuesPrevented: typeof prevented === "number" ? prevented : null, // may stay null (soon)
+        });
+      } catch {
+        // keep nulls
+      }
+    })();
+  }, []);
+
+  return stats;
+}
+
+/* ------------------------------------------------------------------ */
+/* Count-up utility                                                    */
+/* ------------------------------------------------------------------ */
+
+function useCountUp(active: boolean, to: number, duration = 1000) {
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    if (!active || !ref.current) return;
+    let raf = 0;
+    const start = performance.now();
+    const tick = (t: number) => {
+      const p = Math.min(1, (t - start) / duration);
+      const eased = 1 - Math.pow(1 - p, 4);
+      const n = Math.round(to * eased);
+      if (ref.current) ref.current.textContent = n.toLocaleString();
+      if (p < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [active, to, duration]);
+  return ref;
+}
+
+/* ------------------------------------------------------------------ */
+/* HERO FX — kinetic grid + constellation canvas + spark lines         */
+/* ------------------------------------------------------------------ */
+
+function HeroKinetic() {
+  // light sweep lines
+  const rows = new Array(9).fill(0).map((_, i) => i);
+  return (
+    <div aria-hidden className="absolute inset-0 overflow-hidden">
+      {rows.map((r) => (
+        <motion.div
+          key={r}
+          initial={{ x: "-60%" }}
+          animate={{ x: ["-60%", "60%"] }}
+          transition={{
+            duration: 10 + r * 0.5,
+            ease: "linear",
+            repeat: Infinity,
+            repeatType: "reverse",
+          }}
+          className="pointer-events-none absolute left-0 right-0 h-px"
+          style={{
+            top: `${8 + r * 10}%`,
+            background:
+              "linear-gradient(90deg, rgba(255,255,255,0), rgba(125,211,252,.42), rgba(255,255,255,0))",
+          }}
+        />
       ))}
     </div>
   );
+}
+
+function Constellation() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+
+    let w = (c.width = c.offsetWidth);
+    let h = (c.height = c.offsetHeight);
+
+    const onResize = () => {
+      w = c.width = c.offsetWidth;
+      h = c.height = c.offsetHeight;
+    };
+    window.addEventListener("resize", onResize, { passive: true });
+
+    const particles = Array.from({ length: 70 }).map(() => ({
+      x: Math.random() * w,
+      y: Math.random() * h,
+      vx: (Math.random() - 0.5) * 0.25,
+      vy: (Math.random() - 0.5) * 0.25,
+    }));
+    let mx = w / 2,
+      my = h / 3;
+
+    const onMove = (e: MouseEvent) => {
+      const rect = c.getBoundingClientRect();
+      mx = e.clientX - rect.left;
+      my = e.clientY - rect.top;
+    };
+    c.addEventListener("mousemove", onMove);
+
+    let raf = 0;
+    const loop = () => {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "rgba(125,211,252,0.9)"; // cyan-300 dot
+      const linkDist = 110;
+
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        if (p.x < 0 || p.x > w) p.vx *= -1;
+        if (p.y < 0 || p.y > h) p.vy *= -1;
+
+        // repulsion from mouse
+        const dx = p.x - mx;
+        const dy = p.y - my;
+        const d = Math.hypot(dx, dy);
+        if (d < 120) {
+          p.vx += (dx / d) * 0.02;
+          p.vy += (dy / d) * 0.02;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.1, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // links
+      ctx.strokeStyle = "rgba(125,211,252,0.15)";
+      for (let i = 0; i < particles.length; i++) {
+        for (let j = i + 1; j < particles.length; j++) {
+          const a = particles[i];
+          const b = particles[j];
+          const dist = Math.hypot(a.x - b.x, a.y - b.y);
+          if (dist < linkDist) {
+            ctx.globalAlpha = 1 - dist / linkDist;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+          }
+        }
+      }
+
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", onResize);
+      c.removeEventListener("mousemove", onMove);
+    };
+  }, []);
+
   return (
-    <div aria-label="Live ticker" className="relative mt-8 overflow-hidden rounded-xl border border-white/10 bg-white/5">
-      <motion.div
-        className="flex"
-        animate={{ x: [0, -800] }}
-        transition={{ duration: 18, ease: "linear", repeat: Infinity }}
-      >
-        {row}
-        {row}
-        {row}
-      </motion.div>
+    <canvas
+      ref={canvasRef}
+      className="absolute inset-0 z-0 opacity-80"
+      style={{ mixBlendMode: "screen" }}
+    />
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Metric helpers                                                      */
+/* ------------------------------------------------------------------ */
+
+function Metric({
+  value,
+  label,
+  active,
+}: {
+  value: number | null;
+  label: string;
+  active: boolean;
+}) {
+  const ref = useCountUp(active && value != null, value ?? 0, 900);
+  if (value == null) {
+    return (
+      <div className="mt-4 flex items-baseline gap-3">
+        <span className="text-3xl font-semibold tabular-nums">—</span>
+        <span className="text-sm muted">{label}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-4 flex items-baseline gap-3">
+      <span ref={ref} className="text-3xl font-semibold tabular-nums">
+        0
+      </span>
+      <span className="text-sm muted">{label}</span>
     </div>
   );
 }
 
-/**
- * Subtle parallax wrapper for the hero right card
- */
-function ParallaxCard({ children }: { children: ReactNode }) {
+/* ------------------------------------------------------------------ */
+/* Scroll-scrubbed cards (Control room)                                */
+/* ------------------------------------------------------------------ */
+
+function ScrollScrubCard({
+  index,
+  title,
+  body,
+  value,
+  label,
+  from,
+  accentClass,
+  soon,
+}: {
+  index: number;
+  title: string;
+  body: string;
+  value: number | null;
+  label: string;
+  from: "left" | "right";
+  accentClass: string;
+  soon?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: ref,
+    offset: ["start 80%", "end 20%"],
+  });
+
+  const x = useTransform(scrollYProgress, [0, 1], [from === "left" ? -60 : 60, 0]);
+  const y = useTransform(scrollYProgress, [0, 1], [26, 0]);
+  const o = useTransform(scrollYProgress, [0, 1], [0, 1]);
+  const s = useTransform(scrollYProgress, [0, 1], [0.98, 1]);
+  const glow = useTransform(scrollYProgress, [0, 1], [0, 0.35]);
+
+  const activeT = useTransform(scrollYProgress, (v) => v > 0.55);
+  const [isActive, setIsActive] = useState(false);
+  useEffect(() => {
+    const unsub = activeT.on("change", (v) => setIsActive(!!v));
+    return () => unsub();
+  }, [activeT]);
+
+  useEffect(() => {
+    const io = new IntersectionObserver(
+      (entries) =>
+        entries.forEach(
+          (e) =>
+            e.isIntersecting && (e.target.classList.add("play"), io.unobserve(e.target))
+        ),
+      { threshold: 0.45 }
+    );
+    const el = ref.current;
+    if (el) io.observe(el);
+    return () => io.disconnect();
+  }, []);
+
   return (
     <motion.div
       ref={ref}
-      initial={{ y: 16, opacity: 0 }}
-      whileInView={{ y: 0, opacity: 1 }}
-      viewport={{ once: true, amount: 0.4 }}
-      transition={{ duration: 0.7, ease: "easeOut" }}
-      whileHover={{ y: -4 }}
-      className="relative"
+      style={{ x, y, opacity: o, scale: s }}
+      className="relative overflow-hidden rounded-2xl border card-border p-6 md:p-8 bg-white/5 reveal-sheen"
     >
-      {children}
+      <motion.div
+        style={{ opacity: glow }}
+        className={`pointer-events-none absolute -inset-16 blur-3xl ${accentClass}`}
+      />
+      <div className="flex flex-col gap-6 md:flex-row md:items-center">
+        <div className="order-2 md:order-1 md:w-[42%]">
+          <div className="relative overflow-hidden rounded-xl border card-border bg-[var(--surface)]/60 p-4 shadow-soft">
+            <div className="flex items-center gap-1.5 opacity-70">
+              <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+              <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              <div className="h-16 rounded-lg bg-white/50 dark:bg-white/10" />
+              <div className="h-16 rounded-lg bg-white/50 dark:bg-white/10" />
+              <div className="h-16 rounded-lg bg-white/50 dark:bg-white/10" />
+              <div className="col-span-3 h-20 rounded-lg bg-white/60 dark:bg-white/10" />
+            </div>
+          </div>
+        </div>
+
+        <div className="order-1 md:order-2 md:flex-1">
+          <div className="text-sm muted">{`0${index + 1}`}</div>
+          <h3 className="mt-1 text-2xl font-semibold flex items-center gap-3">
+            <span className="dot" /> {title}
+            {soon && <span className="pill-soon">Soon</span>}
+          </h3>
+          <p className="mt-2 text-sm muted">{body}</p>
+
+          {!soon && <Metric value={value} label={label} active={isActive} />}
+          {soon && (
+            <div className="mt-4 text-xs muted">
+              Metrics will appear on release.
+            </div>
+          )}
+        </div>
+      </div>
     </motion.div>
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Tilted scrub tiles (Workflow)                                       */
+/* ------------------------------------------------------------------ */
+
+function TiltScrub({
+  title,
+  body,
+  accentClass,
+  from,
+}: {
+  title: string;
+  body: string;
+  accentClass: string;
+  from: "left" | "right";
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: ref,
+    offset: ["start 85%", "end 35%"],
+  });
+
+  const x = useTransform(scrollYProgress, [0, 1], [from === "left" ? -40 : 40, 0]);
+  const r = useTransform(scrollYProgress, [0, 1], [from === "left" ? -2 : 2, 0]);
+  const o = useTransform(scrollYProgress, [0, 1], [0, 1]);
+  const s = useTransform(scrollYProgress, [0, 1], [0.98, 1]);
+
+  return (
+    <motion.div
+      ref={ref}
+      style={{ x, rotate: r, opacity: o, scale: s }}
+      className="relative overflow-hidden rounded-2xl border card-border p-6 md:p-8 bg-white/5"
+    >
+      <motion.div className={`absolute -inset-20 blur-3xl ${accentClass}`} style={{ opacity: 0.25 }} />
+      <h3 className="text-2xl font-semibold flex items-center gap-2">
+        <span className="dot" /> {title}
+      </h3>
+      <p className="mt-2 text-sm muted">{body}</p>
+
+      <div className="mt-5 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="h-10 rounded-lg bg-white/50 dark:bg-white/10" />
+        <div className="h-10 rounded-lg bg-white/50 dark:bg-white/10" />
+        <div className="h-10 rounded-lg bg-white/50 dark:bg-white/10" />
+      </div>
+    </motion.div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Vertical progress (used by How)                                     */
+/* ------------------------------------------------------------------ */
+
+function VerticalProgress({ progress, side }: { progress: any; side: "left" | "right" }) {
+  const leftPos = side === "right" ? "calc(66.666% - 1px)" : "calc(33.333% - 1px)";
+  const pathLength = useTransform(progress, [0, 1], [0, 1]);
+  return (
+    <svg
+      className="hidden md:block absolute top-0 h-full w-[2px]"
+      style={{ left: leftPos as any }}
+      viewBox="0 0 2 100"
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <defs>
+        <linearGradient id="hiwGrad" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="var(--brand)" stopOpacity="0.0" />
+          <stop offset="35%" stopColor="var(--brand)" stopOpacity="0.55" />
+          <stop offset="100%" stopColor="var(--brand)" stopOpacity="0.1" />
+        </linearGradient>
+      </defs>
+      <motion.path
+        d="M1 0 L1 100"
+        stroke="url(#hiwGrad)"
+        strokeWidth="2"
+        strokeLinecap="round"
+        style={{ pathLength }}
+      />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* How it works — flipped: cards LEFT, rail RIGHT; steps marked Soon   */
+/* ------------------------------------------------------------------ */
+
+function StepScrub({
+  idx,
+  from,
+  title,
+  body,
+  accentClass,
+  soon,
+}: {
+  idx: number;
+  from: "left" | "right";
+  title: string;
+  body: string;
+  accentClass: string;
+  soon?: boolean;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: ref,
+    offset: ["start 85%", "end 35%"],
+  });
+
+  const x = useTransform(scrollYProgress, [0, 1], [from === "left" ? -60 : 60, 0]);
+  const y = useTransform(scrollYProgress, [0, 1], [28, 0]);
+  const o = useTransform(scrollYProgress, [0, 1], [0, 1]);
+  const s = useTransform(scrollYProgress, [0, 1], [0.97, 1]);
+  const glow = useTransform(scrollYProgress, [0, 1], [0, 0.35]);
+
+  useEffect(() => {
+    const io = new IntersectionObserver(
+      (entries) =>
+        entries.forEach(
+          (e) =>
+            e.isIntersecting && (e.target.classList.add("play"), io.unobserve(e.target))
+        ),
+      { threshold: 0.5 }
+    );
+    if (ref.current) io.observe(ref.current);
+    return () => io.disconnect();
+  }, []);
+
+  return (
+    <motion.div
+      ref={ref}
+      style={{ x, y, opacity: o, scale: s }}
+      className="relative overflow-hidden rounded-2xl border card-border bg-white/5 p-6 md:p-7 reveal-sheen"
+      whileHover={{ y: -4 }}
+      transition={{ type: "spring", stiffness: 180, damping: 18, mass: 0.5 }}
+    >
+      <motion.div className={`absolute -inset-16 blur-3xl ${accentClass}`} style={{ opacity: glow }} />
+      <div className="flex items-start gap-5">
+        <div className="mt-1 shrink-0 rounded-full border card-border px-3 py-1 text-xs font-semibold">{`0${
+          idx + 1
+        }`}</div>
+
+        <div className="flex-1">
+          <h3 className="text-xl font-semibold flex items-center gap-3">
+            <span className="dot" /> {title}
+            {soon && <span className="pill-soon">Soon</span>}
+          </h3>
+          <p className="mt-2 text-sm muted">{body}</p>
+
+          <motion.div
+            initial={{ scaleX: 0 }}
+            whileInView={{ scaleX: 1 }}
+            viewport={{ once: false, amount: 0.6 }}
+            transition={{ duration: 0.6, ease: OUT }}
+            className="mt-5 h-[2px] origin-left rounded bg-gradient-to-r from-[var(--brand)]/0 via-[var(--brand)]/60 to-[var(--brand)]/0"
+          />
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
+function HowListFlipped() {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { scrollYProgress } = useScroll({
+    target: rootRef,
+    offset: ["start 75%", "end 25%"],
+  });
+
+  const steps = [
+    {
+      title: "Create your workspace",
+      body:
+        "Start with a clean project space. Invite teammates, set roles, choose data residency. No CLI required.",
+      from: "left" as const,
+      accent: "bg-cyan-400/20",
+      soon: true, // unrelated to feed — mark as coming soon in MVP UI
+    },
+    {
+      title: "Connect sources",
+      body:
+        "Hook up GitHub/CI and domains to watch. We index metadata only by default, and you control what’s ingested.",
+      from: "right" as const,
+      accent: "bg-indigo-400/20",
+      soon: true,
+    },
+    {
+      title: "Automate triage",
+      body:
+        "Define rules: tag by product, severity, exploit activity (KEV/PoC), and assign owners so the queue stays clean.",
+      from: "left" as const,
+      accent: "bg-emerald-400/20",
+      soon: true,
+    },
+  ];
+
+  return (
+    <div ref={rootRef} className="relative">
+      <VerticalProgress progress={scrollYProgress} side="right" />
+      <div className="space-y-12 md:pr-10">
+        {steps.map((s, i) => (
+          <StepScrub
+            key={s.title}
+            idx={i}
+            from={s.from}
+            title={s.title}
+            body={s.body}
+            accentClass={s.accent}
+            soon={s.soon}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Page                                                                */
+/* ------------------------------------------------------------------ */
+
 export default function ThandevLanding() {
+  // sheen trigger
+  useEffect(() => {
+    const obs = new IntersectionObserver(
+      (entries) =>
+        entries.forEach((e) => {
+          if (e.isIntersecting) {
+            e.target.classList.add("play");
+            obs.unobserve(e.target);
+          }
+        }),
+      { threshold: 0.45 }
+    );
+    document.querySelectorAll(".reveal-sheen").forEach((el) => obs.observe(el));
+    return () => obs.disconnect();
+  }, []);
+
+  const live = useLiveStats();
+
   return (
     <main className="min-h-screen scroll-smooth">
-    
       <Diagnostics />
 
       {/* HERO */}
-        <section id="product" className="relative overflow-hidden">
-          {/* background glow & blobs */}
-          <div className="absolute inset-0 z-0">
-            <HeroAurora />
-          </div>
+      <section id="product" className="relative overflow-hidden">
+        <div className="absolute inset-0 z-0">
+          <HeroAurora />
+          <CursorGlow />
+          <HeroSparkles />
+        </div>
 
-          <div className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-6 py-20 md:grid-cols-2 md:py-28">
-            <div>
-              <h1 className="text-4xl md:text-6xl font-semibold tracking-tight">See cyberspace in real time.<br/>Scan early. Ship safe.</h1>
-              <p className="mt-4 max-w-xl text-[var(--muted)]">
-                Thandev is a developer-first security space: live feed, instant scans, and dev-time checks.
-              </p>
-              <div className="mt-6 flex flex-wrap gap-3">
-                <a href="#signup" className="btn-brand">Start free</a>
-                <a href="#demo" className="btn-ghost">View demo</a>
+        <div className="relative z-10 mx-auto grid max-w-7xl grid-cols-1 items-center gap-10 px-6 py-20 md:grid-cols-2 md:py-28">
+          <motion.div
+            initial={{ y: 8, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: .6, ease: [0.16,1,0.3,1] }}
+            whileHover={{ y: -2 }}
+          >
+            <h1 className="text-4xl md:text-6xl font-semibold tracking-tight title-future">
+              See cyberspace in real time.<br />
+              <span className="title-future-underline">Scan early. Ship safe.</span>
+            </h1>
+            <TypeLine />
+            <div className="mt-6 flex flex-wrap gap-3">
+              <a href="#signup" className="btn-brand btn-neon">Start free</a>
+              <a href="#features" className="btn-ghost btn-ghost-neon">Explore</a>
+            </div>
+          </motion.div>
+
+          <motion.div
+            className="hero-surface p-5 shadow-deep"
+            initial={{ y: 16, opacity: 0, scale: .98 }}
+            whileInView={{ y: 0, opacity: 1, scale: 1 }}
+            viewport={{ once: true, amount: .4 }}
+            transition={{ duration: .6, ease: [0.16,1,0.3,1] }}
+            whileHover={{ y: -4 }}
+          >
+            {/* floating micro-orbs */}
+            <div aria-hidden className="pointer-events-none absolute -left-6 -top-6 h-16 w-16 rounded-full bg-cyan-400/25 blur-2xl" />
+            <div aria-hidden className="pointer-events-none absolute -right-8 top-10 h-24 w-24 rounded-full bg-indigo-400/20 blur-3xl" />
+            <AnimatedCard className="hero-surface p-5 shadow-deep">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold">Quick Start</h3>
+                <div className="hidden sm:flex items-center gap-1.5">
+                  <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
+                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+                </div>
               </div>
-            </div>
 
-            <div className="hero-surface p-5 shadow-deep">
-              <AnimatedCard className="hero-surface p-5 shadow-deep">
-  <div className="flex items-center justify-between">
-    <h3 className="text-lg font-semibold">Quick Start</h3>
-    {/* subtle toolbar pills */}
-    <div className="hidden sm:flex items-center gap-1.5">
-      <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
-      <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
-    </div>
-  </div>
+              <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
 
-  <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
+              <figure className="mt-4 overflow-hidden rounded-2xl border card-border shadow-soft">
+                <div className="flex items-center justify-between px-3 py-2 backdrop-blur-md bg-white/45 dark:bg-slate-900/30">
+                  <div className="text-xs font-mono text-[var(--muted)]">Thandev • guide</div>
+                </div>
+                <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5 backdrop-blur-md dark:text-slate-100 dark:bg-slate-900/35">{`# Browse live news feed
+${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/news
 
-  {/* Frosted code block with toolbar */}
-  <figure className="mt-4 overflow-hidden rounded-2xl border card-border shadow-soft">
-    <div className="flex items-center justify-between px-3 py-2 backdrop-blur-md bg-white/45 dark:bg-slate-900/30">
-      <div className="text-xs font-mono text-[var(--muted)]">Thandev • guide</div>
-      
-    </div>
+# MVP: daily exploit feed is live
+${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (or /exploits?period=today)`}</pre>
+              </figure>
 
-   <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5
-             backdrop-blur-md
-             dark:text-slate-100 dark:bg-slate-900/35">
-      {`# Browse live news feed
-    ${process.env.NEXT_PUBLIC_API_BASE ?? "https://api.thandev.dev"}/news
+              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
+                <span className="badge-live">
+                  <span className="live-dot" /> Live
+                </span>
+                <span className="rounded-full px-2.5 py-1 bg-indigo-400/10 text-indigo-700 dark:text-indigo-300 border border-indigo-400/20">LLM soon</span>
+              </div>
+            </AnimatedCard>
+          </motion.div>
+        </div>
 
-    # Run a site scan in browser
-    Dashboard → New Scan → Enter URL
+        <div className="section-sep mx-auto mt-6 w-[90%]" />
+      </section>
 
-    # Scan development build in browser
-    Dashboard → Upload Build → Start Scan`}
-    </pre>
-
-  </figure>
-
-  <div className="mt-4 flex items-center gap-3 text-xs text-[var(--muted)]">
-    <span className="rounded-full px-2.5 py-1 bg-emerald-400/10 text-emerald-700 dark:text-emerald-300 border border-emerald-400/20">MVP online</span>
-    <span className="rounded-full px-2.5 py-1 bg-indigo-400/10 text-indigo-700 dark:text-indigo-300 border border-indigo-400/20">LLM soon</span>
-  </div>
-              </AnimatedCard>
-
-            </div>
-          </div>
-
-          <div className="section-sep mx-auto mt-6 w-[90%]" />
-        </section>
-
-
-
-      {/* BREAKING NEWS (compact) */}
+      {/* BREAKING NEWS */}
       <section id="breaking" className="mx-auto max-w-7xl px-6 py-10">
         <BreakingNews />
       </section>
 
+      {/* MVP Stat strip — shows real counts */}
+      <section className="mx-auto max-w-7xl px-6">
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatTile label="Signals today" value={live.signalsToday} />
+          <StatTile label="New exploits today" value={live.exploitsToday} />
+          <StatTile label="Vendors touched" value={live.vendorsToday} />
+        </div>
+      </section>
 
-      {/* FEATURES */}
-      {/* FEATURES — minimal rows in a soft band */}
-      <section id="features" className="band">
-        <div className="mx-auto max-w-7xl px-6 py-20 md:py-28">
-          <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">
-            Your security control room
-          </h2>
+      {/* CONTROL ROOM */}
+      <section id="features" className="band py-16 md:py-24">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 md:grid-cols-12">
+          {/* Left rail */}
+          <div className="md:col-span-4">
+            <div className="md:sticky md:top-24">
+              <h2 className="text-3xl font-semibold tracking-tight">Your security control room</h2>
+              <p className="mt-3 text-[var(--muted)]">
+                Scroll to explore the core modules. Live numbers are real. Features marked “Soon” are in flight.
+              </p>
+              <motion.div
+                className="mt-6 h-[3px] w-full origin-left rounded-full bg-[var(--brand)]/55"
+                initial={{ scaleX: 0 }}
+                whileInView={{ scaleX: 1 }}
+                viewport={{ margin: "-120px 0px -40% 0px", once: false, amount: 0.1 }}
+                transition={{ duration: 0.6, ease: "easeOut" }}
+              />
+            </div>
+          </div>
 
-          {/* 3 feature rows, no boxed cards */}
-          <div className="mt-8 md:mt-10 grid gap-6 md:grid-cols-3">
+          {/* Right column (cards) */}
+          <div className="md:col-span-8 space-y-16">
             {[
               {
+                k: "feed",
                 title: "Live Cyber News Feed",
                 body:
-                  "Real-time CVE, KEV, vendor advisories, and PoCs. Filter by product, severity, exploit activity, and tags.",
+                  "CVE, KEV, vendor advisories and PoCs streaming in real time. Filter by product, severity and exploit activity.",
+                value: live.signalsToday,
+                label: "Signals today",
+                from: "left" as const,
+                accent: "bg-cyan-400/20",
+                soon: false,
               },
               {
+                k: "scans",
                 title: "Instant Site & App Scans",
                 body:
-                  "Kick off Nuclei/ZAP scans from the dashboard. Findings link to CVEs and live exploit intel so you fix what matters.",
+                  "Kick off Nuclei/ZAP from the dashboard with no CLI. Correlate findings with exploit intel.",
+                value: null,
+                label: "Checks/run",
+                from: "right" as const,
+                accent: "bg-indigo-400/20",
+                soon: true, // mark as upcoming
               },
               {
+                k: "shift",
                 title: "Scan During Development (Shift-Left)",
                 body:
-                  "Scan local builds and preview deployments in the browser to catch exploitable issues before release.",
+                  "Scan local builds and preview deployments in the browser to catch issues before release.",
+                value: null,
+                label: "Issues prevented (7d)",
+                from: "left" as const,
+                accent: "bg-emerald-400/20",
+                soon: true, // mark as upcoming
               },
-            ].map((f, i) => (
-              <div key={f.title} className="tile">
-                <div className="text-sm muted mb-1">{`0${i + 1}`}</div>
-                <h3 className="text-lg md:text-xl font-semibold flex items-center">
-                  <span className="dot" /> {f.title}
-                </h3>
-                <p className="mt-2 text-sm muted">{f.body}</p>
-              </div>
+            ].map((item, i) => (
+              <ScrollScrubCard
+                key={item.k}
+                index={i}
+                title={item.title}
+                body={item.body}
+                value={item.value}
+                label={item.label}
+                from={item.from}
+                accentClass={item.accent}
+                soon={item.soon}
+              />
             ))}
           </div>
         </div>
       </section>
 
-      
+      <div className="section-sep mx-auto w-[92%]" />
 
+      {/* WORKFLOW */}
+      <section id="developers" className="band-alt py-16 md:py-24">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="mb-8">
+            <h2 className="text-3xl font-semibold tracking-tight">Workflow you already use</h2>
+            <p className="mt-2 text-[var(--muted)]">Integrates with GitHub, Slack and CI/CD. Prioritize what matters and keep shipping.</p>
+          </div>
 
-      {/* DEVELOPERS — contrasting band with 2 wide tiles */}
-      <section id="developers" className="band-alt">
-        <div className="mx-auto max-w-7xl px-6 py-20 md:py-28">
           <div className="grid gap-10 md:grid-cols-2">
             {[
               {
                 title: "Actionable insights",
-                body:
-                  "Every finding is enriched with CVE, KEV, exploit and EPSS context so you know exactly what to fix first.",
+                body: "Every finding is mapped to CVE/KEV/EPSS context so you know exactly what to fix first.",
+                accent: "bg-emerald-400/25",
+                from: "left" as const,
               },
               {
                 title: "Seamless workflow",
-                body:
-                  "Works with your tools — GitHub, Slack and CI/CD. Assign, track and resolve without breaking your flow.",
+                body: "Create issues, route alerts, and resolve without leaving your flow — GitHub, Slack and CI/CD.",
+                accent: "bg-indigo-400/25",
+                from: "right" as const,
               },
-            ].map((card) => (
-              <div key={card.title} className="tile">
-                <h3 className="text-xl font-semibold flex items-center">
-                  <span className="dot" /> {card.title}
-                </h3>
-                <p className="mt-2 text-sm muted">{card.body}</p>
-              </div>
+            ].map((c) => (
+              <TiltScrub key={c.title} title={c.title} body={c.body} accentClass={c.accent} from={c.from} />
             ))}
           </div>
         </div>
       </section>
 
+      <div className="section-sep mx-auto w-[92%]" />
 
-      {/* PRICING */}
-      <section id="pricing" className="mx-auto max-w-7xl px-6 py-16 md:py-24">
-        <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Simple pricing</h2>
-        <div className="mt-8 grid gap-6 md:grid-cols-3">
-          {[
-            { name: "Free", price: "$0", features: ["Live feed", "Manual scans", "Community"], cta: "Start free" },
-            { name: "Personal", price: "$9/mo", features: ["Scheduled scans", "Saved filters", "Email alerts"], cta: "Upgrade" },
-            { name: "Team", price: "$49/mo", features: ["API access", "Slack alerts", "SAML/SSO"], cta: "Contact sales" }
-          ].map((p, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.2 }} transition={{ duration: 0.6, delay: i * 0.05 }} whileHover={{ y: -4 }} className="rounded-2xl border border-white/10 p-6 bg-white/5">
-              <div className="text-sm ">{p.name}</div>
-              <div className="mt-2 text-3xl font-semibold">{p.price}</div>
-              <ul className="mt-4 space-y-2 text-sm ">
-                {p.features.map((f, j) => (
-                  <li key={j}>{f}</li>
-                ))}
-              </ul>
-              <AnchorLink href="#signup" className="mt-6 inline-block rounded-xl bg-white px-4 py-2 font-semibold text-slate-900 hover:bg-slate-200">{p.cta}</AnchorLink>
-            </motion.div>
-          ))}
+      {/* HOW IT WORKS — flipped: cards LEFT, sticky rail RIGHT; non-feed = Soon */}
+      <section id="how" className="relative py-16 md:py-24">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-10 px-6 md:grid-cols-12">
+          {/* LEFT: steps list */}
+          <div className="relative md:col-span-8">
+            <div className="relative">
+              <HowListFlipped />
+            </div>
+          </div>
+
+          {/* RIGHT: sticky rail */}
+          <div className="md:col-span-4">
+            <div className="md:sticky md:top-24">
+              <h2 className="text-3xl font-semibold tracking-tight">How it works</h2>
+              <p className="mt-2 text-[var(--muted)]">
+                A clean setup path that scales with your team — items marked <span className="pill-soon">Soon</span> will roll out after MVP.
+              </p>
+
+              <div className="mt-5 space-y-2 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-cyan-400" />
+                  <span className="muted">Workspace (Soon)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-indigo-400" />
+                  <span className="muted">Connections (Soon)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                  <span className="muted">Automation (Soon)</span>
+                </div>
+              </div>
+
+              <div className="mt-6 h-[3px] w-full origin-left rounded-full bg-[var(--brand)]/35" />
+            </div>
+          </div>
         </div>
       </section>
 
@@ -315,9 +1067,18 @@ export default function ThandevLanding() {
         <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">FAQ</h2>
         <div className="mt-6 space-y-4">
           {[
-            { q: 'Is Thandev open-source?', a: 'The feed and scanner connectors aim to be OSS-friendly; enterprise features are paid.' },
-            { q: 'How is this different from a news aggregator?', a: 'We enrich with EPSS/KEV/PoC signals and link directly to your scans.' },
-            { q: 'When is the AI assistant coming?', a: 'Soon. We’re adding pgvector & RAG for remediation chat and semantic search.' },
+            {
+              q: "What’s live in the MVP?",
+              a: "The live news feed and daily exploit feed with real counters. Scans and dev-time checks are coming soon.",
+            },
+            {
+              q: "How are exploit counts calculated?",
+              a: "We try a dedicated /exploits endpoint. If missing, we derive from today’s news tagged exploit/PoC.",
+            },
+            {
+              q: "Do you fake numbers?",
+              a: "No. If a metric isn’t live yet, we show a dash and mark the card as “Soon.”",
+            },
           ].map((f, i) => (
             <motion.div
               key={i}
@@ -334,21 +1095,87 @@ export default function ThandevLanding() {
         </div>
       </section>
 
-
-
-      {/* SIGNUP */}
-      <section id="signup" className="mx-auto max-w-3xl px-6 pb-20">
-        <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true, amount: 0.3 }} transition={{ duration: 0.6 }} className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
-          <h3 className="text-xl font-semibold">Ready to see your attack surface?</h3>
-          <p className="mt-2 text-sm text-slate-300">Create an account to stream the live feed, run your first scan, and set up dev‑time checks.</p>
+      {/* SIGNUP — updated CTA text */}
+      {/* <section id="signup" className="mx-auto max-w-3xl px-6 pb-20">
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+          <h3 className="text-xl font-semibold">
+            Ready to stream the feed and daily exploits?
+          </h3>
+          <p className="mt-2 text-sm text-slate-300">
+            Start free to browse real-time security news and new exploits every day.
+            Site scans and dev-time checks are rolling out next.
+          </p>
           <div className="mt-4 flex justify-center gap-3">
-            <Link href="/signup" className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-900 hover:bg-slate-200">Create account</Link>
-            <Link href="/docs" className="rounded-xl border border-white/10 px-4 py-2 font-semibold hover:bg-white/5">Read docs</Link>
+            <a href="/signup" className="rounded-xl bg-white px-4 py-2 font-semibold text-slate-900 hover:bg-slate-200">
+              Create account
+            </a>
+            <a href="#exploit-feed" className="rounded-xl border border-white/10 px-4 py-2 font-semibold hover:bg-white/5">
+              View exploit feed
+            </a>
           </div>
-        </motion.div>
-      </section>
-
-      
+        </div>
+      </section> */}
     </main>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Small presentational bits                                           */
+/* ------------------------------------------------------------------ */
+
+function StatTile({ label, value }: { label: string; value: number | null }) {
+  const ref = useCountUp(value != null, value ?? 0, 700);
+  return (
+    <div className="rounded-xl border card-border bg-white/40 dark:bg-white/5 p-4 shadow-soft flex items-center justify-between">
+      <div className="text-sm muted">{label}</div>
+      <div className="text-2xl font-semibold tabular-nums">{value == null ? "—" : <span ref={ref}>0</span>}</div>
+    </div>
+  );
+}
+
+/* Minimal typewriter subtitle */
+function TypeLine() {
+  const [text, setText] = useState('');
+  const first = 'Thandev is a developer-first security space: live feed, instant scans, and dev-time checks.';
+  const second = 'Live intel, faster triage, safer releases — built for developers.';
+  const lines = [first, second];
+  const [idx, setIdx] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  useEffect(() => {
+    let timer: any;
+    const current = lines[idx];
+    const typeSpeed = 14;
+    const deleteSpeed = 10;
+    const pause = 900;
+    const backspaceDelay = 1200; // extra delay before backspace starts
+
+    const run = () => {
+      if (!isDeleting) {
+        if (text.length < current.length) {
+          setText(current.slice(0, text.length + 1));
+          timer = setTimeout(run, typeSpeed);
+        } else {
+          timer = setTimeout(() => setIsDeleting(true), backspaceDelay);
+        }
+      } else {
+        if (text.length > 0) {
+          setText(current.slice(0, text.length - 1));
+          timer = setTimeout(run, deleteSpeed);
+        } else {
+          setIsDeleting(false);
+          setIdx((idx + 1) % lines.length);
+        }
+      }
+    };
+
+    timer = setTimeout(run, isDeleting ? deleteSpeed : typeSpeed);
+    return () => clearTimeout(timer);
+  }, [text, isDeleting, idx]);
+
+  return (
+    <p className="mt-4 max-w-xl text-[var(--muted)]">
+      {text}
+    </p>
   );
 }

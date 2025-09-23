@@ -11,10 +11,9 @@ export default function Footer() {
             <span>© {new Date().getFullYear()} Thandev</span>
           </div>
           <div className="flex items-center gap-6 text-sm">
-            <a className="hover:text-slate-100" href="/privacy">Privacy</a>
-            <a className="hover:text-slate-100" href="/security">Security</a>
+            <a className="hover:text-slate-100" href="/privacy">News</a>
+            <a className="hover:text-slate-100" href="/security">Exploit Feeds</a>
             <a className="hover:text-slate-100" href="/docs">Docs</a>
-            <a className="hover:text-slate-100" href="https://github.com/" target="_blank" rel="noreferrer">GitHub</a>
           </div>
         </div>
 
