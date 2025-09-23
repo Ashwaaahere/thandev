@@ -39,7 +39,7 @@ async function getNews() {
 
 export default async function NewsPage() {
   const latest = await getNews();
-  // ...fetch latest, pinned, etc.
+  const pinned = latest.slice(0, 5); // Derive pinned from latest
   return (
     <main>
       <section className="relative">
