@@ -36,10 +36,10 @@ export default function RightSidebar({
           <PinnedTimeline items={(pinned ?? []).slice(0, 5)} />
 
           {/* 2) Top sources meter */}
-          <TopSourcesBox items={latest ?? []} />
+          <TopSourcesBox />
 
           {/* 3) Quick filters */}
-          <QuickFiltersBox items={latest ?? []} />
+          <QuickFiltersBox />
 
           {/* 4) Subscribe */}
           <SubscribeCard />
