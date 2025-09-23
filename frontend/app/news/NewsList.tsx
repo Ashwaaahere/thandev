@@ -8,6 +8,7 @@ type Item = {
   image?: string | null;
   summary?: string | null;
   published_at?: string | number | Date;
+  publishedAt?: string | number | Date; // Support both field names
 };
 
 /**
