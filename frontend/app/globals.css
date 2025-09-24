@@ -381,3 +381,199 @@ a:hover { color: var(--brand-700); }
 .dark .timeline-fade-after {
   mask-image: linear-gradient(to bottom, black 90%, transparent 100%);
 }
+
+/* -------- Loading Screen Animations -------- */
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { 
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.3);
+  }
+  50% { 
+    box-shadow: 0 0 40px rgba(34, 211, 238, 0.6), 0 0 60px rgba(34, 211, 238, 0.3);
+  }
+}
+
+@keyframes scan-line {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes matrix-rain {
+  0% { transform: translateY(-100vh); opacity: 1; }
+  100% { transform: translateY(100vh); opacity: 0; }
+}
+
+.loading-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.loading-glow {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.loading-scan {
+  position: relative;
+  overflow: hidden;
+}
+
+.loading-scan::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #3b82f6, transparent);
+  animation: scan-line 2s linear infinite;
+}
+
+/* -------- Sidebar Responsive Fixes -------- */
+@media (min-resolution: 1.5dppx) {
+  .sidebar-responsive {
+    max-height: calc(100vh - 160px) !important;
+  }
+}
+
+@media (min-resolution: 2dppx) {
+  .sidebar-responsive {
+    max-height: calc(100vh - 180px) !important;
+  }
+}
+
+/* Ensure timeline items are fully visible */
+.timeline-item {
+  min-height: 80px;
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 0.5rem;
+}
+
+/* Prevent text clipping in timeline */
+.timeline-item span {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* Better spacing for Linux at 125% zoom */
+@media screen and (min-resolution: 1.25dppx) {
+  .timeline-item {
+    min-height: 90px;
+  }
+  
+  .timeline-item .group {
+    padding: 1rem 2rem;
+  }
+  
+  /* Increase Top 5 section height at 125% zoom */
+  .top-5-container {
+    height: 350px !important;
+  }
+}
+
+/* Responsive heights for different zoom levels */
+@media screen and (min-resolution: 1.5dppx) {
+  .top-5-container {
+    height: 400px !important;
+  }
+}
+
+@media screen and (min-resolution: 2dppx) {
+  .top-5-container {
+    height: 450px !important;
+  }
+}
+
+/* Ensure proper height distribution in sidebar */
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.pinned-timeline {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pinned-timeline .timeline-content {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* -------- Futuristic News Page Animations -------- */
+@keyframes grid-move {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(60px, 60px); }
+}
+
+@keyframes card-float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes glow-pulse-soft {
+  0%, 100% { 
+    box-shadow: 0 0 20px rgba(59, 130, 246, 0.1);
+  }
+  50% { 
+    box-shadow: 0 0 40px rgba(59, 130, 246, 0.2), 0 0 60px rgba(59, 130, 246, 0.1);
+  }
+}
+
+/* Futuristic news card effects */
+.news-card {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.news-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  transition: left 0.6s;
+}
+
+.news-card:hover::before {
+  left: 100%;
+}
+
+.news-card:hover {
+  transform: translateY(-8px) scale(1.02);
+  box-shadow: 0 25px 50px rgba(0,0,0,0.15), 0 0 30px rgba(59, 130, 246, 0.2);
+}
+
+/* Featured card special effects */
+.featured-card {
+  background: linear-gradient(135deg, var(--surface) 0%, var(--surface-2) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  position: relative;
+}
+
+.featured-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, transparent 30%, rgba(59, 130, 246, 0.05) 50%, transparent 70%);
+  opacity: 0;
+  transition: opacity 0.5s;
+}
+
+.featured-card:hover::after {
+  opacity: 1;
+}

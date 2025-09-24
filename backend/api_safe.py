@@ -43,7 +43,13 @@ def exploit_to_safe_dict(e: Exploit):
 def list_exploits(limit: int = Query(20, ge=1, le=200), cursor: int = Query(0, ge=0), severity: str = None):
     session = Session()
     try:
-        q = session.query(Exploit).order_by(desc(Exploit.published_at)).offset(cursor).limit(limit)
+        # Filter out rejected entries and entries with no severity
+        q = session.query(Exploit).filter(
+            Exploit.title != "Rejected reason: Not used",
+            Exploit.severity != "none",
+            Exploit.severity.isnot(None)
+        ).order_by(desc(Exploit.published_at)).offset(cursor).limit(limit)
+        
         if severity:
             q = q.filter(Exploit.severity == severity)
         items = q.all()
@@ -70,8 +76,13 @@ def get_exploit(exploit_id: int):
 def top_exploits(count: int = Query(5, ge=1, le=50)):
     session = Session()
     try:
+        # Filter out rejected entries and entries with no severity
         # Top defined by severity -> cvss, fallback to published_at
-        order = session.query(Exploit).order_by(desc(Exploit.cvss_v3), desc(Exploit.published_at)).limit(count).all()
+        order = session.query(Exploit).filter(
+            Exploit.title != "Rejected reason: Not used",
+            Exploit.severity != "none",
+            Exploit.severity.isnot(None)
+        ).order_by(desc(Exploit.cvss_v3), desc(Exploit.published_at)).limit(count).all()
         return JSONResponse({"items": [exploit_to_safe_dict(e) for e in order]})
     finally:
         session.close()
@@ -80,10 +91,18 @@ def top_exploits(count: int = Query(5, ge=1, le=50)):
 def stats():
     session = Session()
     try:
-        total = session.query(Exploit).count()
+        # Filter out rejected entries and entries with no severity
+        base_query = session.query(Exploit).filter(
+            Exploit.title != "Rejected reason: Not used",
+            Exploit.severity != "none",
+            Exploit.severity.isnot(None)
+        )
+        
+        total = base_query.count()
         since = datetime.utcnow() - timedelta(days=1)
-        new_today = session.query(Exploit).filter(Exploit.published_at >= since).count()
-        critical_count = session.query(Exploit).filter(Exploit.severity == "critical").count()
+        new_today = base_query.filter(Exploit.published_at >= since).count()
+        critical_count = base_query.filter(Exploit.severity == "critical").count()
+        
         return JSONResponse({
             "total_exploits": total,
             "new_today": new_today,

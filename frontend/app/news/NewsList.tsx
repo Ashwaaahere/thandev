@@ -27,8 +27,12 @@ export default function NewsList({
 
   if (items.length === 0) {
     return (
-      <div className="mt-6 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-8 text-[var(--muted)]">
-        No stories right now. Please check back in a bit.
+      <div className="rounded-2xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-12 text-center backdrop-blur-sm">
+        <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-gradient-to-br from-[var(--brand)]/20 to-[var(--brand)]/10 flex items-center justify-center">
+          <div className="text-2xl">📰</div>
+        </div>
+        <h3 className="text-xl font-semibold text-[var(--fg)] mb-2">No stories right now</h3>
+        <p className="text-[var(--muted)]">Please check back in a bit for the latest updates</p>
       </div>
     );
   }
@@ -43,10 +47,10 @@ export default function NewsList({
   };
 
   return (
-    <>
+    <div className="space-y-8">
       {/* Featured */}
       {featured && (
-        <article className="mb-8 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-soft">
+        <article className="overflow-hidden rounded-3xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] shadow-2xl shadow-[var(--brand)]/10 featured-card news-card backdrop-blur-sm">
           <Link
             href={toHref(featured.url)}
             className="group block focus:outline-none"
@@ -99,11 +103,11 @@ export default function NewsList({
 
       {/* Grid for the rest */}
       {rest.length > 0 && (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
           {rest.map((it, idx) => (
             <article
               key={it.id ?? `${it.url ?? "row"}-${idx}`}
-              className="overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-soft transition-transform duration-200 hover:-translate-y-0.5"
+              className="overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] shadow-lg hover:shadow-xl hover:shadow-[var(--brand)]/10 news-card backdrop-blur-sm transition-all duration-500 hover:border-[var(--brand)]/30"
             >
               <Link
                 href={toHref(it.url)}
@@ -149,6 +153,6 @@ export default function NewsList({
           ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
