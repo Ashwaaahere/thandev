@@ -231,6 +231,31 @@ a:hover { color: var(--brand-700); }
   100% { box-shadow: 0 0 0 0 rgba(239,68,68,0) }
 }
 
+/* --- Performance optimizations --- */
+.news-card {
+  will-change: transform, box-shadow;
+  transform: translateZ(0); /* Force hardware acceleration */
+}
+
+.news-card:hover {
+  will-change: transform, box-shadow;
+}
+
+/* Optimize animations for better scroll performance */
+.group:hover .group-hover\:scale-102 {
+  transform: scale(1.02);
+}
+
+.group:hover .group-hover\:scale-105 {
+  transform: scale(1.05);
+}
+
+/* Reduce repaints on scroll */
+.news-card img {
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
 /* --- Timeline spine + items (optional mobile) --- */
 .timeline::before{
   content:""; position:absolute; left:0; top:4px; bottom:4px;
@@ -242,6 +267,7 @@ a:hover { color: var(--brand-700); }
   gap: .75rem;
   padding-left: 1rem; /* space for spine + pin */
   padding-bottom: .9rem;
+  will-change: auto; /* Only change when needed */
 }
 .timeline-item:last-child{ padding-bottom: 0; }
 

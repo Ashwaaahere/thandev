@@ -3,14 +3,14 @@
 export default function NewsLoading() {
   return (
     <div className="min-h-screen flex items-center justify-center relative" style={{ background: 'var(--bg)' }}>
-      {/* Subtle center-focused gradient */}
+      {/* Subtle center-focused gradient with news theme */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="w-96 h-96 rounded-full bg-gradient-to-br from-blue-400/10 via-purple-400/15 to-cyan-400/10 blur-3xl animate-pulse" />
       </div>
 
       {/* Subtle particles around center */}
       <div className="absolute inset-0 overflow-hidden flex items-center justify-center">
-        {[...Array(8)].map((_, i) => (
+        {[...Array(10)].map((_, i) => (
           <div
             key={i}
             className="absolute w-1 h-1 rounded-full animate-pulse"
@@ -28,15 +28,17 @@ export default function NewsLoading() {
 
       {/* Main loading content */}
       <div className="relative z-10 text-center">
-        {/* Animated logo */}
+        {/* Animated logo with news theme */}
         <div className="mb-8">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl loading-float loading-glow" 
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl loading-float loading-glow flex items-center justify-center"
                style={{ 
                  background: 'linear-gradient(92deg, #60a5fa 0%, #a78bfa 35%, #22d3ee 70%, #60a5fa 100%)',
                  boxShadow: '0 10px 30px rgba(99,102,241,.25)'
-               }} />
+               }}>
+            <div className="text-2xl">📰</div>
+          </div>
           <div className="text-2xl font-bold title-future animate-pulse">
-            Thandev
+            Thandev News
           </div>
         </div>
 
@@ -65,8 +67,17 @@ export default function NewsLoading() {
           </div>
         </div>
 
+        {/* News-themed loading animation */}
+        <div className="mt-8 flex justify-center items-center space-x-4">
+          <div className="w-8 h-8 border-2 border-t-transparent rounded-full animate-spin" 
+               style={{ borderColor: 'var(--brand)', borderTopColor: 'transparent' }} />
+          <div className="text-sm" style={{ color: 'var(--muted)' }}>
+            Processing news articles...
+          </div>
+        </div>
+
         {/* Loading dots */}
-        <div className="flex justify-center space-x-2 mt-8">
+        <div className="flex justify-center space-x-2 mt-6">
           {[...Array(3)].map((_, i) => (
             <div
               key={i}
