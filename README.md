@@ -88,7 +88,7 @@ A modern, futuristic security intelligence platform that provides real-time CVE 
    ```bash
    cd backend
    source .venv/bin/activate
-   uvicorn api_safe:app --reload --port 8000
+   uvicorn app.main:app --reload --port 8000
    ```
 
 2. **Start the Frontend**
