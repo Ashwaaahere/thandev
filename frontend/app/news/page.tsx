@@ -45,9 +45,14 @@ export const metadata = {
 // Server-side data fetching
 async function getNewsData() {
   try {
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    // Use absolute URL for server-side fetching in Vercel
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
+                   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
     const res = await fetch(`${baseUrl}/api/news?category=cyber&limit=100`, {
-      next: { revalidate: 300 } // Revalidate every 5 minutes
+      next: { revalidate: 300 }, // Revalidate every 5 minutes
+      headers: {
+        'User-Agent': 'thandev-server/1.0',
+      }
     });
     
     if (!res.ok) {
@@ -58,6 +63,7 @@ async function getNewsData() {
     return data.items || [];
   } catch (error) {
     console.error('Failed to fetch news data:', error);
+    // Return empty array instead of throwing error to prevent page crash
     return [];
   }
 }
