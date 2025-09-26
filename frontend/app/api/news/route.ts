@@ -52,12 +52,18 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
   if (m?.[1]) return m[1];
   
   // For sources that don't provide images in RSS, try to fetch from article page
-  // Only fetch for first 3 articles to avoid performance issues
-  if ((source === 'BleepingComputer' || source === 'Krebs on Security' || source === 'SANS ISC Diary') && it?.link && articleIndex < 3) {
+  // Only fetch for first 2 articles to avoid performance issues in production
+  if ((source === 'BleepingComputer' || source === 'Krebs on Security' || source === 'SANS ISC Diary') && it?.link && articleIndex < 2) {
     try {
       const response = await fetch(it.link, {
-        headers: { 'User-Agent': 'thandev-news/1.0 (+https://github.com/Ashwaaahere/thandev)' },
-        signal: AbortSignal.timeout(3000) // Reduced to 3 second timeout
+        headers: { 
+          'User-Agent': 'thandev-news/1.0 (+https://github.com/Ashwaaahere/thandev)',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.5',
+          'Accept-Encoding': 'gzip, deflate',
+          'Connection': 'keep-alive',
+        },
+        signal: AbortSignal.timeout(5000) // Increased timeout for production
       });
       if (response.ok) {
         const html = await response.text();
@@ -126,6 +132,7 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
       }
     } catch (e) {
       console.warn(`Failed to fetch image from ${it.link}:`, e);
+      // Don't throw error, just continue without image
     }
   }
   
@@ -172,9 +179,9 @@ export async function GET(req: Request) {
     SOURCES_RSS.map(async (s) => {
       if (category && s.category !== category) return;
       try {
-        // Add timeout to prevent hanging
+        // Add timeout to prevent hanging in production
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout')), 10000)
+          setTimeout(() => reject(new Error('RSS feed timeout')), 15000)
         );
         
         const feedPromise = parser.parseURL(s.url);
@@ -187,6 +194,7 @@ export async function GET(req: Request) {
         }
       } catch (e: any) {
         console.error('[news] source failed', s.source, e?.message || e);
+        // Continue with other sources even if one fails
       }
     })
   );
@@ -206,5 +214,14 @@ export async function GET(req: Request) {
     out = out.filter((i) => T(`${i.title} ${i.summary} ${i.source}`).includes(q));
   }
 
-  return NextResponse.json({ items: out.slice(0, limit) });
+  // If no items found, return empty array instead of error
+  if (out.length === 0) {
+    console.warn('[news] No items found for category:', category, 'sinceDays:', sinceDays);
+  }
+
+  return NextResponse.json({ 
+    items: out.slice(0, limit),
+    total: out.length,
+    sources_checked: SOURCES_RSS.length
+  });
 }
