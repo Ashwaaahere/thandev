@@ -2,6 +2,7 @@
 import NewsClientWrapper from "@/components/News/NewsClientWrapper";
 import RightSidebar from "@/components/News/RightSidebar";
 import { calculateSourceCounts } from "@/components/News/TopSourcesBox";
+import { Suspense } from "react";
 
 export const metadata = {
   title: "Cybersecurity News Feed - Real-time Threat Intelligence",
@@ -42,52 +43,10 @@ export const metadata = {
   },
 };
 
-// Server-side data fetching
-async function getNewsData() {
-  try {
-    // Determine the correct base URL for server-side fetching
-    let baseUrl: string;
-    
-    if (process.env.NEXT_PUBLIC_BASE_URL) {
-      baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
-    } else if (process.env.VERCEL_URL) {
-      baseUrl = `https://${process.env.VERCEL_URL}`;
-    } else {
-      baseUrl = 'http://localhost:3000';
-    }
-    
-    console.log('Server-side fetching news from:', `${baseUrl}/api/news?category=cyber&limit=100`);
-    
-    const res = await fetch(`${baseUrl}/api/news?category=cyber&limit=100`, {
-      next: { revalidate: 300 },
-      headers: {
-        'User-Agent': 'thandev-server/1.0',
-        'Accept': 'application/json',
-        'Cache-Control': 'no-cache',
-      }
-    });
-    
-    if (!res.ok) {
-      console.error(`HTTP error: ${res.status} ${res.statusText}`);
-      throw new Error(`Failed to fetch news: ${res.status}`);
-    }
-    
-    const data = await res.json();
-    console.log('Received news data:', data.items?.length || 0, 'items');
-    return data.items || [];
-  } catch (error) {
-    console.error('Failed to fetch news data:', error);
-    return [];
-  }
-}
+export default function NewsPage() {
+  // Remove server-side data fetching - let client components handle it
 
-export default async function NewsPage() {
-  const allNews = await getNewsData();
-  const latest = allNews.slice(0, 31); // Show first 31 articles
-  const pinned = latest.slice(0, 5);
-  const sourceCounts = calculateSourceCounts(allNews);
-
-  // Structured data for news articles
+  // Static structured data for SEO
   const newsStructuredData = {
     "@context": "https://schema.org",
     "@type": "CollectionPage",
@@ -96,31 +55,8 @@ export default async function NewsPage() {
     "url": "https://thandev.com/news",
     "mainEntity": {
       "@type": "ItemList",
-      "numberOfItems": allNews.length,
-      "itemListElement": latest.slice(0, 10).map((article, index) => ({
-        "@type": "NewsArticle",
-        "position": index + 1,
-        "headline": article.title,
-        "description": article.summary,
-        "url": article.url,
-        "datePublished": article.publishedAt,
-        "author": {
-          "@type": "Organization",
-          "name": article.source
-        },
-        "publisher": {
-          "@type": "Organization",
-          "name": "Thandev",
-          "logo": {
-            "@type": "ImageObject",
-            "url": "https://thandev.com/logo.png"
-          }
-        },
-        "image": article.image ? {
-          "@type": "ImageObject",
-          "url": article.image
-        } : undefined
-      }))
+      "numberOfItems": 0,
+      "itemListElement": []
     }
   };
 
@@ -152,14 +88,14 @@ export default async function NewsPage() {
         <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
           <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent" />
           <div className="relative z-10">
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">{latest.length}</div>
+            <div className="text-2xl font-bold text-green-600 dark:text-green-400">-</div>
             <div className="text-sm text-[var(--muted)] font-medium">Articles Shown</div>
           </div>
         </div>
         <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
           <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent" />
           <div className="relative z-10">
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{allNews.length}</div>
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">-</div>
             <div className="text-sm text-[var(--muted)] font-medium">Total Available</div>
           </div>
         </div>
@@ -173,7 +109,7 @@ export default async function NewsPage() {
         <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
           <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent" />
           <div className="relative z-10">
-            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">{sourceCounts.length}</div>
+            <div className="text-2xl font-bold text-purple-600 dark:text-purple-400">-</div>
             <div className="text-sm text-[var(--muted)] font-medium">Sources</div>
           </div>
         </div>
@@ -189,10 +125,10 @@ export default async function NewsPage() {
               <span>Live updates</span>
             </div>
           </div>
-          <NewsClientWrapper initialNews={latest} totalCount={allNews.length} />
+          <NewsClientWrapper initialNews={[]} totalCount={0} />
         </div>
         <aside className="lg:col-span-1">
-          <RightSidebar pinned={pinned} latest={latest} />
+          <RightSidebar pinned={[]} latest={[]} />
         </aside>
       </section>
       </main>
