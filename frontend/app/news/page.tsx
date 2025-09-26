@@ -45,25 +45,38 @@ export const metadata = {
 // Server-side data fetching
 async function getNewsData() {
   try {
-    // Use absolute URL for server-side fetching in Vercel
-    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 
-                   (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : 'http://localhost:3000');
+    // Determine the correct base URL for server-side fetching
+    let baseUrl: string;
+    
+    if (process.env.NEXT_PUBLIC_BASE_URL) {
+      baseUrl = process.env.NEXT_PUBLIC_BASE_URL;
+    } else if (process.env.VERCEL_URL) {
+      baseUrl = `https://${process.env.VERCEL_URL}`;
+    } else {
+      baseUrl = 'http://localhost:3000';
+    }
+    
+    console.log('Server-side fetching news from:', `${baseUrl}/api/news?category=cyber&limit=100`);
+    
     const res = await fetch(`${baseUrl}/api/news?category=cyber&limit=100`, {
-      next: { revalidate: 300 }, // Revalidate every 5 minutes
+      next: { revalidate: 300 },
       headers: {
         'User-Agent': 'thandev-server/1.0',
+        'Accept': 'application/json',
+        'Cache-Control': 'no-cache',
       }
     });
     
     if (!res.ok) {
+      console.error(`HTTP error: ${res.status} ${res.statusText}`);
       throw new Error(`Failed to fetch news: ${res.status}`);
     }
     
     const data = await res.json();
+    console.log('Received news data:', data.items?.length || 0, 'items');
     return data.items || [];
   } catch (error) {
     console.error('Failed to fetch news data:', error);
-    // Return empty array instead of throwing error to prevent page crash
     return [];
   }
 }
