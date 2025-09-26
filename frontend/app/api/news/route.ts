@@ -25,13 +25,11 @@ const SOURCES_RSS: Array<{ url: string; source: string; category: FeedItem['cate
   { url: 'https://www.bleepingcomputer.com/feed/',              source: 'BleepingComputer',      category: 'cyber', certified: true },
   { url: 'https://krebsonsecurity.com/feed/',                   source: 'Krebs on Security',     category: 'cyber', certified: true },
   { url: 'https://isc.sans.edu/rssfeed.xml',                    source: 'SANS ISC Diary',        category: 'cyber', certified: true },
-  { url: 'https://msrc.microsoft.com/blog/feed/',               source: 'MSRC',                  category: 'cyber', certified: true },
   { url: 'https://www.zerodayinitiative.com/blog?format=rss',   source: 'ZDI',                   category: 'cyber', certified: true },
-  { url: 'https://googleprojectzero.blogspot.com/feeds/posts/default?alt=rss',
-                                                               source: 'Project Zero',           category: 'cyber', certified: true },
+  { url: 'https://www.darkreading.com/rss.xml',                 source: 'Dark Reading',          category: 'cyber', certified: true },
 
   // Tech / security
-  { url: 'https://feeds.arstechnica.com/arstechnica/security',  source: 'Ars Technica Security', category: 'tech',  certified: true },
+  { url: 'https://arstechnica.com/security/feed/',              source: 'Ars Technica Security', category: 'tech',  certified: true },
 ];
 
 /** -------------------- helpers -------------------- **/
@@ -41,17 +39,100 @@ function isRecent(iso: string, sinceMs: number) {
   return !Number.isNaN(t) && t >= sinceMs;
 }
 
-function extractImage(it: any): string | null {
+async function extractImage(it: any, source: string, articleIndex: number = 0): Promise<string | null> {
+  // First try standard RSS image fields
   if (it?.enclosure?.url) return it.enclosure.url as string;
   const media = (it as any)['media:content'] || (it as any)['media:thumbnail'];
   if (media?.url) return media.url as string;
   if (Array.isArray(media) && media[0]?.url) return media[0].url as string;
+  
+  // Try to extract from HTML content
   const html = (it?.content || it?.['content:encoded'] || '') as string;
   const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-  return m?.[1] ?? null;
+  if (m?.[1]) return m[1];
+  
+  // For sources that don't provide images in RSS, try to fetch from article page
+  // Only fetch for first 3 articles to avoid performance issues
+  if ((source === 'BleepingComputer' || source === 'Krebs on Security' || source === 'SANS ISC Diary') && it?.link && articleIndex < 3) {
+    try {
+      const response = await fetch(it.link, {
+        headers: { 'User-Agent': 'thandev-news/1.0 (+https://github.com/Ashwaaahere/thandev)' },
+        signal: AbortSignal.timeout(3000) // Reduced to 3 second timeout
+      });
+      if (response.ok) {
+        const html = await response.text();
+        
+        // Look for article-specific images first (main content area)
+        const articleMatch = html.match(/<article[^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["'][\s\S]*?<\/article>/i);
+        if (articleMatch?.[1] && !articleMatch[1].startsWith('data:')) return articleMatch[1];
+        
+        // Look for images in the main content area
+        const contentMatch = html.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["'][\s\S]*?<\/div>/i);
+        if (contentMatch?.[1] && !contentMatch[1].startsWith('data:')) return contentMatch[1];
+        
+        // Look for lazy-loaded images with data-src attribute (prefer article-specific images)
+        const lazyMatches = html.match(/<img[^>]+data-src=["']([^"']+)["']/gi);
+        if (lazyMatches) {
+          // First pass: look for high-quality article images
+          for (const match of lazyMatches) {
+            const url = match.match(/data-src=["']([^"']+)["']/i)?.[1];
+            if (url && !url.startsWith('data:') && 
+                !url.includes('logo') && 
+                !url.includes('avatar') &&
+                url.includes('hl-images') &&
+                !url.includes('thumb')) {
+              return url;
+            }
+          }
+          
+          // Second pass: accept thumbnail images as fallback
+          for (const match of lazyMatches) {
+            const url = match.match(/data-src=["']([^"']+)["']/i)?.[1];
+            if (url && !url.startsWith('data:') && 
+                !url.includes('logo') && 
+                !url.includes('avatar') &&
+                url.includes('hl-images')) {
+              return url;
+            }
+          }
+        }
+        
+        // Fallback to regular src attribute (prefer article-specific images)
+        const srcMatches = html.match(/<img[^>]+src=["']([^"']+)["']/gi);
+        if (srcMatches) {
+          // First pass: look for high-quality article images
+          for (const match of srcMatches) {
+            const url = match.match(/src=["']([^"']+)["']/i)?.[1];
+            if (url && !url.startsWith('data:') && 
+                !url.includes('logo') && 
+                !url.includes('avatar') &&
+                url.includes('hl-images') &&
+                !url.includes('thumb')) {
+              return url;
+            }
+          }
+          
+          // Second pass: accept thumbnail images as fallback
+          for (const match of srcMatches) {
+            const url = match.match(/src=["']([^"']+)["']/i)?.[1];
+            if (url && !url.startsWith('data:') && 
+                !url.includes('logo') && 
+                !url.includes('avatar') &&
+                url.includes('hl-images')) {
+              return url;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch image from ${it.link}:`, e);
+    }
+  }
+  
+  return null;
 }
 
-function normalizeRSS(item: any, src: { source: string; category: FeedItem['category']; certified: boolean }): FeedItem | null {
+async function normalizeRSS(item: any, src: { source: string; category: FeedItem['category']; certified: boolean }, articleIndex: number = 0): Promise<FeedItem | null> {
   const title = (item?.title ?? '').toString();
   const link  = (item?.link  ?? '').toString();
   if (!title || !link) return null;
@@ -59,7 +140,7 @@ function normalizeRSS(item: any, src: { source: string; category: FeedItem['cate
   const dateRaw = item.isoDate || item.pubDate || '';
   const publishedAt = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString();
   const plain = (item.contentSnippet || item.content || '').toString().replace(/<[^>]+>/g, '').trim();
-  const image = extractImage(item);
+  const image = await extractImage(item, src.source, articleIndex);
 
   return {
     id: `${src.source}:${link}`,
@@ -99,8 +180,9 @@ export async function GET(req: Request) {
         const feedPromise = parser.parseURL(s.url);
         const feed = await Promise.race([feedPromise, timeoutPromise]) as any;
         
-        for (const it of feed.items || []) {
-          const n = normalizeRSS(it, s);
+        for (let i = 0; i < (feed.items || []).length; i++) {
+          const it = feed.items[i];
+          const n = await normalizeRSS(it, s, i);
           if (n) items.push(n);
         }
       } catch (e: any) {

@@ -1,7 +1,7 @@
 // components/News/RightSidebar.tsx
 import type { Item } from "@/components/types";
 import PinnedTimeline from "./PinnedTimeline";
-import TopSourcesBox from "./TopSourcesBox";
+import TopSourcesBox, { calculateSourceCounts } from "./TopSourcesBox";
 import QuickFiltersBox from "./QuickFiltersBox";
 import SubscribeCard from "./SubscribeCard";
 import AdditionalContent from "./AdditionalContent";
@@ -36,7 +36,7 @@ export default function RightSidebar({
           </div>
 
           {/* 2) Top sources meter */}
-          <TopSourcesBox />
+          <TopSourcesBox sources={calculateSourceCounts(latest)} />
 
           {/* 3) Quick filters */}
           <QuickFiltersBox />

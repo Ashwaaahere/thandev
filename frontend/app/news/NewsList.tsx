@@ -61,9 +61,12 @@ export default function NewsList({
       {/* Featured */}
       {featured && (
         <article className="group relative overflow-hidden rounded-3xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] shadow-xl shadow-[var(--brand)]/10 featured-card news-card transition-shadow duration-300 hover:shadow-[var(--brand)]/20">
-          <Link
+          <a
             href={toHref(featured.url)}
-            className="block focus:outline-none"
+            className="block focus:outline-none cursor-pointer"
+            onClick={(e) => {
+              console.log('Featured article clicked:', toHref(featured.url));
+            }}
           >
             {/* image */}
             <div className="relative h-64 w-full overflow-hidden sm:h-72 md:h-[24rem]">
@@ -72,14 +75,14 @@ export default function NewsList({
                 <img
                   src={featured.image}
                   alt={featured.title ?? "story image"}
-                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-102"
+                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
                   loading="lazy"
                 />
               ) : (
                 <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5" />
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent" />
-              <div className="absolute top-4 right-4">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none" />
+              <div className="absolute top-4 right-4 pointer-events-none">
                 <div className="rounded-full bg-[var(--brand)] px-3 py-1 text-xs font-bold text-white">
                   FEATURED
                 </div>
@@ -110,7 +113,7 @@ export default function NewsList({
                 Read More →
               </div>
             </div>
-          </Link>
+          </a>
         </article>
       )}
 
@@ -122,9 +125,12 @@ export default function NewsList({
               key={it.id ?? `${it.url ?? "row"}-${idx}`}
               className="group relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] shadow-lg hover:shadow-xl hover:shadow-[var(--brand)]/15 news-card transition-shadow duration-300 hover:border-[var(--brand)]/30"
             >
-              <Link
+              <a
                 href={toHref(it.url)}
-                className="block focus:outline-none"
+                className="block focus:outline-none cursor-pointer"
+                onClick={(e) => {
+                  console.log('Grid article clicked:', toHref(it.url));
+                }}
               >
                 <div className="relative h-48 w-full overflow-hidden">
                   {it.image ? (
@@ -138,7 +144,7 @@ export default function NewsList({
                   ) : (
                     <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5" />
                   )}
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent" />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
                 </div>
 
                 <div className="relative p-5">
@@ -164,7 +170,7 @@ export default function NewsList({
                     Read Article →
                   </div>
                 </div>
-              </Link>
+              </a>
             </article>
           ))}
         </div>

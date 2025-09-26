@@ -1,6 +1,4 @@
 // components/News/TopSourcesBox.tsx
-"use client";
-
 import clsx from "clsx";
 
 export type SourceCount = { name: string; count: number };
@@ -11,17 +9,47 @@ type Props = {
   title?: string;
 };
 
-const defaultSources: SourceCount[] = [
-  { name: "The Hacker News", count: 37 },
-  { name: "BleepingComputer", count: 12 },
-  { name: "SANS ISC Diary", count: 10 },
-];
+// Helper function to calculate source counts from news items
+export function calculateSourceCounts(newsItems: any[]): SourceCount[] {
+  const sourceMap = new Map<string, number>();
+  
+  newsItems.forEach(item => {
+    if (item.source) {
+      const currentCount = sourceMap.get(item.source) || 0;
+      sourceMap.set(item.source, currentCount + 1);
+    }
+  });
+  
+  return Array.from(sourceMap.entries())
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 5); // Show top 5 sources
+}
 
 export default function TopSourcesBox({
   className,
-  sources = defaultSources,
+  sources = [],
   title = "Top sources this week",
 }: Props) {
+  // Handle empty sources gracefully for SSR
+  if (!sources || sources.length === 0) {
+    return (
+      <section
+        className={clsx(
+          "rounded-xl bg-[var(--surface)] border card-border shadow-soft p-3",
+          className
+        )}
+      >
+        <h3 className="mb-2 text-sm font-semibold text-[var(--fg)]">{title}</h3>
+        <div className="space-y-2">
+          <div className="text-xs text-[var(--muted)] text-center py-4">
+            Loading source data...
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const max = Math.max(...sources.map((s) => s.count), 1);
 
   return (

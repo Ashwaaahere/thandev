@@ -20,11 +20,16 @@ export default function SubscribeCard({ className }: Props) {
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          // no-op (wire to your backend)
+          const formData = new FormData(e.currentTarget);
+          const email = formData.get('email') as string;
+          if (email) {
+            alert(`Thank you for subscribing with ${email}! (This is a demo)`);
+          }
         }}
         className="mt-3 flex gap-2"
       >
         <input
+          name="email"
           type="email"
           placeholder="you@company.com"
           className="min-w-0 flex-1 rounded-lg border card-border bg-transparent px-3 py-2 text-sm text-[var(--fg)] placeholder:text-[var(--muted)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"

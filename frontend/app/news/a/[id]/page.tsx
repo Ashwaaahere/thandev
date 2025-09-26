@@ -3,6 +3,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { b64urlDecode } from "@/components/utils/base64url";
 import { normalizeExternalUrl, isHttpUrl } from "@/components/utils/urls";
+import ShareButtons from "@/components/ShareButtons";
+import RedirectHandler from "@/components/RedirectHandler";
 
 // Server-side libs to extract readable content
 import { JSDOM } from "jsdom";
@@ -99,7 +101,7 @@ export default async function ArticlePage({ params }: Props) {
 
   if (!targetUrl) {
     return (
-      <main className="mx-auto max-w-4xl px-6 py-10">
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="relative overflow-hidden rounded-2xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-8 backdrop-blur-sm">
           <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
           <div className="relative z-10">
@@ -128,7 +130,7 @@ export default async function ArticlePage({ params }: Props) {
   // If we can't fetch HTML, show a simple "open original" card
   if (!html) {
     return (
-      <main className="mx-auto max-w-4xl px-6 py-10">
+      <main className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:px-8">
         <div className="relative overflow-hidden rounded-2xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-8 backdrop-blur-sm">
           <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
           <div className="relative z-10">
@@ -177,8 +179,30 @@ export default async function ArticlePage({ params }: Props) {
   const articleExcerpt = parsed?.excerpt || meta.description || "";
   const heroImage = meta.image || "";
 
+  // If parsing failed or content is too short, redirect to external site
+  if (!articleHtml || articleHtml.length < 500) {
+    return (
+      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="text-center">
+          <div className="mb-8">
+            <div className="inline-flex items-center gap-3 mb-4">
+              <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+              <span className="text-sm font-semibold text-[var(--brand)]">REDIRECTING</span>
+            </div>
+            <h1 className="text-2xl font-bold title-future mb-4">Opening External Article</h1>
+            <p className="text-[var(--muted)] mb-6">
+              Redirecting you to the original article...
+            </p>
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--brand)] mx-auto mb-4"></div>
+          </div>
+          <RedirectHandler url={targetUrl} />
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="mx-auto max-w-4xl px-6 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
       {/* Top navigation bar */}
       <div className="mb-8 flex items-center justify-between">
         <Link 
@@ -238,16 +262,18 @@ export default async function ArticlePage({ params }: Props) {
       </div>
 
       {/* Article content */}
-      <article className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 md:p-8 backdrop-blur-sm">
-        <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/2 to-transparent" />
-        
-        <div className="relative z-10">
-          {articleHtml ? (
-            <div
-              className="prose prose-lg prose-invert max-w-none prose-headings:scroll-mt-24 prose-headings:text-[var(--fg)] prose-headings:font-bold prose-p:text-[var(--muted)] prose-p:leading-relaxed prose-a:text-[var(--brand)] prose-a:no-underline hover:prose-a:underline prose-strong:text-[var(--fg)] prose-code:text-[var(--brand)] prose-code:bg-[var(--surface-2)] prose-code:px-2 prose-code:py-1 prose-code:rounded prose-pre:bg-[var(--surface-2)] prose-pre:border prose-pre:border-[var(--border)]/50"
-              dangerouslySetInnerHTML={{ __html: articleHtml }}
-            />
-          ) : (
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-4">
+        {/* Main content */}
+        <article className="lg:col-span-3 relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 md:p-8 backdrop-blur-sm">
+          <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/2 to-transparent" />
+          
+          <div className="relative z-10">
+            {articleHtml ? (
+              <div
+                className="prose prose-lg prose-invert max-w-none prose-headings:scroll-mt-24 prose-headings:text-[var(--fg)] prose-headings:font-bold prose-p:text-[var(--muted)] prose-p:leading-relaxed prose-a:text-[var(--brand)] prose-a:no-underline hover:prose-a:underline prose-strong:text-[var(--fg)] prose-code:text-[var(--brand)] prose-code:bg-[var(--surface-2)] prose-code:px-2 prose-code:py-1 prose-code:rounded prose-pre:bg-[var(--surface-2)] prose-pre:border prose-pre:border-[var(--border)]/50"
+                dangerouslySetInnerHTML={{ __html: articleHtml }}
+              />
+            ) : (
             <div className="rounded-lg border border-[var(--brand)]/20 bg-[var(--brand)]/5 p-6 text-center">
               <div className="mb-4 text-4xl">📄</div>
               <h3 className="text-lg font-semibold text-[var(--brand)] mb-2">Content Unavailable</h3>
@@ -264,26 +290,68 @@ export default async function ArticlePage({ params }: Props) {
               </a>
             </div>
           )}
-        </div>
-      </article>
+          </div>
+        </article>
 
-      {/* Bottom navigation */}
-      <div className="mt-8 flex items-center justify-between">
-        <Link 
-          href="/news"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--muted)]/10 px-4 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-[var(--muted)]/20 transition-all duration-300 border border-[var(--muted)]/30"
-        >
-          ← All News
-        </Link>
-        <a
-          href={targetUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 rounded-lg bg-[var(--brand)]/10 px-4 py-2 text-sm font-semibold text-[var(--brand)] hover:bg-[var(--brand)]/20 transition-all duration-300 border border-[var(--brand)]/30"
-        >
-          View Original ↗
-        </a>
+        {/* Sidebar */}
+        <aside className="lg:col-span-1 space-y-6">
+          {/* Article info */}
+          <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 backdrop-blur-sm">
+            <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
+            <div className="relative z-10">
+              <h3 className="text-lg font-bold text-[var(--fg)] mb-4">Article Info</h3>
+              <div className="space-y-3 text-sm">
+                <div>
+                  <span className="text-[var(--muted)]">Source:</span>
+                  <div className="font-semibold text-[var(--brand)]">{new URL(targetUrl).hostname}</div>
+                </div>
+                <div>
+                  <span className="text-[var(--muted)]">Read time:</span>
+                  <div className="font-semibold">~{Math.ceil((articleHtml?.length || 0) / 1000)} min</div>
+                </div>
+                <div>
+                  <span className="text-[var(--muted)]">Word count:</span>
+                  <div className="font-semibold">{(articleHtml?.length || 0).toLocaleString()} chars</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick actions */}
+          <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 backdrop-blur-sm">
+            <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
+            <div className="relative z-10">
+              <h3 className="text-lg font-bold text-[var(--fg)] mb-4">Quick Actions</h3>
+              <div className="space-y-3">
+                <a
+                  href={targetUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block w-full rounded-lg bg-[var(--brand)]/10 px-4 py-3 text-center text-sm font-semibold text-[var(--brand)] hover:bg-[var(--brand)]/20 transition-all duration-300 border border-[var(--brand)]/30"
+                >
+                  View Original ↗
+                </a>
+                <Link
+                  href="/news"
+                  className="block w-full rounded-lg bg-[var(--muted)]/10 px-4 py-3 text-center text-sm font-semibold text-[var(--muted)] hover:bg-[var(--muted)]/20 transition-all duration-300 border border-[var(--muted)]/30"
+                >
+                  ← All News
+                </Link>
+              </div>
+            </div>
+          </div>
+
+          {/* Share */}
+          <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 backdrop-blur-sm">
+            <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
+            <div className="relative z-10">
+              <h3 className="text-lg font-bold text-[var(--fg)] mb-4">Share</h3>
+              <ShareButtons title={articleTitle} url={targetUrl} />
+            </div>
+          </div>
+        </aside>
       </div>
+
     </main>
   );
 }

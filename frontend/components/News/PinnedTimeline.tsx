@@ -29,7 +29,7 @@ export default function PinnedTimeline({ items }: { items: Item[] }) {
       {/* Title */}
       <div className="flex items-center gap-2 px-4 py-3 text-sm font-medium text-[var(--fg)]/80 flex-shrink-0">
         <span className="inline-flex h-2.5 w-2.5 rounded-full bg-rose-500 animate-pulse" />
-        Top 3 of the week
+        Top 5 of the week
       </div>
 
       {/* Content container */}

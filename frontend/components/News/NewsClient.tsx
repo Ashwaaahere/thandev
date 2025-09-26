@@ -21,23 +21,30 @@ export default function NewsClient() {
   const [latest, setLatest] = useState<NewsItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState<number>(0);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
 
   useEffect(() => {
     const fetchNews = async () => {
       try {
         setLoading(true);
-        const res = await fetch('/api/news?category=cyber&limit=20');
+        const res = await fetch('/api/news?category=cyber&limit=100');
         if (!res.ok) {
           throw new Error(`Failed to fetch news: ${res.status}`);
         }
         const data = await res.json();
         console.log('News data received:', data.items?.length || 0, 'items');
-        setLatest(data.items || []);
+        const allItems = data.items || [];
+        setTotalCount(allItems.length);
+        setLatest(allItems.slice(0, 31)); // Show first 31 articles
+        setHasMore(allItems.length > 31);
         setError(null);
       } catch (err: any) {
         console.error('News fetch error:', err);
         setError(err.message);
         setLatest([]);
+        setTotalCount(0);
       } finally {
         setLoading(false);
       }
@@ -47,6 +54,29 @@ export default function NewsClient() {
   }, []);
 
   const pinned = latest.slice(0, 5);
+
+  const loadMore = async () => {
+    if (loadingMore || !hasMore) return;
+    
+    setLoadingMore(true);
+    try {
+      const res = await fetch('/api/news?category=cyber&limit=100');
+      if (!res.ok) {
+        throw new Error(`Failed to fetch more news: ${res.status}`);
+      }
+      const data = await res.json();
+      const allItems = data.items || [];
+      const currentCount = latest.length;
+      const nextBatch = allItems.slice(currentCount, currentCount + 20); // Load 20 more
+      
+      setLatest(prev => [...prev, ...nextBatch]);
+      setHasMore(currentCount + nextBatch.length < allItems.length);
+    } catch (err: any) {
+      console.error('Load more error:', err);
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   if (loading) {
     return <NewsLoading />;
@@ -115,12 +145,19 @@ export default function NewsClient() {
       </section>
 
       {/* Stats bar */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
           <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent" />
           <div className="relative z-10">
             <div className="text-2xl font-bold text-green-600 dark:text-green-400">{latest.length}</div>
-            <div className="text-sm text-[var(--muted)] font-medium">Articles Today</div>
+            <div className="text-sm text-[var(--muted)] font-medium">Articles Shown</div>
+          </div>
+        </div>
+        <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
+          <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent" />
+          <div className="relative z-10">
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{totalCount}</div>
+            <div className="text-sm text-[var(--muted)] font-medium">Total Available</div>
           </div>
         </div>
         <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
@@ -150,6 +187,38 @@ export default function NewsClient() {
             </div>
           </div>
           <NewsList items={latest} />
+          
+          {/* Load More Button */}
+          {hasMore && (
+            <div className="flex justify-center pt-6">
+              <button
+                onClick={loadMore}
+                disabled={loadingMore}
+                className="
+                  relative overflow-hidden rounded-2xl border border-[var(--brand)]/30 
+                  bg-gradient-to-r from-[var(--brand)]/10 to-[var(--brand)]/5 
+                  px-8 py-4 text-[var(--brand)] font-semibold
+                  hover:from-[var(--brand)]/20 hover:to-[var(--brand)]/10
+                  hover:border-[var(--brand)]/50
+                  transition-all duration-300
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                  focus:outline-none focus:ring-2 focus:ring-[var(--brand)]/30
+                "
+              >
+                {loadingMore ? (
+                  <div className="flex items-center gap-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[var(--brand)]"></div>
+                    <span>Loading More...</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-3">
+                    <span>Load More Articles</span>
+                    <div className="text-lg">↓</div>
+                  </div>
+                )}
+              </button>
+            </div>
+          )}
         </div>
         <aside className="lg:col-span-1">
           <RightSidebar pinned={pinned} latest={latest} />

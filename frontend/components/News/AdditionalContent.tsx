@@ -8,7 +8,7 @@ export default function AdditionalContent() {
       <div className="rounded-2xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 backdrop-blur-sm">
         <h3 className="mb-4 text-lg font-semibold text-[var(--fg)] flex items-center gap-2">
           <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-          Security Stats
+          Exploits Stats
         </h3>
         <div className="space-y-3">
           <div className="flex justify-between items-center">
@@ -47,25 +47,6 @@ export default function AdditionalContent() {
               </div>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <div className="rounded-2xl border border-[var(--brand)]/20 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6 backdrop-blur-sm">
-        <h3 className="mb-4 text-lg font-semibold text-[var(--fg)] flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
-          Quick Actions
-        </h3>
-        <div className="space-y-3">
-          <button className="w-full rounded-lg bg-[var(--brand)]/10 hover:bg-[var(--brand)]/20 px-4 py-2 text-sm font-medium text-[var(--brand)] transition-colors">
-            Export Report
-          </button>
-          <button className="w-full rounded-lg border border-[var(--brand)]/20 hover:border-[var(--brand)]/40 px-4 py-2 text-sm font-medium text-[var(--fg)] transition-colors">
-            Set Alerts
-          </button>
-          <button className="w-full rounded-lg border border-[var(--brand)]/20 hover:border-[var(--brand)]/40 px-4 py-2 text-sm font-medium text-[var(--fg)] transition-colors">
-            View Dashboard
-          </button>
         </div>
       </div>
     </div>
