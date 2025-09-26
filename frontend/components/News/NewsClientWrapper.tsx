@@ -19,9 +19,10 @@ type NewsItem = {
 type Props = {
   initialNews: NewsItem[];
   totalCount: number;
+  onStatsUpdate?: (news: NewsItem[], totalCount: number) => void;
 };
 
-export default function NewsClientWrapper({ initialNews, totalCount }: Props) {
+export default function NewsClientWrapper({ initialNews, totalCount, onStatsUpdate }: Props) {
   const [news, setNews] = useState(initialNews);
   const [totalNewsCount, setTotalNewsCount] = useState(totalCount);
   const [loading, setLoading] = useState(false);
@@ -40,8 +41,14 @@ export default function NewsClientWrapper({ initialNews, totalCount }: Props) {
           
           const data = await res.json();
           const items = data.items || [];
-          setNews(items.slice(0, 31)); // Show first 31 articles
+          const newsItems = items.slice(0, 31); // Show first 31 articles
+          setNews(newsItems);
           setTotalNewsCount(data.total || items.length);
+          
+          // Notify parent component about stats update
+          if (onStatsUpdate) {
+            onStatsUpdate(newsItems, data.total || items.length);
+          }
         } catch (error) {
           console.error('Initial data fetch error:', error);
         } finally {
