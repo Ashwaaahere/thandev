@@ -1,10 +1,19 @@
 'use client';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import ThemeToggle from './ThemeToggle';
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    // Check if user is logged in
+    const userData = localStorage.getItem('thandev-user');
+    if (userData) {
+      setUser(JSON.parse(userData));
+    }
+  }, []);
 
   const toggleMobileMenu = () => {
     setIsMobileMenuOpen(!isMobileMenuOpen);
@@ -12,6 +21,12 @@ export default function Navbar() {
 
   const closeMobileMenu = () => {
     setIsMobileMenuOpen(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('thandev-user');
+    setUser(null);
+    window.location.href = '/';
   };
 
   return (
@@ -33,6 +48,30 @@ export default function Navbar() {
 
         <div className="flex items-center gap-3">
           <ThemeToggle />
+          
+          {/* User Menu */}
+          {user ? (
+            <div className="flex items-center gap-3">
+              <span className="hidden md:block text-sm text-[var(--muted)]">
+                Welcome, {user.name || user.email}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1 text-sm text-[var(--muted)] hover:text-[var(--fg)] transition-colors"
+              >
+                Logout
+              </button>
+            </div>
+          ) : (
+            <div className="hidden md:flex items-center gap-3">
+              <Link href="/auth/signin" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] transition-colors">
+                Sign In
+              </Link>
+              <Link href="/auth/signup" className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
+                Sign Up
+              </Link>
+            </div>
+          )}
           
           {/* Mobile Menu Toggle */}
           <button
@@ -98,6 +137,41 @@ export default function Navbar() {
             >
               📚 Docs
             </Link>
+            
+            {/* Mobile Auth Options */}
+            {user ? (
+              <>
+                <div className="px-4 py-3 text-sm text-[var(--muted)]">
+                  Welcome, {user.name || user.email}
+                </div>
+                <button
+                  onClick={() => {
+                    handleLogout();
+                    closeMobileMenu();
+                  }}
+                  className="block w-full text-left px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+                >
+                  🚪 Logout
+                </button>
+              </>
+            ) : (
+              <>
+                <Link
+                  href="/auth/signin"
+                  onClick={closeMobileMenu}
+                  className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+                >
+                  🔑 Sign In
+                </Link>
+                <Link
+                  href="/auth/signup"
+                  onClick={closeMobileMenu}
+                  className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+                >
+                  ✨ Sign Up
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       )}

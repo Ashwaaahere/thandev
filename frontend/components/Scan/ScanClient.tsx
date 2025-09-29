@@ -27,7 +27,11 @@ export interface Vulnerability {
   cvss?: number;
 }
 
-export default function ScanClient() {
+interface ScanClientProps {
+  onScanComplete?: () => void;
+}
+
+export default function ScanClient({ onScanComplete }: ScanClientProps) {
   const [scans, setScans] = useState<ScanResult[]>([]);
   const [currentScan, setCurrentScan] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -114,6 +118,11 @@ export default function ScanClient() {
 
     setCurrentScan(completedScan);
     setScans(prev => prev.map(s => s.id === scan.id ? completedScan : s));
+    
+    // Notify limiter that scan is complete
+    if (onScanComplete) {
+      onScanComplete();
+    }
   };
 
   const generateMockVulnerabilities = (url: string): Vulnerability[] => {

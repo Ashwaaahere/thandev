@@ -1,4 +1,5 @@
 import ScanClient from "@/components/Scan/ScanClient";
+import ScanLimiter from "@/components/Scan/ScanLimiter";
 
 export const metadata = {
   title: "Web Security Scanner - Vulnerability Assessment Tool",
@@ -93,8 +94,10 @@ export default function ScanPage() {
           </div>
         </section>
 
-        {/* Client-side scanner */}
-        <ScanClient />
+        {/* Client-side scanner with limiter */}
+        <ScanLimiter onLimitReached={() => {}}>
+          <ScanClient />
+        </ScanLimiter>
       </main>
     </>
   );
