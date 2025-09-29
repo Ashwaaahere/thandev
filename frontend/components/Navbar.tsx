@@ -27,6 +27,7 @@ export default function Navbar() {
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
           <Link href="/news" className="hover:opacity-100">News</Link>
           <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
+          <Link href="/scan" className="hover:opacity-100">Scanner</Link>
           <Link href="/docs" className="hover:opacity-100">Docs</Link>
         </nav>
 
@@ -82,6 +83,13 @@ export default function Navbar() {
               className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
             >
               🔍 Exploit feed
+            </Link>
+            <Link
+              href="/scan"
+              onClick={closeMobileMenu}
+              className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+            >
+              🛡️ Scanner
             </Link>
             <Link
               href="/docs"
