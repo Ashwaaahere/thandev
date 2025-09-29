@@ -1,10 +1,9 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 
 interface ScanLimiterProps {
   children: React.ReactNode;
-  onLimitReached: () => void;
 }
 
 interface DeviceFingerprint {
@@ -19,7 +18,7 @@ interface DeviceFingerprint {
   deviceMemory: number | undefined;
 }
 
-export default function ScanLimiter({ children, onLimitReached }: ScanLimiterProps) {
+export default function ScanLimiter({ children }: ScanLimiterProps) {
   const [isAllowed, setIsAllowed] = useState<boolean | null>(null);
   const [deviceId, setDeviceId] = useState<string>('');
   const [scansUsed, setScansUsed] = useState(0);
@@ -80,12 +79,11 @@ export default function ScanLimiter({ children, onLimitReached }: ScanLimiterPro
         const scansUsed = parsedData.scansUsed || 0;
         setScansUsed(scansUsed);
         
-        if (scansUsed >= 1) {
-          // Free scan limit reached
-          setIsAllowed(false);
-          onLimitReached();
-          return;
-        }
+               if (scansUsed >= 1) {
+                 // Free scan limit reached
+                 setIsAllowed(false);
+                 return;
+               }
       }
 
       // Device can scan (first time or within limit)
@@ -116,13 +114,12 @@ export default function ScanLimiter({ children, onLimitReached }: ScanLimiterPro
       localStorage.setItem('thandev-scan-limit', JSON.stringify(scanData));
       setScansUsed(scansUsed + 1);
       
-      // If this was the free scan, trigger limit reached
-      if (scansUsed + 1 >= 1) {
-        setTimeout(() => {
-          setIsAllowed(false);
-          onLimitReached();
-        }, 1000); // Allow scan to complete first
-      }
+       // If this was the free scan, trigger limit reached
+       if (scansUsed + 1 >= 1) {
+         setTimeout(() => {
+           setIsAllowed(false);
+         }, 1000); // Allow scan to complete first
+       }
     } catch (error) {
       console.error('Error recording scan:', error);
     }
@@ -154,43 +151,22 @@ export default function ScanLimiter({ children, onLimitReached }: ScanLimiterPro
                 Free Scan Limit Reached
               </h2>
               <p className="text-orange-600 dark:text-orange-300 mb-4">
-                You've used your free security scan. Create an account to continue scanning unlimited websites.
+                You've used your free surface scan. Create an account to continue scanning unlimited websites.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              <div className="text-left">
-                <h3 className="font-semibold text-orange-800 dark:text-orange-200 mb-2">Free Account Includes:</h3>
-                <ul className="text-sm text-orange-600 dark:text-orange-300 space-y-1">
-                  <li>• Unlimited security scans</li>
-                  <li>• Detailed vulnerability reports</li>
-                  <li>• Scan history tracking</li>
-                  <li>• Email notifications</li>
-                </ul>
-              </div>
-              <div className="text-left">
-                <h3 className="font-semibold text-orange-800 dark:text-orange-200 mb-2">Pro Features:</h3>
-                <ul className="text-sm text-orange-600 dark:text-orange-300 space-y-1">
-                  <li>• Advanced vulnerability detection</li>
-                  <li>• API access for automation</li>
-                  <li>• Priority support</li>
-                  <li>• Custom scan schedules</li>
-                </ul>
-              </div>
+            <div className="mb-8">
+              <p className="text-orange-600 dark:text-orange-300 text-center">
+                Be among the first to experience our cutting-edge surface scan platform.
+              </p>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <button
-                onClick={() => window.location.href = '/auth/signup'}
-                className="px-8 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200 shadow-lg hover:shadow-xl"
+                onClick={() => window.location.href = '/auth'}
+                className="px-8 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 transition-all duration-200 shadow-lg hover:shadow-xl hover:shadow-purple-500/25"
               >
                 Create Free Account
-              </button>
-              <button
-                onClick={() => window.location.href = '/auth/signin'}
-                className="px-8 py-3 border border-[var(--border)] text-[var(--fg)] font-semibold rounded-lg hover:bg-[var(--surface)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-all duration-200"
-              >
-                Sign In
               </button>
             </div>
           </div>
@@ -228,7 +204,9 @@ export default function ScanLimiter({ children, onLimitReached }: ScanLimiterPro
   // Render children with scan recording capability
   return (
     <div>
-      {React.cloneElement(children as React.ReactElement, { onScanComplete: recordScan })}
+      {React.isValidElement(children) 
+        ? React.cloneElement(children, { onScanComplete: recordScan } as any)
+        : children}
       
       {/* Free scan indicator */}
       <div className="mt-4 relative overflow-hidden rounded-xl border border-green-200/50 bg-gradient-to-br from-green-50/50 to-green-100/30 p-4 backdrop-blur-sm dark:border-green-800/50 dark:from-green-950/40 dark:to-green-900/20">
@@ -236,7 +214,7 @@ export default function ScanLimiter({ children, onLimitReached }: ScanLimiterPro
         <div className="relative z-10 flex items-center gap-3">
           <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
           <span className="text-sm font-medium text-green-700 dark:text-green-300">
-            Free scan available ({1 - scansUsed} remaining)
+            Free surface scan available ({1 - scansUsed} remaining)
           </span>
         </div>
       </div>

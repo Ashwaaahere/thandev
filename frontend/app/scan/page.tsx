@@ -2,23 +2,23 @@ import ScanClient from "@/components/Scan/ScanClient";
 import ScanLimiter from "@/components/Scan/ScanLimiter";
 
 export const metadata = {
-  title: "Web Security Scanner - Vulnerability Assessment Tool",
-  description: "Professional web security scanner for vulnerability assessment, penetration testing, and security analysis. Scan websites for common vulnerabilities, security misconfigurations, and potential threats.",
+  title: "Surface Scan - Vulnerability Assessment Tool",
+  description: "Professional surface scan tool for vulnerability scan, penetration testing, and security analysis. Scan websites for common vulnerabilities, security misconfigurations, and potential threats.",
   keywords: [
-    "web security scanner",
-    "vulnerability assessment",
+    "surface scan tool",
+    "vulnerability scan",
     "penetration testing",
     "security analysis",
-    "website scanner",
+    "website scan",
     "security testing",
-    "vulnerability scanner",
+    "vulnerability scan",
     "web application security",
     "security audit",
     "threat detection"
   ],
   openGraph: {
-    title: "Web Security Scanner - Vulnerability Assessment Tool",
-    description: "Professional web security scanner for vulnerability assessment, penetration testing, and security analysis.",
+    title: "Surface Scan - Vulnerability Assessment Tool",
+    description: "Professional surface scan tool for vulnerability scan, penetration testing, and security analysis.",
     type: "website",
     url: "https://thandev.com/scan",
     images: [
@@ -26,14 +26,14 @@ export const metadata = {
         url: "/og-scan.png",
         width: 1200,
         height: 630,
-        alt: "Thandev Web Security Scanner",
+        alt: "Thandev Surface Scan",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Web Security Scanner - Vulnerability Assessment Tool",
-    description: "Professional web security scanner for vulnerability assessment, penetration testing, and security analysis.",
+    title: "Surface Scan - Vulnerability Assessment Tool",
+    description: "Professional surface scan tool for vulnerability scan, penetration testing, and security analysis.",
     images: ["/og-scan.png"],
   },
   alternates: {
@@ -46,8 +46,8 @@ export default function ScanPage() {
   const scanStructuredData = {
     "@context": "https://schema.org",
     "@type": "WebApplication",
-    "name": "Thandev Web Security Scanner",
-    "description": "Professional web security scanner for vulnerability assessment and penetration testing",
+    "name": "Thandev Surface Scan",
+    "description": "Professional surface scan tool for vulnerability scan and penetration testing",
     "url": "https://thandev.com/scan",
     "applicationCategory": "SecurityApplication",
     "operatingSystem": "Web",
@@ -86,18 +86,18 @@ export default function ScanPage() {
         <section className="mb-12 text-center">
           <div className="mb-6">
             <h1 className="text-4xl font-bold text-[var(--fg)] mb-4">
-              Web Security Scanner
+              Surface Scan
             </h1>
             <p className="text-lg text-[var(--muted)] max-w-2xl mx-auto">
-              Professional vulnerability assessment and penetration testing tool. Scan websites for security vulnerabilities, misconfigurations, and potential threats.
+              Professional vulnerability scan and penetration testing tool. Scan websites for security vulnerabilities, misconfigurations, and potential threats.
             </p>
           </div>
         </section>
 
-        {/* Client-side scanner with limiter */}
-        <ScanLimiter onLimitReached={() => {}}>
-          <ScanClient />
-        </ScanLimiter>
+               {/* Client-side scanner with limiter */}
+               <ScanLimiter>
+                 <ScanClient />
+               </ScanLimiter>
       </main>
     </>
   );

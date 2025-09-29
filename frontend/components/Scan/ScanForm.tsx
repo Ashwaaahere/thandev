@@ -151,3 +151,4 @@ export default function ScanForm({ onScan, loading }: ScanFormProps) {
     </div>
   );
 }
+

@@ -42,7 +42,7 @@ export default function Navbar() {
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
           <Link href="/news" className="hover:opacity-100">News</Link>
           <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
-          <Link href="/scan" className="hover:opacity-100">Scanner</Link>
+                 <Link href="/scan" className="hover:opacity-100">Surface Scan</Link>
           <Link href="/docs" className="hover:opacity-100">Docs</Link>
         </nav>
 
@@ -63,14 +63,11 @@ export default function Navbar() {
               </button>
             </div>
           ) : (
-            <div className="hidden md:flex items-center gap-3">
-              <Link href="/auth/signin" className="text-sm text-[var(--muted)] hover:text-[var(--fg)] transition-colors">
-                Sign In
-              </Link>
-              <Link href="/auth/signup" className="px-3 py-1 text-sm bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors">
-                Sign Up
-              </Link>
-            </div>
+                   <div className="hidden md:flex items-center gap-3">
+                     <Link href="/auth" className="px-3 py-1 text-sm bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-lg hover:from-cyan-600 hover:to-blue-600 transition-colors shadow-lg hover:shadow-xl">
+                       Sign In / Sign Up
+                     </Link>
+                   </div>
           )}
           
           {/* Mobile Menu Toggle */}
@@ -123,13 +120,13 @@ export default function Navbar() {
             >
               🔍 Exploit feed
             </Link>
-            <Link
-              href="/scan"
-              onClick={closeMobileMenu}
-              className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
-            >
-              🛡️ Scanner
-            </Link>
+                   <Link
+                     href="/scan"
+                     onClick={closeMobileMenu}
+                     className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+                   >
+                     🛡️ Surface Scan
+                   </Link>
             <Link
               href="/docs"
               onClick={closeMobileMenu}
@@ -154,24 +151,15 @@ export default function Navbar() {
                   🚪 Logout
                 </button>
               </>
-            ) : (
-              <>
-                <Link
-                  href="/auth/signin"
-                  onClick={closeMobileMenu}
-                  className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
-                >
-                  🔑 Sign In
-                </Link>
-                <Link
-                  href="/auth/signup"
-                  onClick={closeMobileMenu}
-                  className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
-                >
-                  ✨ Sign Up
-                </Link>
-              </>
-            )}
+                   ) : (
+                     <Link
+                       href="/auth"
+                       onClick={closeMobileMenu}
+                       className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+                     >
+                       🔐 Sign In / Sign Up
+                     </Link>
+                   )}
           </nav>
         </div>
       )}

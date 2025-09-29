@@ -13,7 +13,7 @@ export default function Footer() {
           <div className="flex items-center gap-6 text-sm">
             <a className="hover:text-slate-100" href="/news">News</a>
             <a className="hover:text-slate-100" href="/exploits">Exploit Feeds</a>
-            <a className="hover:text-slate-100" href="/scan">Scanner</a>
+            <a className="hover:text-slate-100" href="/scan">Surface Scan</a>
             <a className="hover:text-slate-100" href="/docs">Docs</a>
           </div>
         </div>

@@ -152,3 +152,4 @@ export default function ScanHistory({ scans, onClear }: ScanHistoryProps) {
     </div>
   );
 }
+

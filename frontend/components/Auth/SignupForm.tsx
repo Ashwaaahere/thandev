@@ -2,7 +2,11 @@
 
 import { useState } from 'react';
 
-export default function SignupForm() {
+interface SignupFormProps {
+  onSuccess?: () => void;
+}
+
+export default function SignupForm({ onSuccess }: SignupFormProps) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -63,9 +67,13 @@ export default function SignupForm() {
       
       setSuccess(true);
       
-      // Redirect to scan page after success
+      // Call success callback or redirect
       setTimeout(() => {
-        window.location.href = '/scan';
+        if (onSuccess) {
+          onSuccess();
+        } else {
+          window.location.href = '/scan';
+        }
       }, 2000);
       
     } catch (err) {
@@ -77,35 +85,33 @@ export default function SignupForm() {
 
   if (success) {
     return (
-      <div className="relative overflow-hidden rounded-2xl border border-green-200/50 bg-gradient-to-br from-green-50/50 to-green-100/30 p-8 backdrop-blur-sm dark:border-green-800/50 dark:from-green-950/40 dark:to-green-900/20">
+      <div className="relative overflow-hidden rounded-2xl border border-green-500/30 bg-gradient-to-br from-green-500/10 to-emerald-500/10 p-8 backdrop-blur-sm">
         <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent" />
         <div className="relative z-10 text-center">
           <div className="mb-4 flex items-center justify-center gap-3">
-            <div className="h-2 w-2 rounded-full bg-green-500 animate-pulse" />
-            <span className="text-sm font-semibold text-green-600 dark:text-green-400">SUCCESS</span>
+            <div className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+            <span className="text-sm font-semibold text-green-400">SUCCESS</span>
           </div>
-          <h2 className="text-xl font-bold text-green-800 dark:text-green-200 mb-2">Account Created!</h2>
-          <p className="text-green-600 dark:text-green-300 mb-4">
+          <h2 className="text-xl font-bold text-white mb-2">Account Created!</h2>
+          <p className="text-slate-300 mb-4">
             Welcome to Thandev! You now have unlimited access to our security scanning tools.
           </p>
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-500 mx-auto"></div>
-          <p className="text-sm text-green-600 dark:text-green-300 mt-2">Redirecting to scanner...</p>
+          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-400 mx-auto"></div>
+          <p className="text-sm text-slate-300 mt-2">Redirecting to scanner...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-8 shadow-lg">
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent" />
-      
-      <div className="relative z-10">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Name */}
-          <div>
-            <label htmlFor="name" className="block text-sm font-medium text-[var(--fg)] mb-2">
-              Full Name
-            </label>
+    <div className="space-y-6">
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Name */}
+        <div>
+          <label htmlFor="name" className="block text-sm font-medium text-slate-300 mb-2">
+            Full Name
+          </label>
+          <div className="relative">
             <input
               type="text"
               id="name"
@@ -113,16 +119,19 @@ export default function SignupForm() {
               value={formData.name}
               onChange={handleChange}
               required
-              className="w-full px-4 py-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--fg)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm"
               placeholder="Enter your full name"
             />
+            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 opacity-0 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none" />
           </div>
+        </div>
 
-          {/* Email */}
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-[var(--fg)] mb-2">
-              Email Address
-            </label>
+        {/* Email */}
+        <div>
+          <label htmlFor="email" className="block text-sm font-medium text-slate-300 mb-2">
+            Email Address
+          </label>
+          <div className="relative">
             <input
               type="email"
               id="email"
@@ -130,16 +139,19 @@ export default function SignupForm() {
               value={formData.email}
               onChange={handleChange}
               required
-              className="w-full px-4 py-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--fg)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm"
               placeholder="Enter your email address"
             />
+            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 opacity-0 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none" />
           </div>
+        </div>
 
-          {/* Password */}
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-[var(--fg)] mb-2">
-              Password
-            </label>
+        {/* Password */}
+        <div>
+          <label htmlFor="password" className="block text-sm font-medium text-slate-300 mb-2">
+            Password
+          </label>
+          <div className="relative">
             <input
               type="password"
               id="password"
@@ -147,16 +159,19 @@ export default function SignupForm() {
               value={formData.password}
               onChange={handleChange}
               required
-              className="w-full px-4 py-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--fg)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm"
               placeholder="Create a strong password"
             />
+            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 opacity-0 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none" />
           </div>
+        </div>
 
-          {/* Confirm Password */}
-          <div>
-            <label htmlFor="confirmPassword" className="block text-sm font-medium text-[var(--fg)] mb-2">
-              Confirm Password
-            </label>
+        {/* Confirm Password */}
+        <div>
+          <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-300 mb-2">
+            Confirm Password
+          </label>
+          <div className="relative">
             <input
               type="password"
               id="confirmPassword"
@@ -164,10 +179,12 @@ export default function SignupForm() {
               value={formData.confirmPassword}
               onChange={handleChange}
               required
-              className="w-full px-4 py-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--fg)] placeholder-[var(--muted)] focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
+              className="w-full px-4 py-3 rounded-xl border border-slate-600 bg-slate-700/50 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200 backdrop-blur-sm"
               placeholder="Confirm your password"
             />
+            <div className="absolute inset-0 rounded-xl bg-gradient-to-r from-purple-500/10 to-pink-500/10 opacity-0 focus-within:opacity-100 transition-opacity duration-200 pointer-events-none" />
           </div>
+        </div>
 
           {/* Terms Agreement */}
           <div className="flex items-start gap-3">
@@ -177,15 +194,15 @@ export default function SignupForm() {
               name="agreeToTerms"
               checked={formData.agreeToTerms}
               onChange={handleChange}
-              className="mt-1 h-4 w-4 text-blue-600 border-[var(--border)] rounded focus:ring-blue-500"
+              className="mt-1 h-4 w-4 text-purple-600 border-slate-600 rounded focus:ring-purple-500 bg-slate-700"
             />
-            <label htmlFor="agreeToTerms" className="text-sm text-[var(--muted)]">
+            <label htmlFor="agreeToTerms" className="text-sm text-slate-400">
               I agree to the{" "}
-              <a href="/terms" className="text-blue-600 hover:text-blue-700 font-medium">
+              <a href="/terms" className="text-purple-400 hover:text-purple-300 font-medium">
                 Terms of Service
               </a>{" "}
               and{" "}
-              <a href="/privacy" className="text-blue-600 hover:text-blue-700 font-medium">
+              <a href="/privacy" className="text-purple-400 hover:text-purple-300 font-medium">
                 Privacy Policy
               </a>
             </label>
@@ -193,8 +210,8 @@ export default function SignupForm() {
 
           {/* Error Message */}
           {error && (
-            <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
-              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 backdrop-blur-sm">
+              <p className="text-sm text-red-400">{error}</p>
             </div>
           )}
 
@@ -202,7 +219,7 @@ export default function SignupForm() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl"
+            className="w-full flex items-center justify-center gap-3 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white font-semibold rounded-xl hover:from-purple-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-2 focus:ring-offset-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl hover:shadow-purple-500/25"
           >
             {loading ? (
               <>
@@ -223,9 +240,9 @@ export default function SignupForm() {
         </form>
 
         {/* Benefits */}
-        <div className="mt-6 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20">
-          <h4 className="font-medium text-blue-700 dark:text-blue-300 mb-2">What you get:</h4>
-          <ul className="text-sm text-blue-600 dark:text-blue-400 space-y-1">
+        <div className="p-4 rounded-xl bg-purple-500/10 border border-purple-500/30 backdrop-blur-sm">
+          <h4 className="font-medium text-purple-300 mb-2">What you get:</h4>
+          <ul className="text-sm text-slate-400 space-y-1">
             <li>• Unlimited security scans</li>
             <li>• Detailed vulnerability reports</li>
             <li>• Scan history tracking</li>
@@ -233,7 +250,6 @@ export default function SignupForm() {
             <li>• Priority support</li>
           </ul>
         </div>
-      </div>
     </div>
   );
 }

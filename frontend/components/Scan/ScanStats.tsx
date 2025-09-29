@@ -10,7 +10,7 @@ export default function ScanStats({ scans }: ScanStatsProps) {
   const completedScans = scans.filter(scan => scan.status === 'completed');
   const totalVulnerabilities = completedScans.reduce((sum, scan) => sum + scan.vulnerabilities.length, 0);
   const averageScore = completedScans.length > 0 
-    ? Math.round(completedScans.reduce((sum, scan) => sum + scan.scan.score, 0) / completedScans.length)
+    ? Math.round(completedScans.reduce((sum, scan) => sum + scan.score, 0) / completedScans.length)
     : 0;
 
   const severityCounts = completedScans.reduce((counts, scan) => {

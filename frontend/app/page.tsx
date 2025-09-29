@@ -992,6 +992,186 @@ ${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (
 
       <div className="section-sep mx-auto w-[92%]" />
 
+      {/* AUTOMATION & LIFECYCLE */}
+      <section id="automation" className="band py-16 md:py-24">
+        <div className="mx-auto max-w-7xl px-6">
+          <div className="mb-12 text-center">
+            <h2 className="text-3xl font-semibold tracking-tight mb-4">
+              Security Automation for Everyone
+            </h2>
+            <p className="text-lg text-[var(--muted)] max-w-3xl mx-auto">
+              While big companies have dedicated security teams, startups, freelancers, and students can't afford enterprise solutions. 
+              Thandev brings industry-level security automation to everyone.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-12">
+            {/* Current Phase */}
+            <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-green-500/5 to-transparent" />
+              <div className="relative z-10">
+                <div className="mb-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 flex items-center justify-center mb-3">
+                    <span className="text-xl">🛡️</span>
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Manual Security Testing</h3>
+                  <p className="text-[var(--muted)] text-sm">
+                    Start with our surface scan tool. Perfect for testing individual websites and applications.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400">
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    <span>Available Now</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                    <div className="w-2 h-2 rounded-full bg-gray-400" />
+                    <span>Free tier: 1 scan per device</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Next Phase */}
+            <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-transparent" />
+              <div className="relative z-10">
+                <div className="mb-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/20 to-indigo-500/20 flex items-center justify-center mb-3">
+                    <span className="text-xl">⚡</span>
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Automated CI/CD Integration</h3>
+                  <p className="text-[var(--muted)] text-sm">
+                    Integrate security scans into your development workflow. Catch vulnerabilities before they reach production.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                    <div className="w-2 h-2 rounded-full bg-blue-500" />
+                    <span>Coming Soon</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                    <div className="w-2 h-2 rounded-full bg-gray-400" />
+                    <span>GitHub Actions integration</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Future Phase */}
+            <div className="relative overflow-hidden rounded-2xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-6">
+              <div className="absolute inset-0 bg-gradient-to-br from-purple-500/5 to-transparent" />
+              <div className="relative z-10">
+                <div className="mb-4">
+                  <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-pink-500/20 flex items-center justify-center mb-3">
+                    <span className="text-xl">🚀</span>
+                  </div>
+                  <h3 className="text-xl font-semibold mb-2">Full Lifecycle Automation</h3>
+                  <p className="text-[var(--muted)] text-sm">
+                    Automatic security scanning on every commit with intelligent code analysis. Seamless CI/CD integration.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-purple-600 dark:text-purple-400">
+                    <div className="w-2 h-2 rounded-full bg-purple-500" />
+                    <span>Future Vision</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+                    <div className="w-2 h-2 rounded-full bg-gray-400" />
+                    <span>Industry-level standards</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* GitHub Integration Preview */}
+          <div className="relative overflow-hidden rounded-3xl border border-[var(--border)]/50 bg-gradient-to-br from-[var(--surface)] to-[var(--surface-2)] p-8">
+            <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5" />
+            <div className="relative z-10">
+              <div className="text-center mb-8">
+                <h3 className="text-2xl font-semibold mb-3">The Future: GitHub-Native Security</h3>
+                <p className="text-[var(--muted)] max-w-2xl mx-auto">
+                  Imagine pushing code to GitHub and automatically getting security feedback. 
+                  No complex setup, no expensive tools - just secure development by default.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-lg">How It Works</h4>
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center font-semibold">1</div>
+                      <div>
+                        <p className="font-medium">Push to GitHub</p>
+                        <p className="text-sm text-[var(--muted)]">Commit your code as usual</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center font-semibold">2</div>
+                      <div>
+                        <p className="font-medium">Automatic Scan Trigger</p>
+                        <p className="text-sm text-[var(--muted)]">Thandev detects the push and starts scanning</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center font-semibold">3</div>
+                      <div>
+                        <p className="font-medium">Code Analysis</p>
+                        <p className="text-sm text-[var(--muted)]">Analyzes your code for security flaws and vulnerabilities</p>
+                      </div>
+                    </div>
+                    <div className="flex items-start gap-3">
+                      <div className="w-6 h-6 rounded-full bg-indigo-500 text-white text-xs flex items-center justify-center font-semibold">4</div>
+                      <div>
+                        <p className="font-medium">Instant Feedback</p>
+                        <p className="text-sm text-[var(--muted)]">Get detailed reports and fix suggestions</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-lg">Benefits</h4>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm">No expensive security teams needed</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm">Catch issues before they reach production</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm">Industry-level security standards</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm">Perfect for startups and students</span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <span className="text-sm">Zero configuration required</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-8 text-center">
+                <div className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-indigo-500/10 to-purple-500/10 border border-indigo-500/20 rounded-full text-indigo-600 dark:text-indigo-400 text-sm">
+                  <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                  <span>Building the future of accessible security</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div className="section-sep mx-auto w-[92%]" />
+
       {/* WORKFLOW */}
       <section id="developers" className="band-alt py-16 md:py-24">
         <div className="mx-auto max-w-7xl px-6">
