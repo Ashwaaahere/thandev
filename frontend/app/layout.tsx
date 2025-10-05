@@ -1,15 +1,16 @@
 import './globals.css';
 import type { Metadata } from 'next';
 import ThemeProvider from './providers/ThemeProvider';
-import Navbar from '@/components/Navbar';
-import Footer from '@/components/Footer';
+import Providers from '@/components/Providers';
+import ConditionalNavbar from '@/components/ConditionalNavbar';
+import ConditionalFooter from '@/components/ConditionalFooter';
 
 export const metadata: Metadata = {
   title: {
     default: 'Thandev - Cybersecurity Intelligence Platform',
     template: '%s | Thandev'
   },
-  description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation. Stay ahead of cyber threats with Thandev.',
+  description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning. GitHub-authenticated access for developers.',
   keywords: [
     'cybersecurity',
     'threat intelligence',
@@ -20,7 +21,11 @@ export const metadata: Metadata = {
     'cyber threats',
     'security platform',
     'threat detection',
-    'security analytics'
+    'security analytics',
+    'surface scanning',
+    'vulnerability scanner',
+    'github authentication',
+    'developer security tools'
   ],
   authors: [{ name: 'Thandev Team' }],
   creator: 'Thandev',
@@ -134,11 +139,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           />
 
       <body>
-        <ThemeProvider>
-          <Navbar />
-          <main className="min-h-screen">{children}</main>
-          <Footer />
-        </ThemeProvider>
+        <Providers>
+          <ThemeProvider>
+            <ConditionalNavbar />
+            <main className="min-h-screen">{children}</main>
+            <ConditionalFooter />
+          </ThemeProvider>
+        </Providers>
       </body>
     </html>
   );

@@ -3,8 +3,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { b64urlDecode } from "@/components/utils/base64url";
 import { normalizeExternalUrl, isHttpUrl } from "@/components/utils/urls";
-import ShareButtons from "@/components/ShareButtons";
-import RedirectHandler from "@/components/RedirectHandler";
 
 // Server-side libs to extract readable content
 import { JSDOM } from "jsdom";
@@ -195,7 +193,6 @@ export default async function ArticlePage({ params }: Props) {
             </p>
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--brand)] mx-auto mb-4"></div>
           </div>
-          <RedirectHandler url={targetUrl} />
         </div>
       </main>
     );
@@ -346,7 +343,6 @@ export default async function ArticlePage({ params }: Props) {
             <div className="absolute inset-0 bg-gradient-to-br from-[var(--brand)]/5 to-transparent" />
             <div className="relative z-10">
               <h3 className="text-lg font-bold text-[var(--fg)] mb-4">Share</h3>
-              <ShareButtons title={articleTitle} url={targetUrl} />
             </div>
           </div>
         </aside>

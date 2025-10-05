@@ -1,0 +1,35 @@
+Contact: mailto:security@thandev.com
+Contact: https://thandev.com/security
+Expires: 2025-12-31T23:59:59.000Z
+Encryption: https://thandev.com/pgp-key.txt
+Acknowledgments: https://thandev.com/security/acknowledgments
+Preferred-Languages: en
+Canonical: https://thandev.com/.well-known/security.txt
+Policy: https://thandev.com/security/disclosure-policy
+
+# Security Policy
+# 
+# We take security seriously at Thandev. If you discover a security vulnerability,
+# please report it to us as described below.
+#
+# Reporting Security Vulnerabilities
+# 
+# Please do not report security vulnerabilities through public GitHub issues.
+# Instead, please report them via email to security@thandev.com or through
+# our security contact form at https://thandev.com/security
+#
+# What to Expect
+# 
+# After you submit a report, we will respond to you within 48 hours to confirm
+# that we have received your report. We will keep you informed of our progress
+# throughout the process.
+#
+# Recognition
+# 
+# We maintain a security acknowledgments page to recognize security researchers
+# who help us keep our platform secure. If you would like to be recognized,
+# please let us know when you submit your report.
+
+
+
+

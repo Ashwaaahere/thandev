@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { b64urlEncode } from "@/components/utils/base64url";
 
 type Item = {
@@ -11,6 +12,41 @@ type Item = {
   published_at?: string | number | Date;
   publishedAt?: string | number | Date; // Support both field names
 };
+
+// Helper function to validate and normalize image URLs
+function isValidImageUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  
+  try {
+    const parsedUrl = new URL(url);
+    // Only allow HTTPS images for security
+    if (parsedUrl.protocol !== 'https:') return false;
+    
+    // Check if it's a valid image extension or data URL
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg'];
+    const hasValidExtension = validExtensions.some(ext => 
+      parsedUrl.pathname.toLowerCase().includes(ext)
+    );
+    
+    return hasValidExtension || url.startsWith('data:');
+  } catch {
+    return false;
+  }
+}
+
+// Helper function to normalize image URL
+function normalizeImageUrl(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    // Convert HTTP to HTTPS
+    if (parsedUrl.protocol === 'http:') {
+      parsedUrl.protocol = 'https:';
+    }
+    return parsedUrl.toString();
+  } catch {
+    return url;
+  }
+}
 
 /**
  * NewsList – robust server component
@@ -70,16 +106,24 @@ export default function NewsList({
           >
             {/* image */}
             <div className="relative h-64 w-full overflow-hidden sm:h-72 md:h-[24rem]">
-              {featured.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={featured.image}
+              {featured.image && isValidImageUrl(featured.image) ? (
+                <Image
+                  src={normalizeImageUrl(featured.image)}
                   alt={featured.title ?? "story image"}
-                  className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                  loading="lazy"
+                  fill
+                  className="object-cover transition-transform duration-300 group-hover:scale-105"
+                  sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                  quality={85}
+                  onError={(e) => {
+                    console.warn('Failed to load featured image:', featured.image);
+                    // Hide the image element on error
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
                 />
               ) : (
-                <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5" />
+                <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5 flex items-center justify-center">
+                  <div className="text-6xl opacity-50">📰</div>
+                </div>
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent pointer-events-none" />
               <div className="absolute top-4 right-4 pointer-events-none">
@@ -133,16 +177,24 @@ export default function NewsList({
                 }}
               >
                 <div className="relative h-48 w-full overflow-hidden">
-                  {it.image ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={it.image}
+                  {it.image && isValidImageUrl(it.image) ? (
+                    <Image
+                      src={normalizeImageUrl(it.image)}
                       alt={it.title ?? "story image"}
-                      className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                      loading="lazy"
+                      fill
+                      className="object-cover transition-transform duration-300 group-hover:scale-105"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                      quality={80}
+                      onError={(e) => {
+                        console.warn('Failed to load grid image:', it.image);
+                        // Hide the image element on error
+                        (e.target as HTMLImageElement).style.display = 'none';
+                      }}
                     />
                   ) : (
-                    <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5" />
+                    <div className="h-full w-full bg-gradient-to-br from-[var(--brand)]/10 to-[var(--brand)]/5 flex items-center justify-center">
+                      <div className="text-4xl opacity-50">📰</div>
+                    </div>
                   )}
                   <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent pointer-events-none" />
                 </div>

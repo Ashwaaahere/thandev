@@ -17,11 +17,7 @@ import {
   type Variants,
 } from "framer-motion";
 
-const BreakingNews = dynamic(() => import("@/components/BreakingNews"), {
-  ssr: false,
-});
 import HeroAurora from "@/components/Exploits/HeroAurora";
-import AnimatedCard from "@/components/AnimatedCard";
 
 
 /* ------------------------------------------------------------------ */
@@ -846,7 +842,7 @@ export default function ThandevLanding() {
             whileHover={{ y: -2 }}
           >
             <h1 className="text-4xl md:text-6xl font-semibold tracking-tight title-future">
-              See cyberspace in real time.<br />
+              Real-time cybersecurity intelligence.<br />
               <span className="title-future-underline">Scan early. Ship safe.</span>
             </h1>
             <TypeLine />
@@ -867,7 +863,7 @@ export default function ThandevLanding() {
             {/* floating micro-orbs */}
             <div aria-hidden className="pointer-events-none absolute -left-6 -top-6 h-16 w-16 rounded-full bg-cyan-400/25 blur-2xl" />
             <div aria-hidden className="pointer-events-none absolute -right-8 top-10 h-24 w-24 rounded-full bg-indigo-400/20 blur-3xl" />
-            <AnimatedCard className="hero-surface p-5 shadow-deep">
+            <div className="hero-surface p-5 shadow-deep">
               <div className="flex items-center justify-between">
                 <h3 className="text-lg font-semibold">Quick Start</h3>
                 <div className="hidden sm:flex items-center gap-1.5">
@@ -883,30 +879,35 @@ export default function ThandevLanding() {
                 <div className="flex items-center justify-between px-3 py-2 backdrop-blur-md bg-white/45 dark:bg-slate-900/30">
                   <div className="text-xs font-mono text-[var(--muted)]">Thandev • guide</div>
                 </div>
-                <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5 backdrop-blur-md dark:text-slate-100 dark:bg-slate-900/35">{`# Browse live news feed
-${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/news
+                <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5 backdrop-blur-md dark:text-slate-100 dark:bg-slate-900/35">{`# Available Now
+🌐 Web App - thandev.com
+📱 Responsive design for all devices
 
-# MVP: daily exploit feed is live
-${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (or /exploits?period=today)`}</pre>
+# Authentication Required
+🔐 GitHub Login - Required for full access
+🆓 Free Tier - 1 scan per device (no login)
+⭐ Pro Features - Unlimited scans (GitHub auth)
+
+# Coming Soon
+🔌 Browser Extension - Chrome, Firefox
+💻 VS Code Extension - Real-time scanning`}</pre>
               </figure>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
                 <span className="badge-live">
                   <span className="live-dot" /> Live
                 </span>
-                <span className="rounded-full px-2.5 py-1 bg-indigo-400/10 text-indigo-700 dark:text-indigo-300 border border-indigo-400/20">LLM soon</span>
+                <span className="rounded-full px-2.5 py-1 bg-green-400/10 text-green-700 dark:text-green-300 border border-green-400/20">Web App</span>
+                <span className="rounded-full px-2.5 py-1 bg-orange-400/10 text-orange-700 dark:text-orange-300 border border-orange-400/20">GitHub Auth</span>
+                <span className="rounded-full px-2.5 py-1 bg-blue-400/10 text-blue-700 dark:text-blue-300 border border-blue-400/20">Extensions Soon</span>
               </div>
-            </AnimatedCard>
+            </div>
           </motion.div>
         </div>
 
         <div className="section-sep mx-auto mt-6 w-[90%]" />
       </section>
 
-      {/* BREAKING NEWS */}
-      <section id="breaking" className="mx-auto max-w-7xl px-6 py-10">
-        <BreakingNews />
-      </section>
 
       {/* MVP Stat strip — shows real counts */}
       <section className="mx-auto max-w-7xl px-6">
@@ -953,14 +954,14 @@ ${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (
               },
               {
                 k: "scans",
-                title: "Instant Site & App Scans",
+                title: "Surface Security Scanner",
                 body:
-                  "Kick off Nuclei/ZAP from the dashboard with no CLI. Correlate findings with exploit intel.",
-                value: null,
-                label: "Checks/run",
+                  "Professional vulnerability scanning tool available now. Free users get 1 scan per device, authenticated GitHub users get unlimited access.",
+                value: live.checksPerRun,
+                label: "Active scans",
                 from: "right" as const,
                 accent: "bg-indigo-400/20",
-                soon: true, // mark as upcoming
+                soon: false, // Available now
               },
               {
                 k: "shift",
@@ -1014,9 +1015,9 @@ ${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (
                   <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500/20 to-emerald-500/20 flex items-center justify-center mb-3">
                     <span className="text-xl">🛡️</span>
                   </div>
-                  <h3 className="text-xl font-semibold mb-2">Manual Security Testing</h3>
+                  <h3 className="text-xl font-semibold mb-2">GitHub Authentication Required</h3>
                   <p className="text-[var(--muted)] text-sm">
-                    Start with our surface scan tool. Perfect for testing individual websites and applications.
+                    <strong>Login Required:</strong> GitHub authentication is mandatory for unlimited access to our security intelligence platform and professional scanning tools.
                   </p>
                 </div>
                 <div className="space-y-2">
@@ -1026,7 +1027,7 @@ ${process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000"}/exploits/daily  (
                   </div>
                   <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
                     <div className="w-2 h-2 rounded-full bg-gray-400" />
-                    <span>Free tier: 1 scan per device</span>
+                    <span>GitHub auth for verified developers</span>
                   </div>
                 </div>
               </div>
@@ -1316,8 +1317,8 @@ function StatTile({ label, value }: { label: string; value: number | null }) {
 /* Minimal typewriter subtitle */
 function TypeLine() {
   const [text, setText] = useState('');
-  const first = 'Thandev is a developer-first security space: live feed, instant scans, and dev-time checks.';
-  const second = 'Live intel, faster triage, safer releases — built for developers.';
+  const first = 'Real-time cybersecurity news, exploit intelligence, and professional security scanning tools.';
+  const second = 'GitHub authentication required for unlimited access. Free tier available with device limits.';
   const lines = [first, second];
   const [idx, setIdx] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);

@@ -1,3 +1,6 @@
+import { getServerSession } from 'next-auth';
+import { redirect } from 'next/navigation';
+import { authOptions } from '@/lib/auth';
 import AuthPage from "@/components/Auth/AuthPage";
 
 export const metadata = {
@@ -28,7 +31,13 @@ export const metadata = {
   },
 };
 
-export default function Auth() {
+export default async function Auth() {
+  const session = await getServerSession(authOptions);
+  
+  if (session) {
+    redirect('/dashboard');
+  }
+
   return <AuthPage />;
 }
 

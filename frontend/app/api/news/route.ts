@@ -39,17 +39,50 @@ function isRecent(iso: string, sinceMs: number) {
   return !Number.isNaN(t) && t >= sinceMs;
 }
 
+function isValidImageUrl(url: string | null | undefined): boolean {
+  if (!url) return false;
+  
+  try {
+    const parsedUrl = new URL(url);
+    // Only allow HTTPS images for security
+    if (parsedUrl.protocol !== 'https:') return false;
+    
+    // Check if it's a valid image extension or data URL
+    const validExtensions = ['.jpg', '.jpeg', '.png', '.webp', '.gif', '.svg'];
+    const hasValidExtension = validExtensions.some(ext => 
+      parsedUrl.pathname.toLowerCase().includes(ext)
+    );
+    
+    return hasValidExtension || url.startsWith('data:');
+  } catch {
+    return false;
+  }
+}
+
 async function extractImage(it: any, source: string, articleIndex: number = 0): Promise<string | null> {
   // First try standard RSS image fields
-  if (it?.enclosure?.url) return it.enclosure.url as string;
+  if (it?.enclosure?.url) {
+    const url = it.enclosure.url as string;
+    if (isValidImageUrl(url)) return url;
+  }
+  
   const media = (it as any)['media:content'] || (it as any)['media:thumbnail'];
-  if (media?.url) return media.url as string;
-  if (Array.isArray(media) && media[0]?.url) return media[0].url as string;
+  if (media?.url) {
+    const url = media.url as string;
+    if (isValidImageUrl(url)) return url;
+  }
+  if (Array.isArray(media) && media[0]?.url) {
+    const url = media[0].url as string;
+    if (isValidImageUrl(url)) return url;
+  }
   
   // Try to extract from HTML content
   const html = (it?.content || it?.['content:encoded'] || '') as string;
   const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-  if (m?.[1]) return m[1];
+  if (m?.[1]) {
+    const url = m[1];
+    if (isValidImageUrl(url)) return url;
+  }
   
   // For sources that don't provide images in RSS, try to fetch from article page
   // Only fetch for first 2 articles to avoid performance issues in production
@@ -70,11 +103,11 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
         
         // Look for article-specific images first (main content area)
         const articleMatch = html.match(/<article[^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["'][\s\S]*?<\/article>/i);
-        if (articleMatch?.[1] && !articleMatch[1].startsWith('data:')) return articleMatch[1];
+        if (articleMatch?.[1] && isValidImageUrl(articleMatch[1])) return articleMatch[1];
         
         // Look for images in the main content area
         const contentMatch = html.match(/<div[^>]*class="[^"]*content[^"]*"[^>]*>[\s\S]*?<img[^>]+(?:data-src|src)=["']([^"']+)["'][\s\S]*?<\/div>/i);
-        if (contentMatch?.[1] && !contentMatch[1].startsWith('data:')) return contentMatch[1];
+        if (contentMatch?.[1] && isValidImageUrl(contentMatch[1])) return contentMatch[1];
         
         // Look for lazy-loaded images with data-src attribute (prefer article-specific images)
         const lazyMatches = html.match(/<img[^>]+data-src=["']([^"']+)["']/gi);
@@ -82,7 +115,7 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
           // First pass: look for high-quality article images
           for (const match of lazyMatches) {
             const url = match.match(/data-src=["']([^"']+)["']/i)?.[1];
-            if (url && !url.startsWith('data:') && 
+            if (url && isValidImageUrl(url) && 
                 !url.includes('logo') && 
                 !url.includes('avatar') &&
                 url.includes('hl-images') &&
@@ -94,7 +127,7 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
           // Second pass: accept thumbnail images as fallback
           for (const match of lazyMatches) {
             const url = match.match(/data-src=["']([^"']+)["']/i)?.[1];
-            if (url && !url.startsWith('data:') && 
+            if (url && isValidImageUrl(url) && 
                 !url.includes('logo') && 
                 !url.includes('avatar') &&
                 url.includes('hl-images')) {
@@ -109,7 +142,7 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
           // First pass: look for high-quality article images
           for (const match of srcMatches) {
             const url = match.match(/src=["']([^"']+)["']/i)?.[1];
-            if (url && !url.startsWith('data:') && 
+            if (url && isValidImageUrl(url) && 
                 !url.includes('logo') && 
                 !url.includes('avatar') &&
                 url.includes('hl-images') &&
@@ -121,7 +154,7 @@ async function extractImage(it: any, source: string, articleIndex: number = 0): 
           // Second pass: accept thumbnail images as fallback
           for (const match of srcMatches) {
             const url = match.match(/src=["']([^"']+)["']/i)?.[1];
-            if (url && !url.startsWith('data:') && 
+            if (url && isValidImageUrl(url) && 
                 !url.includes('logo') && 
                 !url.includes('avatar') &&
                 url.includes('hl-images')) {

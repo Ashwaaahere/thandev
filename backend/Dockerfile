@@ -4,11 +4,17 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including Node.js
 RUN apt-get update && apt-get install -y \
     gcc \
     postgresql-client \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Lighthouse globally
+RUN npm install -g lighthouse
 
 # Copy requirements first for better caching
 COPY requirements.txt .

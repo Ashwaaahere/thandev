@@ -1,7 +1,6 @@
 'use client';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
-import ThemeToggle from './ThemeToggle';
 
 export default function Navbar() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -40,14 +39,14 @@ export default function Navbar() {
 
         {/* Desktop Navigation */}
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
+          {user && <Link href="/dashboard" className="hover:opacity-100">Dashboard</Link>}
           <Link href="/news" className="hover:opacity-100">News</Link>
           <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
-                 <Link href="/scan" className="hover:opacity-100">Surface Scan</Link>
+          <Link href="/dashboard/scan" className="hover:opacity-100">Security Scan</Link>
           <Link href="/docs" className="hover:opacity-100">Docs</Link>
         </nav>
 
         <div className="flex items-center gap-3">
-          <ThemeToggle />
           
           {/* User Menu */}
           {user ? (
@@ -106,6 +105,15 @@ export default function Navbar() {
       {isMobileMenuOpen && (
         <div className="md:hidden border-t border-white/10 bg-[var(--bg)]/95 backdrop-blur">
           <nav className="px-6 py-4 space-y-3">
+            {user && (
+              <Link
+                href="/dashboard"
+                onClick={closeMobileMenu}
+                className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
+              >
+                📊 Dashboard
+              </Link>
+            )}
             <Link
               href="/news"
               onClick={closeMobileMenu}
@@ -121,7 +129,7 @@ export default function Navbar() {
               🔍 Exploit feed
             </Link>
                    <Link
-                     href="/scan"
+                     href="/dashboard/scan"
                      onClick={closeMobileMenu}
                      className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
                    >
