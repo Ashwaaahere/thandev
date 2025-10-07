@@ -39,12 +39,12 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStatus, setScanStatus] = useState('');
   const [scanUrl, setScanUrl] = useState('');
-  const [scanType, setScanType] = useState('comprehensive');
+  const [scanLevel, setScanLevel] = useState('level1');
   const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
     // Load scan history
-    const savedScans = localStorage.getItem('thandev-scans');
+    const savedScans = localStorage.getItem('thandev-security-scans');
     if (savedScans) {
       try {
         const parsedScans = JSON.parse(savedScans).map((scan: any) => ({
@@ -62,7 +62,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
   const startScan = async () => {
     console.log('=== SCAN BUTTON CLICKED ===');
     console.log('scanUrl:', scanUrl);
-    console.log('scanType:', scanType);
+    console.log('scanLevel:', scanLevel);
     console.log('isScanning:', isScanning);
     
     if (!scanUrl.trim()) {
@@ -86,7 +86,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
       scanTime: 0,
       timestamp: new Date(),
       score: 0,
-      scanType,
+      scanType: scanLevel,
       duration: 0
     };
 
@@ -95,46 +95,119 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
     setScanProgress(0);
     setScanStatus('Initializing security scan...');
 
-    // Simulate scan progress
-    const scanDuration = scanType === 'quick' ? 3000 : scanType === 'comprehensive' ? 8000 : 15000;
-    const startTime = Date.now();
+    try {
+      // Call the security scan API
+      const response = await fetch('/api/security-scan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: scanUrl,
+          tier: scanLevel,
+          user_id: 'anonymous'
+        }),
+      });
 
-    // Simulate scanning with progress updates
-    const progressInterval = setInterval(() => {
-      const elapsed = Date.now() - startTime;
-      const progress = Math.min((elapsed / scanDuration) * 100, 95);
-      
-      setCurrentScan(prev => prev ? {
-        ...prev,
-        scanTime: Math.floor(elapsed / 1000),
-        score: Math.floor(progress * 0.8) // Score increases with progress
-      } : null);
-    }, 1000);
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to start scan');
+      }
 
-    // Complete scan after duration
-    setTimeout(() => {
-      clearInterval(progressInterval);
+      const data = await response.json();
+      const jobId = data.jobId;
       
-      // Generate mock vulnerabilities based on scan type
-      const vulnerabilities = generateMockVulnerabilities(scanType);
-      const finalScore = Math.max(20, 100 - (vulnerabilities.length * 8) - Math.floor(Math.random() * 20));
-      
-      const completedScan: ScanResult = {
-        ...newScan,
-        status: 'completed',
-        vulnerabilities,
-        score: finalScore,
-        duration: Math.floor(scanDuration / 1000)
-      };
+      setScanStatus('Scan started, monitoring progress...');
+      setScanProgress(10);
 
-      setCurrentScan(completedScan);
+      // Poll for scan completion
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await fetch(`/api/security-scan/status/${jobId}`);
+          
+          if (!statusResponse.ok) {
+            throw new Error('Failed to get scan status');
+          }
+
+          const statusData = await statusResponse.json();
+          
+          if (statusData.status === 'completed') {
+            clearInterval(pollInterval);
+            
+            // Process the scan results
+            const result = statusData.result;
+            const vulnerabilities = result?.vulnerabilities || [];
+            const securityScore = result?.securityScore || 0;
+            
+            const completedScan: ScanResult = {
+              ...newScan,
+              id: jobId,
+              status: 'completed',
+              vulnerabilities: vulnerabilities.map((vuln: any, index: number) => ({
+                id: vuln.id || `vuln-${index}`,
+                type: vuln.type || 'Unknown',
+                severity: vuln.severity || 'info',
+                title: vuln.title || vuln.name || 'Security Issue',
+                description: vuln.description || 'No description available',
+                recommendation: vuln.recommendation || vuln.remediation || 'No recommendation available',
+                cwe: vuln.cwe,
+                cvss: vuln.cvss,
+                port: vuln.port,
+                service: vuln.service
+              })),
+              score: securityScore,
+              duration: Math.floor((Date.now() - newScan.timestamp.getTime()) / 1000)
+            };
+
+            setCurrentScan(completedScan);
+            setIsScanning(false);
+            setScanProgress(100);
+            setScanStatus('Scan completed successfully');
+
+            // Save to history
+            const updatedScans = [completedScan, ...scans];
+            setScans(updatedScans);
+            localStorage.setItem('thandev-security-scans', JSON.stringify(updatedScans));
+            
+          } else if (statusData.status === 'error') {
+            clearInterval(pollInterval);
+            setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+            setIsScanning(false);
+            setScanStatus('Scan failed');
+            alert('Scan failed. Please try again.');
+          } else {
+            // Update progress based on status
+            const progress = statusData.status === 'running' ? 50 : 25;
+            setScanProgress(progress);
+            setScanStatus(`Scan ${statusData.status}...`);
+          }
+          
+        } catch (error) {
+          console.error('Error polling scan status:', error);
+          clearInterval(pollInterval);
+          setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+          setIsScanning(false);
+          setScanStatus('Scan failed');
+        }
+      }, 5000); // Poll every 5 seconds
+
+      // Set a timeout to prevent infinite polling
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        if (isScanning) {
+          setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+          setIsScanning(false);
+          setScanStatus('Scan timed out');
+        }
+      }, 10 * 60 * 1000); // 10 minute timeout
+
+    } catch (error) {
+      console.error('Scan error:', error);
+      setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
       setIsScanning(false);
-
-      // Save to history
-      const updatedScans = [completedScan, ...scans];
-      setScans(updatedScans);
-      localStorage.setItem('thandev-scans', JSON.stringify(updatedScans));
-    }, scanDuration);
+      setScanStatus('Failed to start scan');
+      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const generateMockVulnerabilities = (type: string): Vulnerability[] => {
@@ -341,12 +414,20 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                           </svg>
-                          Scan Type
+                          Scan Level
+                          <div className="group relative">
+                            <svg className="w-4 h-4 text-gray-400 cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-3 py-2 bg-gray-900 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-10">
+                              Choose the appropriate scan level based on your needs
+                            </div>
+                          </div>
                         </label>
                         <div className="relative group">
                           <select
-                            value={scanType}
-                            onChange={(e) => setScanType(e.target.value)}
+                            value={scanLevel}
+                            onChange={(e) => setScanLevel(e.target.value)}
                             className="w-full px-4 py-4 pl-12 pr-10 border-2 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all duration-200 hover:border-blue-300 appearance-none cursor-pointer text-base font-medium dark:bg-gray-800 dark:text-white"
                             style={{
                               borderColor: 'var(--border)',
@@ -356,17 +437,14 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                             }}
                           >
                             <>
-                              <option value="quick" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                                ⚡ Quick Scan - Basic security checks (5-10 minutes)
+                              <option value="level0" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
+                                Level 0 — Surface (Quick) - 3-8 minutes
                               </option>
-                              <option value="comprehensive" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                                🔍 Comprehensive Scan - Full vulnerability assessment (15-30 minutes)
+                              <option value="level1" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
+                                Level 1 — Discovery (Buzz) - 10-25 minutes
                               </option>
-                              <option value="deep" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                                🛡️ Deep Scan - Thorough analysis with subdomains (30-60 minutes)
-                              </option>
-                              <option value="custom" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                                ⚙️ Custom Configuration - Advanced settings
+                              <option value="level2" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
+                                Level 2 — Active (Non-destructive) - 20-45 minutes
                               </option>
                             </>
                           </select>
@@ -382,54 +460,21 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                           </div>
                         </div>
                         
-                        {/* Scan Type Description */}
+                        {/* Scan Level Description */}
                         <div className="p-3 rounded-lg" style={{ background: 'var(--surface-2)' }}>
                           <div className="flex items-center gap-2 mb-1">
                             <div className="w-2 h-2 rounded-full" style={{ background: 'var(--brand)' }}></div>
                             <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                              {scanType === 'quick' ? 'Quick Scan' : 
-                               scanType === 'comprehensive' ? 'Comprehensive Scan' : 
-                               scanType === 'deep' ? 'Deep Scan' : 'Custom Configuration'}
+                              {scanLevel === 'level0' ? 'Level 0 — Surface (Quick)' : 
+                               scanLevel === 'level1' ? 'Level 1 — Discovery (Buzz)' : 
+                               'Level 2 — Active (Non-destructive)'}
                             </span>
                           </div>
                           <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
-                            {scanType === 'quick' ? 'Fast security assessment covering SSL/TLS, security headers, and common vulnerabilities. Ideal for regular monitoring.' :
-                             scanType === 'comprehensive' ? 'Complete vulnerability assessment with authentication testing, input validation, and comprehensive reporting.' :
-                             scanType === 'deep' ? 'Extensive security analysis including subdomain discovery, directory enumeration, and advanced penetration testing techniques.' :
-                             'Configure custom scan parameters and select specific security checks to run based on your requirements.'}
+                            {scanLevel === 'level0' ? 'Very fast, low-noise footprinting and tech checks. Tools: nuclei (info, technologies), sslscan/sslyze, nmap (--top-ports 100 -sV -Pn).' :
+                             scanLevel === 'level1' ? 'Broaden surface, find hidden endpoints and subdomains. Everything in Level 0 plus: subfinder/amass, crt.sh lookups, ffuf/gobuster, nuclei medium templates.' :
+                             'More aggressive detection (non-exploitative) and CVE checks. Everything in Level 1 plus: nuclei CVE templates, nikto, nmap with NSE scripts.'}
                           </p>
-                        </div>
-                      </div>
-                      
-                      <div className="space-y-3">
-                        <label className="block text-sm font-semibold flex items-center gap-2" style={{ color: 'var(--fg)' }}>
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                          </svg>
-                          Scan Priority
-                        </label>
-                        <div className="relative group">
-                          <select className="w-full px-4 py-4 pl-12 pr-10 border-2 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all duration-200 hover:border-blue-300 appearance-none cursor-pointer text-base font-medium dark:bg-gray-800 dark:text-white" style={{ borderColor: 'var(--border)', background: 'var(--surface-2) !important', backgroundColor: 'var(--surface-2) !important', color: 'var(--fg) !important' }}>
-                            <option value="normal" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                              🟢 Normal Priority - Standard processing time
-                            </option>
-                            <option value="high" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                              🟡 High Priority - Faster processing
-                            </option>
-                            <option value="urgent" className="py-3 text-base font-medium" style={{ background: 'var(--surface-2)', color: 'var(--fg)' }}>
-                              🔴 Urgent Priority - Immediate processing
-                            </option>
-                          </select>
-                          <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                            <svg className="w-5 h-5" style={{ color: 'var(--brand)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                            </svg>
-                          </div>
-                          <div className="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none">
-                            <svg className="w-5 h-5" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                            </svg>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -444,7 +489,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                         </div>
-                        <h3 className="font-semibold" style={{ color: 'var(--fg)' }}>{scanType === 'quick' ? 'Quick' : scanType === 'comprehensive' ? 'Comprehensive' : 'Deep'} Scan Features</h3>
+                        <h3 className="font-semibold" style={{ color: 'var(--fg)' }}>{scanLevel === 'level0' ? 'Level 0' : scanLevel === 'level1' ? 'Level 1' : 'Level 2'} Scan Features</h3>
                       </div>
                       <div className="space-y-3">
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
@@ -453,23 +498,27 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                         </div>
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
                           <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
-                          <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Header Security</span>
+                          <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Technology Detection</span>
                         </div>
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
                           <div className="w-3 h-3 rounded-full bg-green-500 shadow-sm"></div>
                           <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Port Scanning</span>
                         </div>
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
-                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanType === 'deep' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                          <span className={`text-sm font-medium ${scanType === 'deep' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>Subdomain Enumeration</span>
+                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanLevel === 'level1' || scanLevel === 'level2' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                          <span className={`text-sm font-medium ${scanLevel === 'level1' || scanLevel === 'level2' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>Subdomain Enumeration</span>
                         </div>
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
-                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanType === 'deep' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                          <span className={`text-sm font-medium ${scanType === 'deep' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>Directory Brute Force</span>
+                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanLevel === 'level1' || scanLevel === 'level2' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                          <span className={`text-sm font-medium ${scanLevel === 'level1' || scanLevel === 'level2' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>Directory Discovery</span>
                         </div>
                         <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
-                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanType === 'comprehensive' || scanType === 'deep' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
-                          <span className={`text-sm font-medium ${scanType === 'comprehensive' || scanType === 'deep' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>Authentication Analysis</span>
+                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanLevel === 'level2' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                          <span className={`text-sm font-medium ${scanLevel === 'level2' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>CVE Scanning</span>
+                        </div>
+                        <div className="flex items-center gap-3 p-2 rounded-lg" style={{ background: 'var(--surface)' }}>
+                          <div className={`w-3 h-3 rounded-full shadow-sm ${scanLevel === 'level2' ? 'bg-green-500' : 'bg-gray-400'}`}></div>
+                          <span className={`text-sm font-medium ${scanLevel === 'level2' ? '' : 'opacity-60'}`} style={{ color: 'var(--fg)' }}>HTTP Server Analysis</span>
                         </div>
                       </div>
                     </div>
@@ -483,7 +532,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                         background: 'linear-gradient(135deg, var(--brand) 0%, #3b82f6 50%, #8b5cf6 100%)',
                         boxShadow: '0 8px 25px rgba(59, 130, 246, 0.4)'
                       }}
-                      title={`URL: ${scanUrl || 'none'}, Type: ${scanType}, Scanning: ${isScanning}`}
+                      title={`URL: ${scanUrl || 'none'}, Level: ${scanLevel}, Scanning: ${isScanning}`}
                     >
                       {isScanning ? (
                         <div className="flex flex-col items-center justify-center gap-3">
@@ -504,7 +553,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                           <span className="text-lg">
-                            Start {scanType === 'quick' ? 'Quick' : scanType === 'comprehensive' ? 'Comprehensive' : 'Deep'} Security Scan
+                            Start {scanLevel === 'level0' ? 'Level 0' : scanLevel === 'level1' ? 'Level 1' : 'Level 2'} Security Scan
                           </span>
                         </div>
                       )}
@@ -519,7 +568,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                         <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Estimated Duration</span>
                       </div>
                       <p className="text-lg font-bold" style={{ color: 'var(--brand)' }}>
-                        {scanType === 'quick' ? '5-10 minutes' : scanType === 'comprehensive' ? '15-30 minutes' : '30-60 minutes'}
+                        {scanLevel === 'level0' ? '3-8 minutes' : scanLevel === 'level1' ? '10-25 minutes' : '20-45 minutes'}
                       </p>
                     </div>
                   </div>
@@ -528,56 +577,95 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
               </div>
             </div>
 
-            {/* Current Scan Results */}
+            {/* Current Scan Results - Futuristic Dashboard */}
             {currentScan && (
               <div className="mb-8">
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                <div className="relative overflow-hidden rounded-2xl border shadow-2xl" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                  {/* Animated Background */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-blue-500/5 via-transparent to-purple-500/5"></div>
+                  <div className="absolute top-0 right-0 w-96 h-96 bg-gradient-to-bl from-blue-500/10 to-transparent rounded-full -translate-y-48 translate-x-48 animate-pulse"></div>
+                  <div className="absolute bottom-0 left-0 w-80 h-80 bg-gradient-to-tr from-purple-500/10 to-transparent rounded-full translate-y-40 -translate-x-40 animate-pulse"></div>
+                  
                   {/* Scan Header */}
-                  <div className="p-6 border-b" style={{ borderColor: 'var(--border)' }}>
-                    <div className="flex items-center justify-between">
+                  <div className="relative z-10 p-8 border-b" style={{ borderColor: 'var(--border)' }}>
+                    <div className="flex items-center justify-between mb-6">
                       <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <div className="h-8 w-8 rounded-lg flex items-center justify-center" style={{ background: 'var(--brand)' }}>
-                            <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="flex items-center gap-4 mb-4">
+                          <div className="h-12 w-12 rounded-xl flex items-center justify-center shadow-lg" style={{ background: 'linear-gradient(135deg, var(--brand) 0%, #3b82f6 100%)' }}>
+                            <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                           </div>
-                          <h2 className="text-xl font-semibold" style={{ color: 'var(--fg)' }}>Professional Security Assessment</h2>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(currentScan.score)}`}>
-                            {currentScan.score >= 80 ? 'SECURE' : currentScan.score >= 60 ? 'MODERATE' : 'AT RISK'}
-                          </span>
+                          <div>
+                            <h2 className="text-3xl font-bold" style={{ color: 'var(--fg)' }}>Security Assessment Report</h2>
+                            <div className="flex items-center gap-3 mt-2">
+                              <span className={`px-3 py-1 rounded-full text-sm font-bold ${getScoreColor(currentScan.score)}`} style={{ background: 'var(--surface-2)' }}>
+                                {currentScan.score >= 80 ? '🛡️ SECURE' : currentScan.score >= 60 ? '⚠️ MODERATE' : '🚨 AT RISK'}
+                              </span>
+                              <span className="px-3 py-1 rounded-full text-sm font-medium" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
+                                {currentScan.scanType.toUpperCase()} SCAN
+                              </span>
+                            </div>
+                          </div>
                         </div>
-                        <p className="text-sm mb-1" style={{ color: 'var(--fg)' }}>{currentScan.url}</p>
-                        <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
-                          <span>📅 {currentScan.timestamp.toLocaleString()}</span>
-                          <span>⚡ {currentScan.scanType} scan</span>
-                          <span>⏱️ {currentScan.duration}s duration</span>
-                          <span>🔍 {currentScan.vulnerabilities.length} issues found</span>
+                        <div className="flex items-center gap-6 text-sm" style={{ color: 'var(--muted)' }}>
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9" />
+                            </svg>
+                            <span>{currentScan.url}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>{currentScan.timestamp.toLocaleString()}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            <span>{currentScan.duration}s duration</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <span>{currentScan.vulnerabilities.length} issues found</span>
+                          </div>
                         </div>
                       </div>
-                      <div className="text-right">
-                        <div className={`text-4xl font-bold ${getScoreColor(currentScan.score)}`}>
-                          {currentScan.score}
-                        </div>
-                        <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>Security Score</div>
-                        <div className="text-xs" style={{ color: 'var(--muted)' }}>
-                          {currentScan.score >= 90 ? 'Excellent' : 
-                           currentScan.score >= 80 ? 'Good' : 
-                           currentScan.score >= 70 ? 'Fair' : 
-                           currentScan.score >= 60 ? 'Poor' : 'Critical'}
+                      <div className="text-center">
+                        <div className="relative">
+                          <div className="w-32 h-32 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                            <div className="w-24 h-24 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, var(--brand) 0%, #3b82f6 100%)' }}>
+                              <div className={`text-4xl font-bold text-white`}>
+                                {currentScan.score}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2">
+                            <div className="text-sm font-bold" style={{ color: 'var(--fg)' }}>Security Score</div>
+                            <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                              {currentScan.score >= 90 ? 'Excellent' : 
+                               currentScan.score >= 80 ? 'Good' : 
+                               currentScan.score >= 70 ? 'Fair' : 
+                               currentScan.score >= 60 ? 'Poor' : 'Critical'}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
                   </div>
 
                   {/* Tabs */}
-                  <div className="border-b" style={{ borderColor: 'var(--border)' }}>
-                    <nav className="flex space-x-8 px-6">
+                  <div className="relative z-10 border-b" style={{ borderColor: 'var(--border)' }}>
+                    <nav className="flex space-x-8 px-8">
                       {tabs.map((tab) => (
                         <button
                           key={tab.id}
                           onClick={() => setActiveTab(tab.id)}
-                          className={`py-4 px-1 border-b-2 font-medium text-sm ${
+                          className={`py-4 px-1 border-b-2 font-medium text-sm transition-all duration-200 ${
                             activeTab === tab.id
                               ? 'border-blue-500 text-blue-600'
                               : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -590,76 +678,252 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                   </div>
 
                   {/* Tab Content */}
-                  <div className="p-6">
+                  <div className="relative z-10 p-8">
                     {activeTab === 'overview' && (
-                      <div className="space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                          <div className="text-center p-4 rounded-lg" style={{ background: 'var(--surface-2)' }}>
-                            <div className="text-2xl font-bold text-green-600">{currentScan.vulnerabilities.filter(v => v.severity === 'low').length}</div>
-                            <div className="text-sm" style={{ color: 'var(--muted)' }}>Low Risk</div>
+                      <div className="space-y-8">
+                        {/* Security Metrics Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                          <div className="relative p-6 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="p-3 rounded-lg bg-green-100">
+                                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-3xl font-bold text-green-600">{currentScan.vulnerabilities.filter(v => v.severity === 'low').length}</div>
+                                <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>Low Risk</div>
+                              </div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div className="bg-green-500 h-2 rounded-full" style={{ width: `${(currentScan.vulnerabilities.filter(v => v.severity === 'low').length / Math.max(currentScan.vulnerabilities.length, 1)) * 100}%` }}></div>
+                            </div>
                           </div>
-                          <div className="text-center p-4 rounded-lg" style={{ background: 'var(--surface-2)' }}>
-                            <div className="text-2xl font-bold text-yellow-600">{currentScan.vulnerabilities.filter(v => v.severity === 'medium').length}</div>
-                            <div className="text-sm" style={{ color: 'var(--muted)' }}>Medium Risk</div>
+
+                          <div className="relative p-6 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="p-3 rounded-lg bg-yellow-100">
+                                <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                </svg>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-3xl font-bold text-yellow-600">{currentScan.vulnerabilities.filter(v => v.severity === 'medium').length}</div>
+                                <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>Medium Risk</div>
+                              </div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div className="bg-yellow-500 h-2 rounded-full" style={{ width: `${(currentScan.vulnerabilities.filter(v => v.severity === 'medium').length / Math.max(currentScan.vulnerabilities.length, 1)) * 100}%` }}></div>
+                            </div>
                           </div>
-                          <div className="text-center p-4 rounded-lg" style={{ background: 'var(--surface-2)' }}>
-                            <div className="text-2xl font-bold text-red-600">{currentScan.vulnerabilities.filter(v => v.severity === 'high' || v.severity === 'critical').length}</div>
-                            <div className="text-sm" style={{ color: 'var(--muted)' }}>High Risk</div>
+
+                          <div className="relative p-6 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="p-3 rounded-lg bg-red-100">
+                                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-3xl font-bold text-red-600">{currentScan.vulnerabilities.filter(v => v.severity === 'high').length}</div>
+                                <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>High Risk</div>
+                              </div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div className="bg-red-500 h-2 rounded-full" style={{ width: `${(currentScan.vulnerabilities.filter(v => v.severity === 'high').length / Math.max(currentScan.vulnerabilities.length, 1)) * 100}%` }}></div>
+                            </div>
+                          </div>
+
+                          <div className="relative p-6 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="p-3 rounded-lg bg-purple-100">
+                                <svg className="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-3xl font-bold text-purple-600">{currentScan.vulnerabilities.filter(v => v.severity === 'critical').length}</div>
+                                <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>Critical</div>
+                              </div>
+                            </div>
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div className="bg-purple-500 h-2 rounded-full" style={{ width: `${(currentScan.vulnerabilities.filter(v => v.severity === 'critical').length / Math.max(currentScan.vulnerabilities.length, 1)) * 100}%` }}></div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Security Score Visualization */}
+                        <div className="p-8 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                          <h3 className="text-xl font-bold mb-6" style={{ color: 'var(--fg)' }}>Security Score Breakdown</h3>
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Overall Security</span>
+                                <span className="text-sm font-bold" style={{ color: 'var(--brand)' }}>{currentScan.score}/100</span>
+                              </div>
+                              <div className="w-full bg-gray-200 rounded-full h-4">
+                                <div 
+                                  className="h-4 rounded-full transition-all duration-1000 ease-out"
+                                  style={{ 
+                                    width: `${currentScan.score}%`,
+                                    background: currentScan.score >= 80 ? 'linear-gradient(90deg, #10b981, #34d399)' : 
+                                               currentScan.score >= 60 ? 'linear-gradient(90deg, #f59e0b, #fbbf24)' : 
+                                               'linear-gradient(90deg, #ef4444, #f87171)'
+                                  }}
+                                ></div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       </div>
                     )}
 
                     {activeTab === 'vulnerabilities' && (
-                      <div className="space-y-4">
-                        {currentScan.vulnerabilities.map((vuln) => (
-                          <div key={vuln.id} className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                            <div className="flex items-start justify-between mb-2">
-                              <h3 className="font-medium" style={{ color: 'var(--fg)' }}>{vuln.title}</h3>
-                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${getSeverityColor(vuln.severity)}`}>
-                                {vuln.severity.toUpperCase()}
-                              </span>
+                      <div className="space-y-6">
+                        {currentScan.vulnerabilities.length === 0 ? (
+                          <div className="text-center py-12">
+                            <div className="w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
+                              <svg className="w-12 h-12 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
                             </div>
-                            <p className="text-sm mb-3" style={{ color: 'var(--muted)' }}>{vuln.description}</p>
-                            <div className="text-sm">
-                              <strong style={{ color: 'var(--fg)' }}>Recommendation:</strong>
-                              <p style={{ color: 'var(--muted)' }}>{vuln.recommendation}</p>
-                            </div>
+                            <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--fg)' }}>No Vulnerabilities Found</h3>
+                            <p className="text-sm" style={{ color: 'var(--muted)' }}>Great! No security issues were detected in this scan.</p>
                           </div>
-                        ))}
+                        ) : (
+                          currentScan.vulnerabilities.map((vuln, index) => (
+                            <div key={vuln.id} className="relative p-6 rounded-xl border shadow-lg hover:shadow-xl transition-all duration-200" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                              <div className="flex items-start justify-between mb-4">
+                                <div className="flex items-start gap-4">
+                                  <div className={`p-3 rounded-lg ${getSeverityColor(vuln.severity)}`}>
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      {vuln.severity === 'critical' ? (
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      ) : vuln.severity === 'high' ? (
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                                      ) : (
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                      )}
+                                    </svg>
+                                  </div>
+                                  <div className="flex-1">
+                                    <h3 className="text-lg font-bold mb-2" style={{ color: 'var(--fg)' }}>{vuln.title}</h3>
+                                    <div className="flex items-center gap-3 mb-3">
+                                      <span className={`px-3 py-1 rounded-full text-sm font-bold ${getSeverityColor(vuln.severity)}`}>
+                                        {vuln.severity.toUpperCase()}
+                                      </span>
+                                      {vuln.cwe && (
+                                        <span className="px-2 py-1 rounded text-xs font-mono" style={{ background: 'var(--surface)', color: 'var(--muted)' }}>
+                                          CWE-{vuln.cwe}
+                                        </span>
+                                      )}
+                                      {vuln.cvss && (
+                                        <span className="px-2 py-1 rounded text-xs font-mono" style={{ background: 'var(--surface)', color: 'var(--muted)' }}>
+                                          CVSS: {vuln.cvss}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="mb-4">
+                                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{vuln.description}</p>
+                              </div>
+                              <div className="p-4 rounded-lg" style={{ background: 'var(--surface)' }}>
+                                <h4 className="font-semibold mb-2 flex items-center gap-2" style={{ color: 'var(--fg)' }}>
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                                  </svg>
+                                  Recommendation
+                                </h4>
+                                <p className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>{vuln.recommendation}</p>
+                              </div>
+                            </div>
+                          ))
+                        )}
                       </div>
                     )}
 
                     {activeTab === 'recommendations' && (
-                      <div className="space-y-4">
-                        <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                          <h3 className="font-medium mb-2" style={{ color: 'var(--fg)' }}>Immediate Actions</h3>
-                          <ul className="space-y-2 text-sm" style={{ color: 'var(--muted)' }}>
-                            <li>• Update all security headers</li>
-                            <li>• Implement proper SSL/TLS configuration</li>
-                            <li>• Review and strengthen authentication mechanisms</li>
-                          </ul>
+                      <div className="space-y-6">
+                        <div className="p-8 rounded-xl border shadow-lg" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                          <h3 className="text-xl font-bold mb-6 flex items-center gap-3" style={{ color: 'var(--fg)' }}>
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                            </svg>
+                            Immediate Actions Required
+                          </h3>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div className="space-y-4">
+                              <div className="flex items-start gap-3 p-4 rounded-lg" style={{ background: 'var(--surface)' }}>
+                                <div className="w-2 h-2 rounded-full bg-red-500 mt-2"></div>
+                                <div>
+                                  <h4 className="font-semibold mb-1" style={{ color: 'var(--fg)' }}>Update Security Headers</h4>
+                                  <p className="text-sm" style={{ color: 'var(--muted)' }}>Implement comprehensive security headers to protect against common attacks</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-3 p-4 rounded-lg" style={{ background: 'var(--surface)' }}>
+                                <div className="w-2 h-2 rounded-full bg-orange-500 mt-2"></div>
+                                <div>
+                                  <h4 className="font-semibold mb-1" style={{ color: 'var(--fg)' }}>SSL/TLS Configuration</h4>
+                                  <p className="text-sm" style={{ color: 'var(--muted)' }}>Update to TLS 1.2 or higher and disable weak cipher suites</p>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="space-y-4">
+                              <div className="flex items-start gap-3 p-4 rounded-lg" style={{ background: 'var(--surface)' }}>
+                                <div className="w-2 h-2 rounded-full bg-yellow-500 mt-2"></div>
+                                <div>
+                                  <h4 className="font-semibold mb-1" style={{ color: 'var(--fg)' }}>Authentication Review</h4>
+                                  <p className="text-sm" style={{ color: 'var(--muted)' }}>Review and strengthen authentication mechanisms</p>
+                                </div>
+                              </div>
+                              <div className="flex items-start gap-3 p-4 rounded-lg" style={{ background: 'var(--surface)' }}>
+                                <div className="w-2 h-2 rounded-full bg-blue-500 mt-2"></div>
+                                <div>
+                                  <h4 className="font-semibold mb-1" style={{ color: 'var(--fg)' }}>Regular Monitoring</h4>
+                                  <p className="text-sm" style={{ color: 'var(--muted)' }}>Set up continuous security monitoring and scanning</p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}
 
-
                     {activeTab === 'history' && (
                       <div className="space-y-4">
-                        {scans.map((scan) => (
-                          <div key={scan.id} className="flex items-center justify-between p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                            <div>
-                              <div className="font-medium" style={{ color: 'var(--fg)' }}>{scan.url}</div>
-                              <div className="text-sm" style={{ color: 'var(--muted)' }}>
-                                {scan.timestamp.toLocaleString()} • {scan.scanType}
+                        {scans.length === 0 ? (
+                          <div className="text-center py-12">
+                            <div className="w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
+                              <svg className="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </div>
+                            <h3 className="text-xl font-bold mb-2" style={{ color: 'var(--fg)' }}>No Scan History</h3>
+                            <p className="text-sm" style={{ color: 'var(--muted)' }}>Start your first security scan to see results here.</p>
+                          </div>
+                        ) : (
+                          scans.map((scan) => (
+                            <div key={scan.id} className="flex items-center justify-between p-6 rounded-xl border shadow-lg hover:shadow-xl transition-all duration-200" style={{ borderColor: 'var(--border)', background: 'linear-gradient(135deg, var(--surface-2) 0%, var(--surface) 100%)' }}>
+                              <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${getScoreColor(scan.score)}`} style={{ background: 'var(--surface)' }}>
+                                  <span className="text-lg font-bold">{scan.score}</span>
+                                </div>
+                                <div>
+                                  <div className="font-bold" style={{ color: 'var(--fg)' }}>{scan.url}</div>
+                                  <div className="text-sm" style={{ color: 'var(--muted)' }}>
+                                    {scan.timestamp.toLocaleString()} • {scan.scanType} • {scan.duration}s
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>{scan.vulnerabilities.length} issues</div>
+                                <div className="text-xs" style={{ color: 'var(--muted)' }}>Security Score</div>
                               </div>
                             </div>
-                            <div className="text-right">
-                              <div className={`text-lg font-bold ${getScoreColor(scan.score)}`}>{scan.score}</div>
-                              <div className="text-xs" style={{ color: 'var(--muted)' }}>Score</div>
-                            </div>
-                          </div>
-                        ))}
+                          ))
+                        )}
                       </div>
                     )}
                   </div>

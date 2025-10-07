@@ -1,0 +1,72 @@
+name: "Level 1 - Discovery (Buzz)"
+version: "1.0"
+description: "Broaden surface, find hidden endpoints and subdomains"
+tier: "level1"
+preset_name: "buzz"
+cloud_run_job: "thandev-buzz"
+estimated_duration: "10-25 minutes"
+
+tools:
+  - name: "nuclei"
+    templates: ["info", "technologies", "misconfig", "exposures"]
+    timeout: 600
+    description: "Technology detection and misconfiguration checks"
+    
+  - name: "sslscan"
+    fallback: "sslyze"
+    fallback_final: "openssl s_client"
+    timeout: 180
+    description: "TLS/certificate checks"
+    
+  - name: "nmap"
+    args: ["--top-ports", "100", "-sV", "-Pn"]
+    timeout: 300
+    description: "Port scanning with service detection"
+    
+  - name: "subfinder"
+    fallback: "amass"
+    timeout: 300
+    description: "Passive subdomain enumeration"
+    
+  - name: "crt.sh"
+    timeout: 120
+    description: "Certificate transparency lookups"
+    
+  - name: "ffuf"
+    fallback: "gobuster"
+    wordlist: "small"
+    timeout: 300
+    description: "Directory discovery with tuned wordlist"
+
+steps:
+  1:
+    tool: "nuclei"
+    purpose: "Technology fingerprinting and basic info gathering"
+    
+  2:
+    tool: "sslscan"
+    purpose: "TLS/SSL configuration analysis"
+    
+  3:
+    tool: "nmap"
+    purpose: "Port discovery and service enumeration"
+    
+  4:
+    tool: "subfinder"
+    purpose: "Passive subdomain enumeration"
+    
+  5:
+    tool: "crt.sh"
+    purpose: "Certificate transparency lookups"
+    
+  6:
+    tool: "ffuf"
+    purpose: "Directory and endpoint discovery"
+
+outputs:
+  - "nuclei.json"
+  - "ssl_scan.txt"
+  - "nmap.xml"
+  - "subdomains.txt"
+  - "crt_results.json"
+  - "ffuf_results.json"

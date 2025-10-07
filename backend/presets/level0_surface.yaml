@@ -1,0 +1,42 @@
+name: "Level 0 - Surface (Quick)"
+version: "1.0"
+description: "Very fast, low-noise footprinting and tech checks"
+tier: "level0"
+preset_name: "normal"
+cloud_run_job: "thandev-surface"
+estimated_duration: "3-8 minutes"
+
+tools:
+  - name: "nuclei"
+    templates: ["info", "technologies"]
+    timeout: 300
+    description: "Information gathering and technology detection"
+    
+  - name: "sslscan"
+    fallback: "sslyze"
+    fallback_final: "openssl s_client"
+    timeout: 180
+    description: "TLS/certificate checks"
+    
+  - name: "nmap"
+    args: ["--top-ports", "100", "-sV", "-Pn"]
+    timeout: 300
+    description: "Port scanning with service detection"
+
+steps:
+  1:
+    tool: "nuclei"
+    purpose: "Technology fingerprinting and basic info gathering"
+    
+  2:
+    tool: "sslscan"
+    purpose: "TLS/SSL configuration analysis"
+    
+  3:
+    tool: "nmap"
+    purpose: "Port discovery and service enumeration"
+
+outputs:
+  - "nuclei.json"
+  - "ssl_scan.txt"
+  - "nmap.xml"
