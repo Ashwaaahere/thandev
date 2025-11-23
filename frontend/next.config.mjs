@@ -1,5 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -7,25 +8,56 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Webpack configuration for path aliases
-  webpack: (config, { isServer }) => {
-    // Ensure path aliases work in webpack for both client and server
-    const rootPath = path.resolve(__dirname);
-    config.resolve.alias = {
-      ...config.resolve.alias,
+  webpack: (config, { isServer, dir }) => {
+    // Use the dir parameter which Next.js provides (project directory)
+    // This works correctly in both local and Vercel environments
+    const projectRoot = dir || __dirname;
+    const rootPath = path.resolve(projectRoot);
+    
+    // Debug logging (will show in Vercel build logs)
+    console.log('Webpack config - projectRoot:', projectRoot);
+    console.log('Webpack config - rootPath:', rootPath);
+    console.log('Webpack config - lib exists:', fs.existsSync(path.resolve(rootPath, 'lib')));
+    
+    // Create absolute paths for aliases
+    const libPath = path.resolve(rootPath, 'lib');
+    const componentsPath = path.resolve(rootPath, 'components');
+    const appPath = path.resolve(rootPath, 'app');
+    
+    // Set up aliases - use absolute paths
+    const customAliases = {
       '@': rootPath,
-      '@/lib': path.resolve(rootPath, 'lib'),
-      '@/components': path.resolve(rootPath, 'components'),
-      '@/app': path.resolve(rootPath, 'app'),
+      '@/lib': libPath,
+      '@/components': componentsPath,
+      '@/app': appPath,
     };
     
-    // Ensure extensions are resolved
+    console.log('Setting webpack aliases:', {
+      '@': rootPath,
+      '@/lib': libPath,
+      '@/components': componentsPath,
+    });
+    
+    // Override existing aliases with our custom ones
+    // This ensures our aliases take precedence
+    if (!config.resolve) {
+      config.resolve = {};
+    }
+    if (!config.resolve.alias) {
+      config.resolve.alias = {};
+    }
+    
+    // Apply aliases - our custom ones override defaults
+    Object.assign(config.resolve.alias, customAliases);
+    
+    // Ensure extensions include TypeScript
+    if (!config.resolve.extensions) {
+      config.resolve.extensions = [];
+    }
+    const extensions = ['.ts', '.tsx', '.js', '.jsx', '.json'];
     config.resolve.extensions = [
-      '.js',
-      '.jsx',
-      '.ts',
-      '.tsx',
-      '.json',
-      ...(config.resolve.extensions || []),
+      ...extensions.filter(ext => !config.resolve.extensions.includes(ext)),
+      ...config.resolve.extensions,
     ];
     
     return config;
