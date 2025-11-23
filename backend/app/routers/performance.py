@@ -54,6 +54,8 @@ async def start_performance_scan(
     user_id = scan_request.user_id or "anonymous"
     now = datetime.utcnow()
     
+    logger.info(f"Performance scan request received: job_id={job_id}, url={scan_request.url}, device={scan_request.device}, user_id={user_id}")
+    
     # Create scan job record in database
     scan_job = PerformanceScanJob(
         id=job_id,
@@ -68,6 +70,7 @@ async def start_performance_scan(
         db.add(scan_job)
         db.commit()
         db.refresh(scan_job)
+        logger.info(f"Performance scan job created in database: {job_id}")
         
         # Start background task
         background_tasks.add_task(
@@ -76,6 +79,7 @@ async def start_performance_scan(
             str(scan_request.url),
             scan_request.device
         )
+        logger.info(f"Background task scheduled for performance scan: {job_id}")
         
         return PerformanceScanResponse(
             jobId=job_id,
@@ -84,7 +88,9 @@ async def start_performance_scan(
         )
     except Exception as e:
         db.rollback()
-        logger.error(f"Failed to create performance scan job: {str(e)}")
+        logger.error(f"Failed to create performance scan job {job_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Failed to start scan: {str(e)}")
 
 @router.get("/{job_id}", response_model=PerformanceScanStatus)
@@ -117,6 +123,8 @@ async def get_scan_status(job_id: str, db: Session = Depends(get_db)):
 
 async def run_lighthouse_scan(job_id: str, url: str, device: str):
     """Run Lighthouse scan using Cloud Run Service or local fallback"""
+    logger.info(f"Background task started for performance scan: job_id={job_id}, url={url}, device={device}")
+    
     # Create a new database session for the background task
     db = SessionLocal()
     scan_job = None
@@ -128,20 +136,30 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             scan_job.status = "running"
             scan_job.started_at = datetime.utcnow()
             db.commit()
+            logger.info(f"Performance scan job status updated to 'running': {job_id}")
+        else:
+            logger.warning(f"Performance scan job not found in database: {job_id}")
         
         # Check if Cloud Run Service is enabled
         cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
         cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "")
         
+        logger.info(f"Cloud Run configuration: enabled={cloud_run_enabled}, url_set={bool(cloud_run_url)}, url_length={len(cloud_run_url) if cloud_run_url else 0}")
+        
         if cloud_run_enabled and cloud_run_url:
             # Use Cloud Run Service
+            logger.info(f"Using Cloud Run Service for performance scan: {job_id}")
             await run_cloud_run_lighthouse_scan(job_id, url, device, cloud_run_url, db)
         else:
             # Fallback to local Lighthouse (for development)
+            logger.warning(f"Cloud Run not configured, falling back to local Lighthouse for job: {job_id}")
+            logger.warning(f"This may cause out-of-memory errors on Fly.io!")
             await run_local_lighthouse_scan(job_id, url, device, db)
             
     except Exception as e:
         logger.error(f"Performance scan failed for job {job_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         if scan_job:
             scan_job.status = "error"
             scan_job.finished_at = datetime.utcnow()
@@ -152,11 +170,14 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
 
 async def run_cloud_run_lighthouse_scan(job_id: str, url: str, device: str, cloud_run_url: str, db: Session):
     """Run Lighthouse scan via Cloud Run Service"""
+    logger.info(f"Calling Cloud Run Service: {cloud_run_url}/run for job {job_id}")
+    
     scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
     
     try:
         # Call Cloud Run Service to start scan
         async with httpx.AsyncClient(timeout=30.0) as client:
+            logger.info(f"Sending POST request to Cloud Run Service: {cloud_run_url}/run")
             response = await client.post(
                 f"{cloud_run_url}/run",
                 json={
@@ -166,13 +187,18 @@ async def run_cloud_run_lighthouse_scan(job_id: str, url: str, device: str, clou
                 }
             )
             
+            logger.info(f"Cloud Run Service response: status={response.status_code}, headers={dict(response.headers)}")
+            
             if response.status_code != 200:
-                raise Exception(f"Cloud Run Service failed to start scan: {response.text}")
+                error_text = response.text[:500]  # Limit error text length
+                logger.error(f"Cloud Run Service failed to start scan: status={response.status_code}, error={error_text}")
+                raise Exception(f"Cloud Run Service failed to start scan: {error_text}")
             
             cloud_job_data = response.json()
             cloud_job_id = cloud_job_data.get("jobId")
             
             if not cloud_job_id:
+                logger.error(f"Cloud Run Service response missing jobId: {cloud_job_data}")
                 raise Exception("Cloud Run Service did not return a jobId")
             
             logger.info(f"Started Cloud Run scan for job {job_id}, cloud job ID: {cloud_job_id}")
