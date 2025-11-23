@@ -7,12 +7,27 @@ const __dirname = path.dirname(__filename);
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // Webpack configuration for path aliases
-  webpack: (config) => {
-    // Ensure path aliases work in webpack
+  webpack: (config, { isServer }) => {
+    // Ensure path aliases work in webpack for both client and server
+    const rootPath = path.resolve(__dirname);
     config.resolve.alias = {
       ...config.resolve.alias,
-      '@': path.resolve(__dirname),
+      '@': rootPath,
+      '@/lib': path.resolve(rootPath, 'lib'),
+      '@/components': path.resolve(rootPath, 'components'),
+      '@/app': path.resolve(rootPath, 'app'),
     };
+    
+    // Ensure extensions are resolved
+    config.resolve.extensions = [
+      '.js',
+      '.jsx',
+      '.ts',
+      '.tsx',
+      '.json',
+      ...(config.resolve.extensions || []),
+    ];
+    
     return config;
   },
   
