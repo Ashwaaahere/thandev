@@ -341,8 +341,9 @@ def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
         # Check if we have categories object (preferred format)
         if "categories" in cloud_result and isinstance(cloud_result.get("categories"), dict):
             categories = cloud_result.get("categories", {})
+            logger.info(f"Found categories in Cloud Run result: {categories}")
         else:
-            # Cloud Run Service returns "performance" as a number
+            # Cloud Run Service returns "performance" as a number (old format)
             # Convert to categories format
             performance_score = cloud_result.get("performance", 0)
             # If performance is a float (0-1), convert to int (0-100)
@@ -355,11 +356,11 @@ def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
                 
             categories = {
                 "performance": performance_score,
-                "accessibility": 0,  # Cloud Run Service doesn't provide these
+                "accessibility": 0,  # Not available in old format
                 "bestPractices": 0,
                 "seo": 0
             }
-            logger.info(f"Converted performance score to categories: {categories}")
+            logger.info(f"Converted performance score to categories (old format): {categories}")
         
         # Extract other fields
         metrics = cloud_result.get("metrics", {})

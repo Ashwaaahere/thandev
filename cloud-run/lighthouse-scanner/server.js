@@ -74,7 +74,7 @@ async function runProfessionalLighthouseScan(url, device = 'desktop') {
     const options = {
       logLevel: 'info',
       output: 'json',
-      onlyCategories: ['performance'],
+      onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
       port: new URL(browser.wsEndpoint()).port,
       emulatedFormFactor: device,
       throttling: {
@@ -102,7 +102,7 @@ async function runProfessionalLighthouseScan(url, device = 'desktop') {
         throttling: device === 'mobile' ? 
           { rttMs: 150, throughputKbps: 1638.4, cpuSlowdownMultiplier: 4 } :
           { rttMs: 40, throughputKbps: 10240, cpuSlowdownMultiplier: 1 },
-        onlyCategories: ['performance'],
+        onlyCategories: ['performance', 'accessibility', 'best-practices', 'seo'],
       },
     });
 
@@ -110,9 +110,16 @@ async function runProfessionalLighthouseScan(url, device = 'desktop') {
       throw new Error('Lighthouse scan failed to generate results');
     }
 
-    // Extract performance data
-    const performanceScore = runnerResult.lhr.categories.performance ? 
-      Math.round(runnerResult.lhr.categories.performance.score * 100) : 0;
+    // Extract all category scores
+    const categories = runnerResult.lhr.categories || {};
+    const performanceScore = categories.performance ? 
+      Math.round(categories.performance.score * 100) : 0;
+    const accessibilityScore = categories.accessibility ? 
+      Math.round(categories.accessibility.score * 100) : 0;
+    const bestPracticesScore = categories['best-practices'] ? 
+      Math.round(categories['best-practices'].score * 100) : 0;
+    const seoScore = categories.seo ? 
+      Math.round(categories.seo.score * 100) : 0;
     
     const metrics = {};
     const opportunities = [];
@@ -178,6 +185,12 @@ async function runProfessionalLighthouseScan(url, device = 'desktop') {
       device,
       timestamp: new Date().toISOString(),
       performance: performanceScore,
+      categories: {
+        performance: performanceScore,
+        accessibility: accessibilityScore,
+        bestPractices: bestPracticesScore,
+        seo: seoScore,
+      },
       metrics: {
         firstContentfulPaint: metrics.firstcontentfulpaint || 0,
         largestContentfulPaint: metrics.largestcontentfulpaint || 0,
