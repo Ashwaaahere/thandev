@@ -1,25 +1,30 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, HttpUrl
+from sqlalchemy.orm import Session
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from ..db import get_db, SessionLocal
+from ..models import PerformanceScanJob
 from typing import Optional, Dict, Any
-import asyncio
 import uuid
 import json
-import time
 from datetime import datetime
 import subprocess
 import os
 import tempfile
-import shutil
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/performance-scan", tags=["performance"])
 
-# In-memory storage for scan results (in production, use Redis or database)
-scan_results: Dict[str, Dict[str, Any]] = {}
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
 
 class PerformanceScanRequest(BaseModel):
     url: HttpUrl
     device: str = "desktop"
-    timestamp: str
+    user_id: Optional[str] = None
 
 class PerformanceScanResponse(BaseModel):
     jobId: str
@@ -32,52 +37,94 @@ class PerformanceScanStatus(BaseModel):
     result: Optional[Dict[str, Any]] = None
     createdAt: str
     completedAt: Optional[str] = None
+    error: Optional[str] = None
 
 @router.post("/", response_model=PerformanceScanResponse)
-async def start_performance_scan(request: PerformanceScanRequest, background_tasks: BackgroundTasks):
+@limiter.limit("10/minute")
+async def start_performance_scan(
+    request: Request,
+    scan_request: PerformanceScanRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
     """Start a performance scan for the given URL"""
     job_id = str(uuid.uuid4())
+    user_id = scan_request.user_id or "anonymous"
+    now = datetime.utcnow()
     
-    # Initialize scan result
-    scan_results[job_id] = {
-        "jobId": job_id,
-        "status": "pending",
-        "url": str(request.url),
-        "device": request.device,
-        "createdAt": request.timestamp,
-        "result": None,
-        "completedAt": None
-    }
-    
-    # Start background task
-    background_tasks.add_task(run_lighthouse_scan, job_id, str(request.url), request.device)
-    
-    return PerformanceScanResponse(
-        jobId=job_id,
-        status="started",
-        message="Performance scan initiated"
+    # Create scan job record in database
+    scan_job = PerformanceScanJob(
+        id=job_id,
+        user_id=user_id,
+        url=str(scan_request.url),
+        device=scan_request.device,
+        status="pending",
+        created_at=now
     )
+    
+    try:
+        db.add(scan_job)
+        db.commit()
+        db.refresh(scan_job)
+        
+        # Start background task
+        background_tasks.add_task(
+            run_lighthouse_scan,
+            job_id,
+            str(scan_request.url),
+            scan_request.device
+        )
+        
+        return PerformanceScanResponse(
+            jobId=job_id,
+            status="started",
+            message="Performance scan initiated"
+        )
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to create performance scan job: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to start scan: {str(e)}")
 
 @router.get("/{job_id}", response_model=PerformanceScanStatus)
-async def get_scan_status(job_id: str):
+async def get_scan_status(job_id: str, db: Session = Depends(get_db)):
     """Get the status of a performance scan"""
-    if job_id not in scan_results:
+    scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
+    
+    if not scan_job:
         raise HTTPException(status_code=404, detail="Scan not found")
     
-    result = scan_results[job_id]
+    # Parse result if it's a JSON string
+    result = None
+    if scan_job.result:
+        try:
+            if isinstance(scan_job.result, str):
+                result = json.loads(scan_job.result)
+            else:
+                result = scan_job.result
+        except:
+            result = scan_job.result
+    
     return PerformanceScanStatus(
-        jobId=result["jobId"],
-        status=result["status"],
-        result=result["result"],
-        createdAt=result["createdAt"],
-        completedAt=result["completedAt"]
+        jobId=str(scan_job.id),
+        status=scan_job.status,
+        result=result,
+        createdAt=scan_job.created_at.isoformat(),
+        completedAt=scan_job.finished_at.isoformat() if scan_job.finished_at else None,
+        error=scan_job.error
     )
 
 async def run_lighthouse_scan(job_id: str, url: str, device: str):
     """Run Lighthouse scan in background"""
+    # Create a new database session for the background task
+    db = SessionLocal()
+    
     try:
         # Update status to running
-        scan_results[job_id]["status"] = "running"
+        scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
+        if scan_job:
+            scan_job.status = "running"
+            scan_job.started_at = datetime.utcnow()
+            db.commit()
         
         # Create temporary directory for Lighthouse
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -92,7 +139,7 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
                 "--quiet"
             ]
             
-            # Add device-specific Chrome flags instead of form-factor
+            # Add device-specific Chrome flags
             if device == "mobile":
                 cmd.extend(["--chrome-flags=--headless --window-size=375,667 --user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"])
             else:
@@ -111,17 +158,30 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             # Process the results
             processed_result = process_lighthouse_results(lighthouse_data)
             
-            # Update scan results
-            scan_results[job_id]["status"] = "completed"
-            scan_results[job_id]["result"] = processed_result
-            scan_results[job_id]["completedAt"] = datetime.utcnow().isoformat()
+            # Update scan job with results
+            if scan_job:
+                scan_job.status = "completed"
+                scan_job.finished_at = datetime.utcnow()
+                # Store result as JSON string for SQLite compatibility
+                scan_job.result = json.dumps(processed_result) if isinstance(processed_result, dict) else processed_result
+                db.commit()
+                logger.info(f"Performance scan completed for job {job_id}")
             
     except subprocess.TimeoutExpired:
-        scan_results[job_id]["status"] = "failed"
-        scan_results[job_id]["result"] = {"error": "Scan timed out"}
+        if scan_job:
+            scan_job.status = "error"
+            scan_job.finished_at = datetime.utcnow()
+            scan_job.error = "Scan timed out"
+            db.commit()
     except Exception as e:
-        scan_results[job_id]["status"] = "failed"
-        scan_results[job_id]["result"] = {"error": str(e)}
+        logger.error(f"Performance scan failed for job {job_id}: {str(e)}")
+        if scan_job:
+            scan_job.status = "error"
+            scan_job.finished_at = datetime.utcnow()
+            scan_job.error = str(e)
+            db.commit()
+    finally:
+        db.close()
 
 def process_lighthouse_results(lighthouse_data: Dict[str, Any]) -> Dict[str, Any]:
     """Process Lighthouse results into our format"""
@@ -161,14 +221,6 @@ def process_lighthouse_results(lighthouse_data: Dict[str, Any]) -> Dict[str, Any
             "uses-text-compression",
             "uses-responsive-images",
             "offscreen-images",
-            "unused-css-rules",
-            "modern-image-formats",
-            "uses-webp-images",
-            "uses-optimized-images",
-            "uses-text-compression",
-            "uses-responsive-images",
-            "offscreen-images",
-            "unused-css-rules",
             "modern-image-formats",
             "uses-webp-images"
         ]
@@ -241,15 +293,50 @@ def process_lighthouse_results(lighthouse_data: Dict[str, Any]) -> Dict[str, Any
         }
 
 @router.get("/")
-async def list_scans():
-    """List all performance scans"""
-    return {"scans": list(scan_results.values())}
+@limiter.limit("30/minute")
+async def list_scans(
+    request: Request,
+    user_id: Optional[str] = None,
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    """List performance scans for a user"""
+    query = db.query(PerformanceScanJob)
+    
+    if user_id:
+        query = query.filter(PerformanceScanJob.user_id == user_id)
+    
+    scans = query.order_by(PerformanceScanJob.created_at.desc()).offset(offset).limit(limit).all()
+    
+    return {
+        "scans": [
+            {
+                "jobId": str(scan.id),
+                "url": scan.url,
+                "device": scan.device,
+                "status": scan.status,
+                "createdAt": scan.created_at.isoformat(),
+                "finishedAt": scan.finished_at.isoformat() if scan.finished_at else None
+            }
+            for scan in scans
+        ],
+        "total": query.count()
+    }
 
 @router.delete("/{job_id}")
-async def delete_scan(job_id: str):
+async def delete_scan(job_id: str, db: Session = Depends(get_db)):
     """Delete a performance scan"""
-    if job_id not in scan_results:
+    scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
+    
+    if not scan_job:
         raise HTTPException(status_code=404, detail="Scan not found")
     
-    del scan_results[job_id]
-    return {"message": "Scan deleted successfully"}
+    try:
+        db.delete(scan_job)
+        db.commit()
+        return {"message": "Scan deleted successfully"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to delete scan {job_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete scan: {str(e)}")

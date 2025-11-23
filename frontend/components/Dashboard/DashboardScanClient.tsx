@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
+import { toast } from '../Toast';
 
 export interface ScanResult {
   id: string;
@@ -115,6 +116,12 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
       }
 
       const data = await response.json();
+      console.log('Scan start response:', data);
+      
+      if (!data.success) {
+        throw new Error(data.error || 'Failed to start scan');
+      }
+      
       const jobId = data.jobId;
       
       setScanStatus('Scan started, monitoring progress...');
@@ -123,21 +130,31 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
       // Poll for scan completion
       const pollInterval = setInterval(async () => {
         try {
-          const statusResponse = await fetch(`/api/security-scan/status/${jobId}`);
+          const statusResponse = await fetch(`/api/security-scan?jobId=${jobId}`);
           
           if (!statusResponse.ok) {
             throw new Error('Failed to get scan status');
           }
 
           const statusData = await statusResponse.json();
+          console.log('Scan status response:', statusData);
           
-          if (statusData.status === 'completed') {
+          if (statusData.success && statusData.status === 'completed') {
             clearInterval(pollInterval);
             
             // Process the scan results
             const result = statusData.result;
             const vulnerabilities = result?.vulnerabilities || [];
-            const securityScore = result?.securityScore || 0;
+            
+            // Calculate security score based on vulnerabilities
+            let securityScore = 100; // Start with perfect score
+            if (vulnerabilities.length > 0) {
+              const severityWeights = { critical: 25, high: 15, medium: 10, low: 5, info: 2 };
+              vulnerabilities.forEach((vuln: any) => {
+                securityScore -= severityWeights[vuln.severity] || 0;
+              });
+              securityScore = Math.max(0, securityScore); // Don't go below 0
+            }
             
             const completedScan: ScanResult = {
               ...newScan,
@@ -163,6 +180,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
             setIsScanning(false);
             setScanProgress(100);
             setScanStatus('Scan completed successfully');
+            toast.success('Security scan completed successfully!');
 
             // Save to history
             const updatedScans = [completedScan, ...scans];
@@ -174,7 +192,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
             setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
             setIsScanning(false);
             setScanStatus('Scan failed');
-            alert('Scan failed. Please try again.');
+            toast.error('Scan failed. Please try again.');
           } else {
             // Update progress based on status
             const progress = statusData.status === 'running' ? 50 : 25;
@@ -206,7 +224,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
       setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
       setIsScanning(false);
       setScanStatus('Failed to start scan');
-      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      toast.error(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 

@@ -17,9 +17,17 @@ from urllib.parse import urlparse
 import aiohttp
 import logging
 
-# Configure logging
+# Configure logging first
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Import result processing utilities
+try:
+    from result_processor import result_processor, result_cache
+    RESULT_PROCESSING_AVAILABLE = True
+except ImportError:
+    logger.warning("Result processing utilities not available, using basic processing")
+    RESULT_PROCESSING_AVAILABLE = False
 
 class SecurityScanner:
     def __init__(self):
@@ -34,6 +42,14 @@ class SecurityScanner:
         """Main scan orchestration"""
         try:
             logger.info(f"Starting {tier} scan for {url}")
+            
+            # Check cache first (if result processing is available)
+            if RESULT_PROCESSING_AVAILABLE:
+                cached_results = result_cache.get(url, tier)
+                if cached_results:
+                    logger.info(f"Using cached results for {url} (tier: {tier})")
+                    await self.send_callback(callback_url, cached_results)
+                    return
             
             # Parse URL
             parsed_url = urlparse(url)
@@ -55,6 +71,10 @@ class SecurityScanner:
             
             # Process and format results
             processed_results = self.process_results(url, tier)
+            
+            # Cache results (if result processing is available)
+            if RESULT_PROCESSING_AVAILABLE:
+                result_cache.set(url, tier, processed_results)
             
             # Send results back via callback
             await self.send_callback(callback_url, processed_results)
@@ -614,17 +634,37 @@ class SecurityScanner:
             logger.error(f"Directory brute force failed: {str(e)}")
     
     def process_results(self, url: str, tier: str):
-        """Process and format final results"""
+        """Process and format final results with deduplication, filtering, and prioritization"""
+        # Use result processor if available
+        if RESULT_PROCESSING_AVAILABLE:
+            processed = result_processor.process_results(
+                self.results['vulnerabilities'],
+                self.results.get('ports', []),
+                self.results.get('ssl_issues', [])
+            )
+            
+            # Use processed vulnerabilities
+            vulnerabilities = processed['vulnerabilities']
+            ports = processed['ports']
+            ssl_issues = processed['ssl_issues']
+            stats = processed['statistics']
+        else:
+            # Fallback to basic processing
+            vulnerabilities = self.results['vulnerabilities']
+            ports = self.results.get('ports', [])
+            ssl_issues = self.results.get('ssl_issues', [])
+            stats = {}
+        
         # Calculate severity breakdown
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
         
-        for vuln in self.results['vulnerabilities']:
+        for vuln in vulnerabilities:
             severity = vuln.get('severity', 'info')
             if severity in severity_counts:
                 severity_counts[severity] += 1
         
         # Calculate security score
-        total_vulns = len(self.results['vulnerabilities'])
+        total_vulns = len(vulnerabilities)
         critical_penalty = severity_counts['critical'] * 20
         high_penalty = severity_counts['high'] * 10
         medium_penalty = severity_counts['medium'] * 5
@@ -644,18 +684,19 @@ class SecurityScanner:
                 "url": url,
                 "tier": tier,
                 "timestamp": datetime.utcnow().isoformat(),
-                "vulnerabilities": self.results['vulnerabilities'],
-                "ports": self.results['ports'],
-                "ssl_issues": self.results['ssl_issues'],
+                "vulnerabilities": vulnerabilities,
+                "ports": ports,
+                "ssl_issues": ssl_issues,
                 "totalVulnerabilities": total_vulns,
                 "severityBreakdown": severity_counts,
                 "securityScore": security_score,
-                "openPorts": len(self.results['ports']),
-                "sslIssuesCount": len(self.results['ssl_issues']),
+                "openPorts": len(ports),
+                "sslIssuesCount": len(ssl_issues),
                 "scanMetadata": {
                     "scanDuration": 0,  # Calculate actual duration
                     "toolsUsed": tools_used,
-                    "scanTime": datetime.utcnow().isoformat()
+                    "scanTime": datetime.utcnow().isoformat(),
+                    "processingStats": stats  # Include processing statistics
                 }
             },
             "artifact_urls": []  # Would be populated with actual artifact URLs

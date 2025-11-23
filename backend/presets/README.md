@@ -55,3 +55,7 @@ Tools may have fallback options if the primary tool is unavailable:
 - Levels 0-2 do NOT require DNS TXT verification
 - Level 3+ (not in scope) will have different gating requirements
 - All scans are non-destructive and safe for production environments
+
+
+
+

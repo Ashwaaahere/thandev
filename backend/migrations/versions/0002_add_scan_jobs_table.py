@@ -8,17 +8,17 @@ depends_on = None
 
 def upgrade():
     op.create_table('scan_jobs',
-        sa.Column('id', sa.UUID(as_uuid=True), primary_key=True, server_default=sa.text('uuid_generate_v4()')),
+        sa.Column('id', sa.String(36), primary_key=True),
         sa.Column('user_id', sa.Text, nullable=False),
         sa.Column('url', sa.Text, nullable=False),
         sa.Column('domain', sa.Text),
         sa.Column('tier', sa.String(10), nullable=False),
         sa.Column('status', sa.String(20), server_default='pending'),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False, server_default=sa.text('NOW()')),
+        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
         sa.Column('started_at', sa.DateTime(timezone=True)),
         sa.Column('finished_at', sa.DateTime(timezone=True)),
-        sa.Column('artifact_urls', sa.JSON),
-        sa.Column('summary', sa.JSON),
+        sa.Column('artifact_urls', sa.Text),  # JSON stored as text in SQLite
+        sa.Column('summary', sa.Text),  # JSON stored as text in SQLite
         sa.Column('preset_version', sa.String(20), server_default='1.0'),
         sa.Column('execution_id', sa.Text)
     )
@@ -31,3 +31,4 @@ def downgrade():
     op.drop_index('scan_jobs_tier_idx', table_name='scan_jobs')
     op.drop_index('scan_jobs_user_id_idx', table_name='scan_jobs')
     op.drop_table('scan_jobs')
+

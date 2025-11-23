@@ -23,7 +23,13 @@ export default function SubscribeCard({ className }: Props) {
           const formData = new FormData(e.currentTarget);
           const email = formData.get('email') as string;
           if (email) {
-            alert(`Thank you for subscribing with ${email}! (This is a demo)`);
+            // Import toast at the top of the file
+            if (typeof window !== 'undefined') {
+              const event = new CustomEvent('show-toast', {
+                detail: { message: `Thank you for subscribing with ${email}! (This is a demo)`, type: 'success' },
+              });
+              window.dispatchEvent(event);
+            }
           }
         }}
         className="mt-3 flex gap-2"

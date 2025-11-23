@@ -38,3 +38,5 @@ echo "🌐 Service URL: https://$SERVICE_NAME-$(gcloud config get-value project)
 
 
 
+
+

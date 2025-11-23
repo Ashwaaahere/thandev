@@ -7,15 +7,15 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
-    op.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp";')
+    # SQLite doesn't support extensions, skip UUID extension
     op.create_table('threat_item',
-        sa.Column('id', sa.UUID(as_uuid=True), primary_key=True, server_default=sa.text('uuid_generate_v4()')),
+        sa.Column('id', sa.String(36), primary_key=True),
         sa.Column('source', sa.Text, nullable=False),
         sa.Column('source_id', sa.Text),
         sa.Column('title', sa.Text, nullable=False),
         sa.Column('summary', sa.Text),
         sa.Column('published_at', sa.DateTime(timezone=True)),
-        sa.Column('discovered_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()')),
+        sa.Column('discovered_at', sa.DateTime(timezone=True)),
         sa.Column('url', sa.Text),
         sa.Column('cve_id', sa.Text),
         sa.Column('cwe_id', sa.Text),
@@ -27,13 +27,13 @@ def upgrade():
         sa.Column('epss_score', sa.Numeric),
         sa.Column('is_kev', sa.Boolean, server_default=sa.text('false')),
         sa.Column('has_exploit', sa.Boolean, server_default=sa.text('false')),
-        sa.Column('tags', sa.ARRAY(sa.Text), server_default='{}'),
-        sa.Column('raw', sa.JSON)
+        sa.Column('tags', sa.Text),  # JSON stored as text in SQLite
+        sa.Column('raw', sa.Text)  # JSON stored as text in SQLite
     )
     op.create_index('threat_item_source_source_id_idx', 'threat_item', ['source','source_id'])
     op.create_table('threat_item_ref',
-        sa.Column('id', sa.UUID(as_uuid=True), primary_key=True, server_default=sa.text('uuid_generate_v4()')),
-        sa.Column('threat_item_id', sa.UUID(as_uuid=True), sa.ForeignKey('threat_item.id', ondelete='CASCADE')),
+        sa.Column('id', sa.String(36), primary_key=True),
+        sa.Column('threat_item_id', sa.String(36), sa.ForeignKey('threat_item.id', ondelete='CASCADE')),
         sa.Column('ref_type', sa.Text),
         sa.Column('ref_url', sa.Text)
     )
