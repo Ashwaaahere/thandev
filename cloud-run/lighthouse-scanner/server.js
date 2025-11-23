@@ -112,14 +112,35 @@ async function runProfessionalLighthouseScan(url, device = 'desktop') {
 
     // Extract all category scores
     const categories = runnerResult.lhr.categories || {};
-    const performanceScore = categories.performance ? 
+    
+    // Log available categories for debugging
+    console.log('Available Lighthouse categories:', Object.keys(categories));
+    console.log('Category details:', {
+      performance: categories.performance ? { score: categories.performance.score, id: categories.performance.id } : 'missing',
+      accessibility: categories.accessibility ? { score: categories.accessibility.score, id: categories.accessibility.id } : 'missing',
+      'best-practices': categories['best-practices'] ? { score: categories['best-practices'].score, id: categories['best-practices'].id } : 'missing',
+      seo: categories.seo ? { score: categories.seo.score, id: categories.seo.id } : 'missing'
+    });
+    
+    const performanceScore = categories.performance && categories.performance.score != null ? 
       Math.round(categories.performance.score * 100) : 0;
-    const accessibilityScore = categories.accessibility ? 
+    const accessibilityScore = categories.accessibility && categories.accessibility.score != null ? 
       Math.round(categories.accessibility.score * 100) : 0;
-    const bestPracticesScore = categories['best-practices'] ? 
+    const bestPracticesScore = categories['best-practices'] && categories['best-practices'].score != null ? 
       Math.round(categories['best-practices'].score * 100) : 0;
-    const seoScore = categories.seo ? 
+    const seoScore = categories.seo && categories.seo.score != null ? 
       Math.round(categories.seo.score * 100) : 0;
+    
+    // Warn if categories are missing
+    if (accessibilityScore === 0 && !categories.accessibility) {
+      console.warn('⚠️ Accessibility category not found in Lighthouse results');
+    }
+    if (bestPracticesScore === 0 && !categories['best-practices']) {
+      console.warn('⚠️ Best Practices category not found in Lighthouse results');
+    }
+    if (seoScore === 0 && !categories.seo) {
+      console.warn('⚠️ SEO category not found in Lighthouse results');
+    }
     
     const metrics = {};
     const opportunities = [];
