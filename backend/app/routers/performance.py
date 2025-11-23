@@ -13,6 +13,8 @@ import subprocess
 import os
 import tempfile
 import logging
+import httpx
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +116,10 @@ async def get_scan_status(job_id: str, db: Session = Depends(get_db)):
     )
 
 async def run_lighthouse_scan(job_id: str, url: str, device: str):
-    """Run Lighthouse scan in background"""
+    """Run Lighthouse scan using Cloud Run Service or local fallback"""
     # Create a new database session for the background task
     db = SessionLocal()
+    scan_job = None
     
     try:
         # Update status to running
@@ -126,6 +129,103 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             scan_job.started_at = datetime.utcnow()
             db.commit()
         
+        # Check if Cloud Run Service is enabled
+        cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
+        cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "")
+        
+        if cloud_run_enabled and cloud_run_url:
+            # Use Cloud Run Service
+            await run_cloud_run_lighthouse_scan(job_id, url, device, cloud_run_url, db)
+        else:
+            # Fallback to local Lighthouse (for development)
+            await run_local_lighthouse_scan(job_id, url, device, db)
+            
+    except Exception as e:
+        logger.error(f"Performance scan failed for job {job_id}: {str(e)}")
+        if scan_job:
+            scan_job.status = "error"
+            scan_job.finished_at = datetime.utcnow()
+            scan_job.error = str(e)
+            db.commit()
+    finally:
+        db.close()
+
+async def run_cloud_run_lighthouse_scan(job_id: str, url: str, device: str, cloud_run_url: str, db: Session):
+    """Run Lighthouse scan via Cloud Run Service"""
+    scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
+    
+    try:
+        # Call Cloud Run Service to start scan
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{cloud_run_url}/run",
+                json={
+                    "url": url,
+                    "device": device,
+                    "category": "performance"
+                }
+            )
+            
+            if response.status_code != 200:
+                raise Exception(f"Cloud Run Service failed to start scan: {response.text}")
+            
+            cloud_job_data = response.json()
+            cloud_job_id = cloud_job_data.get("jobId")
+            
+            if not cloud_job_id:
+                raise Exception("Cloud Run Service did not return a jobId")
+            
+            logger.info(f"Started Cloud Run scan for job {job_id}, cloud job ID: {cloud_job_id}")
+            
+            # Poll for results (max 5 minutes)
+            max_polls = 60  # 60 polls * 5 seconds = 5 minutes
+            poll_interval = 5  # seconds
+            
+            for poll_count in range(max_polls):
+                await asyncio.sleep(poll_interval)
+                
+                status_response = await client.get(f"{cloud_run_url}/status/{cloud_job_id}")
+                
+                if status_response.status_code != 200:
+                    logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
+                    continue
+                
+                status_data = status_response.json()
+                cloud_status = status_data.get("status", "unknown")
+                
+                logger.info(f"Cloud Run scan status for job {job_id}: {cloud_status} (poll {poll_count + 1}/{max_polls})")
+                
+                if cloud_status == "completed":
+                    # Process and save results
+                    result = status_data.get("result", {})
+                    processed_result = process_cloud_run_results(result)
+                    
+                    if scan_job:
+                        scan_job.status = "completed"
+                        scan_job.finished_at = datetime.utcnow()
+                        scan_job.result = json.dumps(processed_result) if isinstance(processed_result, dict) else processed_result
+                        db.commit()
+                        logger.info(f"Performance scan completed for job {job_id}")
+                    return
+                
+                elif cloud_status == "failed":
+                    error_msg = status_data.get("error", "Unknown error")
+                    raise Exception(f"Cloud Run scan failed: {error_msg}")
+            
+            # Timeout
+            raise Exception("Cloud Run scan timed out after 5 minutes")
+            
+    except httpx.TimeoutException:
+        raise Exception("Cloud Run Service request timed out")
+    except Exception as e:
+        logger.error(f"Cloud Run scan error for job {job_id}: {str(e)}")
+        raise
+
+async def run_local_lighthouse_scan(job_id: str, url: str, device: str, db: Session):
+    """Run Lighthouse scan locally (fallback for development)"""
+    scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
+    
+    try:
         # Create temporary directory for Lighthouse
         with tempfile.TemporaryDirectory() as temp_dir:
             # Get Chrome path from environment or use default
@@ -173,22 +273,48 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
                 scan_job.result = json.dumps(processed_result) if isinstance(processed_result, dict) else processed_result
                 db.commit()
                 logger.info(f"Performance scan completed for job {job_id}")
-            
+                
     except subprocess.TimeoutExpired:
         if scan_job:
             scan_job.status = "error"
             scan_job.finished_at = datetime.utcnow()
             scan_job.error = "Scan timed out"
             db.commit()
+        raise Exception("Lighthouse scan timed out")
     except Exception as e:
-        logger.error(f"Performance scan failed for job {job_id}: {str(e)}")
         if scan_job:
             scan_job.status = "error"
             scan_job.finished_at = datetime.utcnow()
             scan_job.error = str(e)
             db.commit()
-    finally:
-        db.close()
+        raise
+
+def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
+    """Process Cloud Run Service results into our format"""
+    try:
+        # Cloud Run Service returns results in a specific format
+        # Extract categories, metrics, opportunities, diagnostics
+        categories = cloud_result.get("categories", {})
+        metrics = cloud_result.get("metrics", {})
+        opportunities = cloud_result.get("opportunities", [])
+        diagnostics = cloud_result.get("diagnostics", [])
+        
+        return {
+            "categories": categories,
+            "metrics": metrics,
+            "opportunities": opportunities,
+            "diagnostics": diagnostics,
+            "screenshot": cloud_result.get("screenshot")
+        }
+    except Exception as e:
+        logger.error(f"Failed to process Cloud Run results: {str(e)}")
+        return {
+            "error": f"Failed to process Cloud Run results: {str(e)}",
+            "categories": {"performance": 0, "accessibility": 0, "bestPractices": 0, "seo": 0},
+            "metrics": {},
+            "opportunities": [],
+            "diagnostics": []
+        }
 
 def process_lighthouse_results(lighthouse_data: Dict[str, Any]) -> Dict[str, Any]:
     """Process Lighthouse results into our format"""
