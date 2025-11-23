@@ -32,8 +32,9 @@
 GITHUB_ID=your_github_oauth_app_client_id
 GITHUB_SECRET=your_github_oauth_app_client_secret
 NEXTAUTH_SECRET=your_random_secret_key_min_32_chars
-NEXTAUTH_URL=https://your-app.vercel.app
+NEXTAUTH_URL=https://thandev.vercel.app
 ```
+⚠️ **IMPORTANT:** `NEXTAUTH_URL` MUST be set for NextAuth to work correctly.
 
 ### Backend API
 ```

@@ -1,13 +1,25 @@
 # NEXTAUTH_SECRET Setup Guide
 
-## ⚠️ IMPORTANT: Correct Variable Name
+## ⚠️ IMPORTANT: Required Environment Variables
 
+### 1. NEXTAUTH_SECRET
 The environment variable name is:
 ```
 NEXTAUTH_SECRET
 ```
 
 **NOT** `NEXT_AUTH_SECRET` (with underscore between NEXT and AUTH)
+
+### 2. NEXTAUTH_URL (REQUIRED)
+You MUST set `NEXTAUTH_URL` for NextAuth to work correctly:
+```
+NEXTAUTH_URL=https://thandev.vercel.app
+```
+
+For local development:
+```
+NEXTAUTH_URL=http://localhost:3000
+```
 
 ---
 
@@ -53,11 +65,20 @@ NEXTAUTH_URL=http://localhost:3000
 1. Go to [Vercel Dashboard](https://vercel.com/dashboard)
 2. Select your project
 3. Go to **Settings** → **Environment Variables**
-4. Add:
+4. Add the following variables:
+   
+   **NEXTAUTH_SECRET:**
    - **Name:** `NEXTAUTH_SECRET`
    - **Value:** `X0c9mJ1goTUTmcs745p0m7W7x/EgkjgK44MjAFtU+DA=`
    - **Environment:** Production, Preview, Development (select all)
-5. Click **Save**
+   
+   **NEXTAUTH_URL (REQUIRED):**
+   - **Name:** `NEXTAUTH_URL`
+   - **Value:** `https://thandev.vercel.app`
+   - **Environment:** Production, Preview, Development (select all)
+   
+   ⚠️ **IMPORTANT:** You MUST set `NEXTAUTH_URL` for NextAuth to work correctly in production.
+5. Click **Save** for each variable
 
 ### 3. Other Platforms
 Set the environment variable `NEXTAUTH_SECRET` in your hosting platform's environment variable settings.

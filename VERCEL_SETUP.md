@@ -29,9 +29,10 @@ Vercel does NOT support `rootDirectory` in `vercel.json`. You must configure it 
    GITHUB_ID=your_github_oauth_client_id
    GITHUB_SECRET=your_github_oauth_client_secret
    NEXTAUTH_SECRET=your_random_secret_32_chars_min
-   NEXTAUTH_URL=https://your-app.vercel.app
+   NEXTAUTH_URL=https://thandev.vercel.app
    NEXT_PUBLIC_API_BASE=https://thandev-backend.fly.dev
    ```
+   ⚠️ **IMPORTANT:** `NEXTAUTH_URL` MUST be set to your Vercel app URL for NextAuth to work correctly.
 
 5. **Redeploy**
    - After setting root directory, click **Redeploy** on the latest deployment
