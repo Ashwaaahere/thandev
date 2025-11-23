@@ -144,7 +144,10 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
         cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
         cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "")
         
-        logger.info(f"Cloud Run configuration: enabled={cloud_run_enabled}, url_set={bool(cloud_run_url)}, url_length={len(cloud_run_url) if cloud_run_url else 0}")
+        # Debug: Log all environment variables that start with CLOUD_RUN
+        cloud_run_env_vars = {k: v[:50] + "..." if len(v) > 50 else v for k, v in os.environ.items() if k.startswith("CLOUD_RUN")}
+        logger.info(f"Cloud Run environment variables: {cloud_run_env_vars}")
+        logger.info(f"Cloud Run configuration: enabled={cloud_run_enabled}, url_set={bool(cloud_run_url)}, url_length={len(cloud_run_url) if cloud_run_url else 0}, url_value={cloud_run_url[:50] if cloud_run_url else 'EMPTY'}")
         
         if cloud_run_enabled and cloud_run_url:
             # Use Cloud Run Service
