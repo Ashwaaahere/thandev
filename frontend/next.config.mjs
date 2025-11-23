@@ -24,19 +24,29 @@ const nextConfig = {
     const componentsPath = path.resolve(rootPath, 'components');
     const appPath = path.resolve(rootPath, 'app');
     
+    // Verify lib directory exists
+    if (!fs.existsSync(libPath)) {
+      console.error('ERROR: lib directory not found at:', libPath);
+      console.error('Current working directory:', process.cwd());
+      console.error('Project root:', rootPath);
+    } else {
+      console.log('✓ lib directory found at:', libPath);
+      console.log('✓ auth.ts exists:', fs.existsSync(path.join(libPath, 'auth.ts')));
+      console.log('✓ cloud-run.ts exists:', fs.existsSync(path.join(libPath, 'cloud-run.ts')));
+    }
+    
     // Set up aliases - use absolute paths
+    // CRITICAL: Use exact paths without wildcards for webpack
     const customAliases = {
       '@': rootPath,
       '@/lib': libPath,
+      '@/lib/auth': path.join(libPath, 'auth'),
+      '@/lib/cloud-run': path.join(libPath, 'cloud-run'),
       '@/components': componentsPath,
       '@/app': appPath,
     };
     
-    console.log('Setting webpack aliases:', {
-      '@': rootPath,
-      '@/lib': libPath,
-      '@/components': componentsPath,
-    });
+    console.log('Setting webpack aliases:', JSON.stringify(customAliases, null, 2));
     
     // Override existing aliases with our custom ones
     // This ensures our aliases take precedence
@@ -47,8 +57,20 @@ const nextConfig = {
       config.resolve.alias = {};
     }
     
-    // Apply aliases - our custom ones override defaults
-    Object.assign(config.resolve.alias, customAliases);
+    // CRITICAL: Clear any existing @ aliases first, then apply ours
+    // This prevents conflicts
+    const existingAliases = { ...config.resolve.alias };
+    Object.keys(existingAliases).forEach(key => {
+      if (key.startsWith('@')) {
+        delete existingAliases[key];
+      }
+    });
+    
+    // Apply our aliases
+    config.resolve.alias = {
+      ...existingAliases,
+      ...customAliases,
+    };
     
     // Ensure extensions include TypeScript
     if (!config.resolve.extensions) {
