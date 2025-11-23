@@ -200,8 +200,6 @@ async function normalizeRSS(item: any, src: { source: string; category: FeedItem
 }
 
 /** -------------------- handler -------------------- **/
-export const revalidate = 600;
-
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const category = (searchParams.get('category') as FeedItem['category'] | null) ?? null;
