@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send request to FastAPI backend
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+    const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
     const response = await fetch(`${backendUrl}/api/performance-scan`, {
       method: 'POST',
@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Check status with FastAPI backend
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+    const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
     const response = await fetch(`${backendUrl}/api/performance-scan/${jobId}`, {
       method: 'GET',

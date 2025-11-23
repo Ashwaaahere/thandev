@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send request to FastAPI backend
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+    const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
     const response = await fetch(`${backendUrl}/api/security-scan`, {
       method: 'POST',
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Get scan status from FastAPI backend
-    const backendUrl = process.env.BACKEND_URL || 'http://localhost:8000';
+    const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
     const response = await fetch(`${backendUrl}/api/security-scan/status/${jobId}`, {
       method: 'GET',
