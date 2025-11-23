@@ -133,4 +133,15 @@ jspm_packages/
 
 # Temporary files
 tmp/
-temp/
+temp/*.pyc
+*.pyo
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+*.db-shm
+*.db-wal
+
