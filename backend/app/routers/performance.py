@@ -141,8 +141,12 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             logger.warning(f"Performance scan job not found in database: {job_id}")
         
         # Check if Cloud Run Service is enabled
-        cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
-        cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "")
+        # Handle common mistake where users include "-a thandev-backend" in the value
+        cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
+        # Remove common mistakes: "-a thandev-backend", quotes, etc.
+        cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
+        cloud_run_enabled = cloud_run_enabled_clean.lower() == "true"
+        cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "").strip()
         
         # Debug: Log all environment variables that start with CLOUD_RUN
         cloud_run_env_vars = {k: v[:50] + "..." if len(v) > 50 else v for k, v in os.environ.items() if k.startswith("CLOUD_RUN")}
