@@ -128,16 +128,23 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
         
         # Create temporary directory for Lighthouse
         with tempfile.TemporaryDirectory() as temp_dir:
+            # Get Chrome path from environment or use default
+            chrome_path = os.getenv("CHROME_PATH", "/usr/bin/google-chrome-stable")
+            
             # Run Lighthouse command
             cmd = [
                 "lighthouse",
                 url,
                 "--output=json",
                 "--output-path=" + os.path.join(temp_dir, "report.json"),
-                "--chrome-flags=--headless",
+                "--chrome-flags=--headless --no-sandbox --disable-gpu",
                 "--only-categories=performance,accessibility,best-practices,seo",
                 "--quiet"
             ]
+            
+            # Set CHROME_PATH environment variable for Lighthouse
+            env = os.environ.copy()
+            env["CHROME_PATH"] = chrome_path
             
             # Add device-specific Chrome flags
             if device == "mobile":
@@ -145,8 +152,8 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             else:
                 cmd.extend(["--chrome-flags=--headless --window-size=1280,720"])
             
-            # Run the command
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            # Run the command with Chrome path in environment
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300, env=env)
             
             if result.returncode != 0:
                 raise Exception(f"Lighthouse failed: {result.stderr}")
