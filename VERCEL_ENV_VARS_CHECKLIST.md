@@ -26,8 +26,11 @@ Environment: Production, Preview, Development (select all)
 
 ### Authentication (NextAuth.js)
 ```
-GITHUB_ID=your_github_oauth_app_client_id
-GITHUB_SECRET=your_github_oauth_app_client_secret
+# GitHub OAuth - Use GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET (matches GitHub OAuth app)
+GITHUB_CLIENT_ID=0v23L14BVdQ63blK2KaM7
+GITHUB_CLIENT_SECRET=your_github_oauth_app_client_secret
+# Alternative (also supported): GITHUB_ID / GITHUB_SECRET
+
 NEXTAUTH_SECRET=X0c9mJ1goTUTmcs745p0m7W7x/EgkjgK44MjAFtU+DA=
 NEXTAUTH_URL=https://thandev.vercel.app
 ```
@@ -80,9 +83,11 @@ When adding variables in Vercel, use these exact values:
 |--------------|-------|
 | `NEXTAUTH_URL` | `https://thandev.vercel.app` |
 | `NEXTAUTH_SECRET` | `X0c9mJ1goTUTmcs745p0m7W7x/EgkjgK44MjAFtU+DA=` |
-| `GITHUB_ID` | (your GitHub OAuth client ID) |
-| `GITHUB_SECRET` | (your GitHub OAuth client secret) |
+| `GITHUB_CLIENT_ID` | `0v23L14BVdQ63blK2KaM7` (from your GitHub OAuth app) |
+| `GITHUB_CLIENT_SECRET` | (your GitHub OAuth client secret - reveal and copy from GitHub) |
 | `NEXT_PUBLIC_API_BASE` | `https://thandev-backend.fly.dev` |
+
+**Note:** The code supports both `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` (recommended) and `GITHUB_ID`/`GITHUB_SECRET` (legacy). Use the `GITHUB_CLIENT_*` names to match your GitHub OAuth app.
 
 ---
 

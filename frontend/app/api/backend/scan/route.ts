@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { executeCloudRunJob, SCENARIO_CONFIG, type ScenarioType } from '@/lib/cloud-run';
 
+// Force dynamic rendering for authenticated API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // In-memory storage for demo (replace with database in production)
 const backendScans = new Map<string, {
   scanId: string;

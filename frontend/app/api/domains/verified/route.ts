@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 
+// Force dynamic rendering for authenticated API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // In-memory storage (same as other domain endpoints)
 const domainVerifications = new Map<string, {
   userId: string;

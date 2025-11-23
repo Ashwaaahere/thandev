@@ -2,6 +2,10 @@ import 'server-only';
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 
+// Force dynamic rendering for API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 type FeedItem = {
   id: string;
   title: string;

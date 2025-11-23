@@ -3,6 +3,10 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import crypto from 'crypto';
 
+// Force dynamic rendering for authenticated API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 // In-memory storage for demo (replace with database in production)
 const domainVerifications = new Map<string, {
   userId: string;

@@ -3,6 +3,10 @@ import { NextResponse } from 'next/server';
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 
+// Force dynamic rendering for API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 export const revalidate = 0;
 
 export async function GET(req: Request) {

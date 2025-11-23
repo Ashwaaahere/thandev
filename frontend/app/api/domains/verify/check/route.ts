@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth';
 import dns from 'dns';
 import { promisify } from 'util';
 
+// Force dynamic rendering for authenticated API routes
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const resolveTxt = promisify(dns.resolveTxt);
 
 // In-memory storage (same as start endpoint)

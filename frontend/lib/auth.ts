@@ -10,11 +10,23 @@ declare module 'next-auth' {
   }
 }
 
+// Support both GITHUB_ID/GITHUB_SECRET and GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET
+// for compatibility with different naming conventions
+const githubClientId = process.env.GITHUB_CLIENT_ID || process.env.GITHUB_ID
+const githubClientSecret = process.env.GITHUB_CLIENT_SECRET || process.env.GITHUB_SECRET
+
+if (!githubClientId || !githubClientSecret) {
+  throw new Error(
+    'Missing GitHub OAuth credentials. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET ' +
+    '(or GITHUB_ID and GITHUB_SECRET) environment variables.'
+  )
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     GithubProvider({
-      clientId: process.env.GITHUB_ID!,
-      clientSecret: process.env.GITHUB_SECRET!,
+      clientId: githubClientId,
+      clientSecret: githubClientSecret,
     }),
   ],
   callbacks: {
@@ -43,4 +55,6 @@ export const authOptions: NextAuthOptions = {
     maxAge: 24 * 60 * 60, // 24 hours
   },
   secret: process.env.NEXTAUTH_SECRET,
+  // Required for Vercel deployment
+  trustHost: true,
 }
