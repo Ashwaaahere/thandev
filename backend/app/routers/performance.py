@@ -332,22 +332,62 @@ async def run_local_lighthouse_scan(job_id: str, url: str, device: str, db: Sess
 def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
     """Process Cloud Run Service results into our format"""
     try:
+        logger.info(f"Processing Cloud Run results: keys={list(cloud_result.keys())}")
+        
         # Cloud Run Service returns results in a specific format
-        # Extract categories, metrics, opportunities, diagnostics
-        categories = cloud_result.get("categories", {})
+        # It may have "performance" as a number, or "categories" as an object
+        # Handle both formats
+        
+        # Check if we have categories object (preferred format)
+        if "categories" in cloud_result and isinstance(cloud_result.get("categories"), dict):
+            categories = cloud_result.get("categories", {})
+        else:
+            # Cloud Run Service returns "performance" as a number
+            # Convert to categories format
+            performance_score = cloud_result.get("performance", 0)
+            # If performance is a float (0-1), convert to int (0-100)
+            if isinstance(performance_score, float) and performance_score <= 1.0:
+                performance_score = int(performance_score * 100)
+            elif isinstance(performance_score, (int, float)):
+                performance_score = int(performance_score)
+            else:
+                performance_score = 0
+                
+            categories = {
+                "performance": performance_score,
+                "accessibility": 0,  # Cloud Run Service doesn't provide these
+                "bestPractices": 0,
+                "seo": 0
+            }
+            logger.info(f"Converted performance score to categories: {categories}")
+        
+        # Extract other fields
         metrics = cloud_result.get("metrics", {})
         opportunities = cloud_result.get("opportunities", [])
         diagnostics = cloud_result.get("diagnostics", [])
+        screenshot = cloud_result.get("screenshot")
+        
+        # Ensure categories has all required fields
+        final_categories = {
+            "performance": categories.get("performance", 0),
+            "accessibility": categories.get("accessibility", 0),
+            "bestPractices": categories.get("bestPractices", categories.get("best-practices", 0)),
+            "seo": categories.get("seo", 0)
+        }
+        
+        logger.info(f"Final processed result: categories={final_categories}, metrics_keys={list(metrics.keys()) if metrics else []}")
         
         return {
-            "categories": categories,
+            "categories": final_categories,
             "metrics": metrics,
             "opportunities": opportunities,
             "diagnostics": diagnostics,
-            "screenshot": cloud_result.get("screenshot")
+            "screenshot": screenshot
         }
     except Exception as e:
         logger.error(f"Failed to process Cloud Run results: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return {
             "error": f"Failed to process Cloud Run results: {str(e)}",
             "categories": {"performance": 0, "accessibility": 0, "bestPractices": 0, "seo": 0},

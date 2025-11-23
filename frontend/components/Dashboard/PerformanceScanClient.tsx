@@ -361,18 +361,48 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
             } else if (statusData.status === 'completed') {
               clearInterval(pollInterval);
               
+              // Validate that we have valid result data
+              if (!statusData.result || !statusData.result.categories) {
+                clearInterval(pollInterval);
+                setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+                setIsScanning(false);
+                setScanStatus('Scan completed but no results available. Please try again.');
+                toast.error('Scan completed but results are missing. Please try again.');
+                return;
+              }
+              
               setScanProgress(100);
               setScanStatus('Performance scan completed!');
               toast.success('Performance scan completed successfully!');
               
+              // Safely extract values with fallbacks
+              const performanceScore = statusData.result.categories?.performance;
+              const score = (performanceScore !== undefined && performanceScore !== null && !isNaN(performanceScore))
+                ? Math.round(performanceScore)
+                : null;
+              
+              if (score === null) {
+                clearInterval(pollInterval);
+                setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+                setIsScanning(false);
+                setScanStatus('Scan completed but performance score is invalid. Please try again.');
+                toast.error('Invalid scan results. Please try again.');
+                return;
+              }
+              
               const completedScan: PerformanceScanResult = {
                 ...newScan,
                 status: 'completed',
-                score: Math.round(statusData.result.categories.performance),
-                metrics: statusData.result.metrics,
-                opportunities: statusData.result.opportunities,
-                diagnostics: statusData.result.diagnostics,
-                categories: statusData.result.categories,
+                score: score,
+                metrics: statusData.result.metrics || {},
+                opportunities: statusData.result.opportunities || [],
+                diagnostics: statusData.result.diagnostics || [],
+                categories: {
+                  performance: statusData.result.categories?.performance ?? 0,
+                  accessibility: statusData.result.categories?.accessibility ?? 0,
+                  bestPractices: statusData.result.categories?.bestPractices ?? 0,
+                  seo: statusData.result.categories?.seo ?? 0,
+                },
                 screenshot: statusData.result.screenshot,
               };
 
@@ -383,11 +413,13 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
               const updatedScans = [completedScan, ...scans];
               setScans(updatedScans);
               localStorage.setItem('thandev-performance-scans', JSON.stringify(updatedScans));
-            } else if (statusData.status === 'failed') {
+            } else if (statusData.status === 'failed' || statusData.status === 'error') {
               clearInterval(pollInterval);
               setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
               setIsScanning(false);
-              setScanStatus('Scan failed. Please try again.');
+              const errorMsg = statusData.error || 'Scan failed. Please try again.';
+              setScanStatus(errorMsg);
+              toast.error(errorMsg);
             }
           } catch (error) {
             console.error('Error polling scan status:', error);
@@ -1242,25 +1274,28 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                             </svg>
                           </div>
                           <h2 className="text-xl font-semibold" style={{ color: 'var(--fg)' }}>Performance Analysis</h2>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(currentScan.score)}`}>
-                            {currentScan.score >= 90 ? 'EXCELLENT' : currentScan.score >= 50 ? 'NEEDS IMPROVEMENT' : 'POOR'}
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getScoreColor(currentScan.score ?? 0)}`}>
+                            {currentScan.score != null && !isNaN(currentScan.score)
+                              ? (currentScan.score >= 90 ? 'EXCELLENT' : currentScan.score >= 50 ? 'NEEDS IMPROVEMENT' : 'POOR')
+                              : 'N/A'}
                           </span>
                         </div>
                         <p className="text-sm mb-1" style={{ color: 'var(--fg)' }}>{currentScan.url}</p>
                         <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
                           <span>📅 {currentScan.timestamp.toLocaleString()}</span>
                           <span>📱 {currentScan.device} scan</span>
-                          <span>⚡ Performance Score: {currentScan.score}</span>
+                          <span>⚡ Performance Score: {currentScan.score != null && !isNaN(currentScan.score) ? currentScan.score : 'N/A'}</span>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className={`text-4xl font-bold ${getScoreColor(currentScan.score)}`}>
-                          {currentScan.score}
+                        <div className={`text-4xl font-bold ${getScoreColor(currentScan.score ?? 0)}`}>
+                          {currentScan.score != null && !isNaN(currentScan.score) ? currentScan.score : 'N/A'}
                         </div>
                         <div className="text-sm font-medium" style={{ color: 'var(--muted)' }}>Performance Score</div>
                         <div className="text-xs" style={{ color: 'var(--muted)' }}>
-                          {currentScan.score >= 90 ? 'Excellent' : 
-                           currentScan.score >= 50 ? 'Needs Improvement' : 'Poor'}
+                          {currentScan.score != null && !isNaN(currentScan.score)
+                            ? (currentScan.score >= 90 ? 'Excellent' : currentScan.score >= 50 ? 'Needs Improvement' : 'Poor')
+                            : 'No data'}
                         </div>
                       </div>
                     </div>
@@ -1310,14 +1345,14 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                                 strokeWidth="8"
                                 fill="none"
                                 strokeDasharray={`${2 * Math.PI * 40}`}
-                                strokeDashoffset={`${2 * Math.PI * 40 * (1 - currentScan.score / 100)}`}
-                                className={getScoreColor(currentScan.score)}
+                                strokeDashoffset={`${2 * Math.PI * 40 * (1 - (currentScan.score ?? 0) / 100)}`}
+                                className={getScoreColor(currentScan.score ?? 0)}
                                 strokeLinecap="round"
                               />
                             </svg>
                             <div className="absolute inset-0 flex items-center justify-center">
-                              <span className={`text-2xl font-bold ${getScoreColor(currentScan.score)}`}>
-                                {currentScan.score}
+                              <span className={`text-2xl font-bold ${getScoreColor(currentScan.score ?? 0)}`}>
+                                {currentScan.score != null && !isNaN(currentScan.score) ? currentScan.score : 'N/A'}
                               </span>
                             </div>
                           </div>
@@ -1407,7 +1442,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                               strokeWidth="8"
                               strokeLinecap="round"
                               strokeDasharray={`${2 * Math.PI * 40}`}
-                              strokeDashoffset={`${2 * Math.PI * 40 * (1 - currentScan.score / 100)}`}
+                              strokeDashoffset={`${2 * Math.PI * 40 * (1 - (currentScan.score ?? 0) / 100)}`}
                               className="transition-all duration-2000 ease-out"
                             />
                             <defs>
@@ -1420,8 +1455,8 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                           </svg>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <div className="text-center">
-                              <div className={`text-4xl font-bold ${getScoreColor(currentScan.score)}`}>
-                                {currentScan.score}
+                              <div className={`text-4xl font-bold ${getScoreColor(currentScan.score ?? 0)}`}>
+                                {currentScan.score != null && !isNaN(currentScan.score) ? currentScan.score : 'N/A'}
                               </div>
                               <div className="text-sm" style={{ color: 'var(--muted)' }}>Performance</div>
                             </div>
@@ -1451,8 +1486,10 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                       <div className="relative p-6 rounded-2xl border border-cyan-500/20 hover:border-cyan-500/40 transition-all duration-300" style={{ background: 'var(--surface-2)' }}>
                         <div className="text-center">
                           <div className="text-3xl mb-2">{category.icon}</div>
-                          <div className={`text-2xl font-bold mb-1 ${getScoreColor(currentScan.categories?.[category.key] || 0)}`}>
-                            {currentScan.categories?.[category.key] || 0}
+                          <div className={`text-2xl font-bold mb-1 ${getScoreColor(currentScan.categories?.[category.key] ?? 0)}`}>
+                            {currentScan.categories?.[category.key] != null && !isNaN(currentScan.categories[category.key])
+                              ? currentScan.categories[category.key]
+                              : 'N/A'}
                           </div>
                           <div className="text-sm" style={{ color: 'var(--muted)' }}>{category.label}</div>
                         </div>
