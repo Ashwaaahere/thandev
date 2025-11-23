@@ -36,12 +36,11 @@ const nextConfig = {
     }
     
     // Set up aliases - use absolute paths
-    // CRITICAL: Use exact paths without wildcards for webpack
+    // CRITICAL: Webpack needs aliases to point to directories, not files
+    // The file extensions are resolved automatically
     const customAliases = {
       '@': rootPath,
       '@/lib': libPath,
-      '@/lib/auth': path.join(libPath, 'auth'),
-      '@/lib/cloud-run': path.join(libPath, 'cloud-run'),
       '@/components': componentsPath,
       '@/app': appPath,
     };
