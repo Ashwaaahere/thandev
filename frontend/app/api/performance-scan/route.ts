@@ -28,10 +28,13 @@ export async function POST(request: NextRequest) {
     // Send request to FastAPI backend
     const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
-    console.log('Sending performance scan request to:', `${backendUrl}/api/performance-scan`);
+    // Use trailing slash to avoid redirect issues
+    const apiUrl = `${backendUrl}/api/performance-scan/`;
+    
+    console.log('Sending performance scan request to:', apiUrl);
     console.log('Request payload:', { url, device });
     
-    const response = await fetch(`${backendUrl}/api/performance-scan`, {
+    const response = await fetch(apiUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -41,6 +44,7 @@ export async function POST(request: NextRequest) {
         device,
         // Backend expects url as HttpUrl, device as string, user_id is optional
       }),
+      redirect: 'follow', // Follow redirects if any
     });
 
     if (!response.ok) {
@@ -66,6 +70,15 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await response.json();
+    
+    // Log the response to debug
+    console.log('Backend response:', data);
+    
+    // Check if we got a jobId
+    if (!data.jobId) {
+      console.error('No jobId in response:', data);
+      throw new Error('Backend did not return a jobId. Response: ' + JSON.stringify(data));
+    }
     
     return NextResponse.json({
       success: true,
