@@ -113,3 +113,4 @@ def get_cache_key(*args, **kwargs) -> str:
     key_data = json.dumps({"args": args, "kwargs": kwargs}, sort_keys=True)
     return hashlib.md5(key_data.encode()).hexdigest()
 
+
