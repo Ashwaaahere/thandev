@@ -37,21 +37,64 @@ export async function POST(request: NextRequest) {
     // Send request to FastAPI backend
     const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
-    const response = await fetch(`${backendUrl}/api/security-scan`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        url,
-        tier,
-        user_id,
-      }),
+    console.log('Security scan request:', {
+      backendUrl,
+      url,
+      tier,
+      endpoint: `${backendUrl}/api/security-scan`
     });
+    
+    let response;
+    try {
+      response = await fetch(`${backendUrl}/api/security-scan`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url,
+          tier,
+          user_id,
+        }),
+        // Add timeout
+        signal: AbortSignal.timeout(30000), // 30 second timeout
+      });
+    } catch (fetchError) {
+      console.error('Fetch error:', fetchError);
+      if (fetchError instanceof Error) {
+        if (fetchError.name === 'AbortError') {
+          throw new Error(`Backend request timed out. Is ${backendUrl} accessible?`);
+        }
+        if (fetchError.message.includes('fetch failed') || fetchError.message.includes('ECONNREFUSED')) {
+          throw new Error(`Cannot connect to backend at ${backendUrl}. Please check NEXT_PUBLIC_API_BASE environment variable.`);
+        }
+        throw new Error(`Network error: ${fetchError.message}`);
+      }
+      throw new Error('Failed to connect to backend');
+    }
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Backend API failed: ${errorData.detail || response.statusText}`);
+      let errorMessage = `Backend API failed: ${response.statusText}`;
+      let errorDetail = '';
+      
+      try {
+        const errorData = await response.json();
+        errorDetail = errorData.detail || errorData.message || errorData.error || '';
+        errorMessage = errorDetail || errorMessage;
+        console.error('Backend error response:', errorData);
+      } catch (parseError) {
+        // If response is not JSON, try to get text
+        try {
+          const errorText = await response.text();
+          console.error('Backend error text:', errorText);
+          errorMessage = errorText || errorMessage;
+        } catch {
+          // Use status text as fallback
+          errorMessage = `Backend returned ${response.status} ${response.statusText}`;
+        }
+      }
+      
+      throw new Error(errorMessage);
     }
 
     const data = await response.json();
