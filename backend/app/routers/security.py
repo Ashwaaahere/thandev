@@ -125,27 +125,27 @@ def validate_tier(tier: str) -> bool:
 @router.post("/", response_model=SecurityScanResponse)
 @limiter.limit("10/minute")
 async def start_security_scan(
-    http_request: Request,
-    request: SecurityScanRequest,
+    request: Request,
+    scan_request: SecurityScanRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Start a security scan for the given URL"""
     # Validate tier
-    if not validate_tier(request.tier):
+    if not validate_tier(scan_request.tier):
         raise HTTPException(status_code=400, detail="Invalid tier. Must be level0, level1, or level2")
     
     # Get user_id (for now, use a default if not provided)
-    user_id = request.user_id or "anonymous"
+    user_id = scan_request.user_id or "anonymous"
     
     # Check rate limit
     if not check_rate_limit(db, user_id):
         raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 3 concurrent scans allowed.")
     
     # Get preset info
-    preset = PRESETS.get(request.tier)
+    preset = PRESETS.get(scan_request.tier)
     if not preset:
-        raise HTTPException(status_code=400, detail=f"Preset not found for tier {request.tier}")
+        raise HTTPException(status_code=400, detail=f"Preset not found for tier {scan_request.tier}")
     
     job_id = str(uuid.uuid4())
     now = datetime.utcnow()
@@ -154,9 +154,9 @@ async def start_security_scan(
     scan_job = ScanJob(
         id=job_id,
         user_id=user_id,
-        url=str(request.url),
-        domain=request.url.host,
-        tier=request.tier,
+        url=str(scan_request.url),
+        domain=scan_request.url.host,
+        tier=scan_request.tier,
         status="pending",
         created_at=now,
         preset_version=preset.get("version", "1.0")
@@ -168,13 +168,13 @@ async def start_security_scan(
         db.refresh(scan_job)
         
         # Start the scan in the background
-        background_tasks.add_task(run_security_scan, job_id, str(request.url), request.tier)
+        background_tasks.add_task(run_security_scan, job_id, str(scan_request.url), scan_request.tier)
         
         return SecurityScanResponse(
             jobId=job_id,
             status="started",
             message="Security scan initiated",
-            tier=request.tier,
+            tier=scan_request.tier,
             estimated_duration=preset.get("estimated_duration", "Unknown")
         )
         
