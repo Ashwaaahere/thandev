@@ -112,14 +112,15 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
 
       if (!response.ok) {
         const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to start scan');
+        throw new Error(errorData.error || errorData.details || 'Failed to start scan');
       }
 
       const data = await response.json();
       console.log('Scan start response:', data);
       
-      if (!data.success) {
-        throw new Error(data.error || 'Failed to start scan');
+      // Backend returns jobId directly, not wrapped in success field
+      if (!data.jobId) {
+        throw new Error(data.error || data.message || 'Failed to start scan - no jobId returned');
       }
       
       const jobId = data.jobId;
