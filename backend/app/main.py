@@ -60,6 +60,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"Database health check passed: {db_health}")
     
+    # Validate security scan configuration
+    cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
+    if cloud_run_enabled:
+        gcp_project = os.getenv("GCP_PROJECT_ID")
+        gcp_region = os.getenv("GCP_REGION", "us-central1")
+        backend_url = os.getenv("BACKEND_URL")
+        
+        if not gcp_project:
+            logger.warning("⚠️  CLOUD_RUN_ENABLED=true but GCP_PROJECT_ID not set. Security scans will fail.")
+            logger.warning("   Set GCP_PROJECT_ID or use CLOUD_RUN_ENABLED=false for local scanning.")
+        else:
+            logger.info(f"✅ Cloud Run scanning enabled: project={gcp_project}, region={gcp_region}")
+        
+        if not backend_url:
+            logger.warning("⚠️  BACKEND_URL not set. Callback URLs may not work correctly.")
+        else:
+            logger.info(f"✅ Backend URL configured: {backend_url}")
+    else:
+        logger.info("ℹ️  Cloud Run scanning disabled. Using local scanning (if tools available).")
+    
     yield
     
     # Shutdown
