@@ -37,16 +37,19 @@ export async function POST(request: NextRequest) {
     // Send request to FastAPI backend
     const backendUrl = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
     
+    // Use trailing slash to avoid redirect issues (same as performance scan)
+    const apiUrl = `${backendUrl}/api/security-scan/`;
+    
     console.log('Security scan request:', {
       backendUrl,
       url,
       tier,
-      endpoint: `${backendUrl}/api/security-scan`
+      endpoint: apiUrl
     });
     
     let response;
     try {
-      response = await fetch(`${backendUrl}/api/security-scan`, {
+      response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -56,6 +59,7 @@ export async function POST(request: NextRequest) {
           tier,
           user_id,
         }),
+        redirect: 'follow', // Follow redirects if any (same as performance scan)
         // Add timeout
         signal: AbortSignal.timeout(30000), // 30 second timeout
       });
@@ -139,6 +143,7 @@ export async function GET(request: NextRequest) {
       headers: {
         'Content-Type': 'application/json',
       },
+      redirect: 'follow', // Follow redirects if any
     });
 
     if (!response.ok) {
