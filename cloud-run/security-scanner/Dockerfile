@@ -37,8 +37,8 @@ RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
 # Install additional Go security tools
 RUN go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
 
-# Install additional security tools
-RUN pip3 install requests aiohttp
+# Install additional security tools and GCS client
+RUN pip3 install requests aiohttp google-cloud-storage
 
 # Verify installations
 RUN which nuclei && nuclei -version

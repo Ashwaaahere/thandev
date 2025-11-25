@@ -38,6 +38,148 @@ class SecurityScanner:
             "scan_metadata": {}
         }
     
+    async def run_scan_with_gcs(self, url: str, tier: str, callback_url: str, scan_id: str, gcs_bucket: str):
+        """Main scan orchestration with GCS upload"""
+        try:
+            from urllib.parse import urlparse
+            import xml.etree.ElementTree as ET
+            from google.cloud import storage
+            
+            logger.info(f"Starting {tier} scan for {url}, scan_id={scan_id}")
+            
+            parsed_url = urlparse(url)
+            hostname = parsed_url.hostname or parsed_url.netloc
+            
+            # Step 1: Run Nuclei scan
+            logger.info("Running Nuclei scan...")
+            nuclei_output_file = "/tmp/nuclei-output.json"
+            nuclei_cmd = [
+                "nuclei", "-u", url,
+                "-severity", "low,medium,high,critical",
+                "-silent", "-json", "-o", nuclei_output_file
+            ]
+            
+            nuclei_result = subprocess.run(nuclei_cmd, capture_output=True, text=True, timeout=1800)
+            if nuclei_result.returncode != 0:
+                logger.warning(f"Nuclei scan had issues: {nuclei_result.stderr}")
+            
+            # Step 2: Run Nmap scan
+            logger.info("Running Nmap scan...")
+            nmap_output_file = "/tmp/nmap-output.xml"
+            nmap_cmd = [
+                "nmap", "-sV", "-Pn", "--top-ports", "100",
+                hostname, "-oX", nmap_output_file
+            ]
+            
+            nmap_result = subprocess.run(nmap_cmd, capture_output=True, text=True, timeout=600)
+            if nmap_result.returncode != 0:
+                logger.warning(f"Nmap scan had issues: {nmap_result.stderr}")
+            
+            # Step 3: Parse results
+            vulnerabilities = []
+            ports = []
+            
+            # Parse Nuclei results
+            if os.path.exists(nuclei_output_file):
+                with open(nuclei_output_file, 'r') as f:
+                    for line in f:
+                        if line.strip():
+                            try:
+                                vuln_data = json.loads(line)
+                                vulnerabilities.append({
+                                    "type": vuln_data.get('info', {}).get('name', 'Nuclei Finding'),
+                                    "severity": vuln_data.get('info', {}).get('severity', 'info').lower(),
+                                    "title": vuln_data.get('info', {}).get('name', 'Security Finding'),
+                                    "description": vuln_data.get('info', {}).get('description', ''),
+                                    "recommendation": vuln_data.get('info', {}).get('remediation', ''),
+                                    "cwe": vuln_data.get('info', {}).get('classification', {}).get('cwe-id', []),
+                                    "cvss": vuln_data.get('info', {}).get('classification', {}).get('cvss-score'),
+                                    "matched_at": vuln_data.get('matched-at', url)
+                                })
+                            except json.JSONDecodeError:
+                                continue
+            
+            # Parse Nmap results
+            if os.path.exists(nmap_output_file):
+                try:
+                    tree = ET.parse(nmap_output_file)
+                    root = tree.getroot()
+                    for host in root.findall('host'):
+                        for port in host.findall('ports/port'):
+                            if port.find('state').get('state') == 'open':
+                                port_id = port.get('portid')
+                                service_elem = port.find('service')
+                                service_name = service_elem.get('name', 'unknown') if service_elem is not None else 'unknown'
+                                service_version = service_elem.get('version', '') if service_elem is not None else ''
+                                ports.append({
+                                    "port": int(port_id),
+                                    "service": service_name,
+                                    "version": service_version,
+                                    "state": "open"
+                                })
+                except Exception as e:
+                    logger.error(f"Failed to parse nmap XML: {str(e)}")
+            
+            # Step 4: Upload to GCS
+            artifacts_prefix = f"security/{scan_id}/"
+            gcs_client = storage.Client()
+            bucket = gcs_client.bucket(gcs_bucket)
+            
+            # Upload nuclei output
+            if os.path.exists(nuclei_output_file):
+                blob_name = f"{artifacts_prefix}nuclei-output.json"
+                blob = bucket.blob(blob_name)
+                blob.upload_from_filename(nuclei_output_file)
+                logger.info(f"Uploaded nuclei results to gs://{gcs_bucket}/{blob_name}")
+            
+            # Upload nmap output
+            if os.path.exists(nmap_output_file):
+                blob_name = f"{artifacts_prefix}nmap-output.xml"
+                blob = bucket.blob(blob_name)
+                blob.upload_from_filename(nmap_output_file)
+                logger.info(f"Uploaded nmap results to gs://{gcs_bucket}/{blob_name}")
+            
+            # Step 5: Generate summary
+            severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+            for vuln in vulnerabilities:
+                severity = vuln.get('severity', 'info')
+                if severity in severity_counts:
+                    severity_counts[severity] += 1
+            
+            summary = {
+                "url": url,
+                "tier": tier,
+                "timestamp": datetime.utcnow().isoformat(),
+                "vulnerabilities": vulnerabilities,
+                "ports": ports,
+                "totalVulnerabilities": len(vulnerabilities),
+                "severityBreakdown": severity_counts,
+                "openPorts": len(ports),
+                "scanMetadata": {
+                    "scanDuration": 0,
+                    "toolsUsed": ["nuclei", "nmap"],
+                    "scanTime": datetime.utcnow().isoformat()
+                }
+            }
+            
+            # Step 6: Send callback (format matches backend expectation)
+            callback_data = {
+                "scanId": scan_id,
+                "status": "done",
+                "summary": summary,
+                "artifactsPrefix": artifacts_prefix,
+                "secret": os.getenv('CALLBACK_SECRET', '')  # Include secret if provided
+            }
+            
+            await self.send_callback(callback_url, callback_data)
+            logger.info(f"Scan completed successfully for {url}, scan_id={scan_id}")
+            
+        except Exception as e:
+            logger.error(f"Scan failed: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            await self.send_error_callback(callback_url, str(e))
+    
     async def run_scan(self, url: str, tier: str, callback_url: str):
         """Main scan orchestration"""
         try:
@@ -1314,19 +1456,22 @@ class SecurityScanner:
 
 async def main():
     """Main function to handle Cloud Run Job execution"""
-    # Get parameters from environment variables or command line args
-    url = os.getenv('URL')
-    tier = os.getenv('TIER', 'level1')
+    # Get parameters from environment variables (new naming convention)
+    url = os.getenv('TARGET_URL')
+    tier = os.getenv('SCAN_TIER', 'level0')
     callback_url = os.getenv('CALLBACK_URL')
-    job_id = os.getenv('JOB_ID')
+    scan_id = os.getenv('SCAN_ID')
+    gcs_bucket = os.getenv('GCS_BUCKET', 'thandev-reports')
     
-    if not url or not callback_url:
-        logger.error("Missing required parameters: URL and CALLBACK_URL")
+    if not url or not callback_url or not scan_id:
+        logger.error(f"Missing required parameters: TARGET_URL={url}, CALLBACK_URL={callback_url}, SCAN_ID={scan_id}")
         sys.exit(1)
+    
+    logger.info(f"Starting security scan: scan_id={scan_id}, url={url}, tier={tier}, gcs_bucket={gcs_bucket}")
     
     # Create scanner instance and run scan
     scanner = SecurityScanner()
-    await scanner.run_scan(url, tier, callback_url)
+    await scanner.run_scan_with_gcs(url, tier, callback_url, scan_id, gcs_bucket)
 
 if __name__ == "__main__":
     asyncio.run(main())
