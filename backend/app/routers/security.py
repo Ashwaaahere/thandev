@@ -361,3 +361,158 @@ async def scan_callback(
 # Local execution functions removed: run_local_scan_sync, run_local_scan, 
 # run_nuclei_scan, run_nmap_scan, run_ssl_scan, run_ffuf_scan, run_nikto_scan, etc.
 # All scanning now happens in Cloud Run Jobs
+
+async def run_security_scan(job_id: str, url: str, tier: str):
+    """Run security scan using Cloud Run Job ONLY - no local execution"""
+    # Create a new database session for the background task
+    from app.db import SessionLocal
+    background_db = SessionLocal()
+    
+    try:
+        # Update status to running
+        scan_job = background_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+        if scan_job:
+            scan_job.status = "running"
+            scan_job.started_at = datetime.utcnow()
+            background_db.commit()
+        
+        # Get preset configuration
+        preset = PRESETS.get(tier)
+        if not preset:
+            raise Exception(f"Preset not found for tier {tier}")
+        
+        # Get Cloud Run Job name
+        job_name = TIER_TO_JOB.get(tier)
+        if not job_name:
+            raise Exception(f"Cloud Run Job not found for tier {tier}")
+        
+        # Check Cloud Run configuration
+        cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
+        
+        logger.info(f"Security scan configuration: cloud_run_enabled={cloud_run_enabled}, tier={tier}, job_name={job_name}")
+        
+        # REQUIRE Cloud Run - no local execution allowed
+        if not cloud_run_enabled:
+            error_msg = "Security scanning requires Cloud Run Jobs. Set CLOUD_RUN_ENABLED=true and configure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET."
+            logger.error(error_msg)
+            if scan_job:
+                scan_job.status = "error"
+                scan_job.finished_at = datetime.utcnow()
+                scan_job.summary = json.dumps({"error": error_msg})
+                background_db.commit()
+            return
+        
+        # Trigger Cloud Run Job
+        try:
+            execution_id = await run_cloud_run_scan(job_id, url, tier, job_name, preset)
+            if scan_job:
+                scan_job.execution_id = execution_id
+                background_db.commit()
+                logger.info(f"Cloud Run Job triggered successfully for job {job_id}, execution_id={execution_id}")
+        except Exception as cloud_run_error:
+            error_msg = str(cloud_run_error)
+            logger.error(f"Cloud Run scan failed for job {job_id}: {error_msg}")
+            if scan_job:
+                scan_job.status = "error"
+                scan_job.finished_at = datetime.utcnow()
+                scan_job.summary = json.dumps({
+                    "error": error_msg,
+                    "hint": "Ensure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET are properly configured."
+                })
+                background_db.commit()
+            
+    except Exception as e:
+        logger.error(f"Scan failed for job {job_id}: {str(e)}")
+        scan_job = background_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+        if scan_job:
+            scan_job.status = "error"
+            scan_job.finished_at = datetime.utcnow()
+            scan_job.summary = json.dumps({"error": str(e)})
+            background_db.commit()
+    finally:
+        background_db.close()
+
+async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, preset: Dict[str, Any]):
+    """Trigger Cloud Run Job for security scanning - NO LOCAL EXECUTION"""
+    try:
+        # Check if gcloud CLI is available
+        try:
+            gcloud_check = subprocess.run(
+                ["gcloud", "--version"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if gcloud_check.returncode != 0:
+                raise Exception("gcloud CLI not available or not working")
+        except FileNotFoundError:
+            raise Exception("gcloud CLI not installed. Cloud Run Jobs are required for security scanning.")
+        except Exception as e:
+            raise Exception(f"gcloud CLI not available: {str(e)}")
+        
+        # Get project ID and region from environment
+        project_id = os.getenv("GCP_PROJECT_ID")
+        region = os.getenv("GCP_REGION", "us-central1")
+        
+        if not project_id:
+            raise Exception("GCP_PROJECT_ID environment variable is required for Cloud Run scanning.")
+        
+        # Prepare environment variables for the Cloud Run Job
+        backend_url = os.getenv("BACKEND_URL")
+        if not backend_url:
+            raise Exception("BACKEND_URL environment variable is required for Cloud Run scanning.")
+        
+        callback_url = f"{backend_url}/api/security-scan/callback/{job_id}"
+        callback_secret = os.getenv("CALLBACK_SECRET", "default-secret")
+        gcs_bucket = os.getenv("GCS_BUCKET", "thandev-reports")
+        
+        # Use new environment variable names as specified
+        env_vars = {
+            "TARGET_URL": url,
+            "SCAN_ID": job_id,
+            "CALLBACK_URL": callback_url,
+            "GCS_BUCKET": gcs_bucket,
+            "SCAN_TIER": tier,
+            "CALLBACK_SECRET": callback_secret
+        }
+        
+        # Build gcloud command to execute the job
+        cmd = [
+            "gcloud", "run", "jobs", "execute", job_name,
+            "--region", region,
+            "--project", project_id,
+            "--wait"
+        ]
+        
+        # Add environment variables
+        env_vars_str = ",".join([f"{key}={value}" for key, value in env_vars.items()])
+        cmd.extend(["--update-env-vars", env_vars_str])
+        
+        logger.info(f"Executing Cloud Run Job: {' '.join(cmd)}")
+        logger.info(f"Cloud Run configuration: project={project_id}, region={region}, job={job_name}, callback_url={callback_url}")
+        
+        # Execute the Cloud Run Job (non-blocking, job will callback when done)
+        # Use --no-wait to avoid blocking, or --wait if you want to wait for completion
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 min timeout
+        
+        if result.returncode == 0:
+            logger.info(f"Cloud Run Job execution started for job {job_id}")
+            logger.debug(f"Job output: {result.stdout}")
+            return job_id  # Return execution ID
+        else:
+            error_msg = result.stderr or result.stdout or "Unknown error"
+            logger.error(f"Cloud Run Job failed for job {job_id}")
+            logger.error(f"Error output: {error_msg}")
+            logger.error(f"Command: {' '.join(cmd)}")
+            raise Exception(f"Cloud Run Job failed: {error_msg}")
+                
+    except subprocess.TimeoutExpired:
+        logger.error(f"Cloud Run Job timed out for job {job_id}")
+        raise Exception("Cloud Run Job timed out after 30 minutes")
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Failed to trigger Cloud Run Job for {job_id}: {error_msg}")
+        logger.error(f"Diagnostic info: GCP_PROJECT_ID={'set' if os.getenv('GCP_PROJECT_ID') else 'NOT SET'}, "
+                    f"GCP_REGION={os.getenv('GCP_REGION', 'NOT SET')}, "
+                    f"BACKEND_URL={os.getenv('BACKEND_URL', 'NOT SET')}")
+        raise Exception(f"Failed to trigger Cloud Run Job: {error_msg}")
