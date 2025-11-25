@@ -2,12 +2,15 @@
 
 import { useState } from 'react';
 import { motion } from 'framer-motion';
+import DashboardHeader from './DashboardHeader';
+import DashboardSidebar from './DashboardSidebar';
 
 interface ProfileClientProps {
   user: any;
 }
 
 export default function ProfileClient({ user }: ProfileClientProps) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
   const [isEditing, setIsEditing] = useState(false);
   const [formData, setFormData] = useState({
@@ -36,7 +39,22 @@ export default function ProfileClient({ user }: ProfileClientProps) {
   ];
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="flex h-screen overflow-hidden">
+      <DashboardSidebar 
+        isOpen={sidebarOpen} 
+        onClose={() => setSidebarOpen(false)} 
+        showLogo={!sidebarOpen}
+      />
+      
+      <div className="flex-1 flex flex-col overflow-hidden">
+        <DashboardHeader 
+          user={user} 
+          onMenuClick={() => setSidebarOpen(true)}
+          showLogo={sidebarOpen}
+        />
+        
+        <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
+          <div className="max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold mb-2" style={{ color: 'var(--fg)' }}>Profile Settings</h1>
@@ -175,6 +193,9 @@ export default function ProfileClient({ user }: ProfileClientProps) {
           </div>
         )}
       </motion.div>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
