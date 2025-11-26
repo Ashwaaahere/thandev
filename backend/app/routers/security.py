@@ -492,7 +492,7 @@ async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_ru
                 
                 if status_response.status_code != 200:
                     logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
-                        continue
+                    continue
                 
                 status_data = status_response.json()
                 cloud_status = status_data.get("status", "unknown")
