@@ -386,50 +386,31 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         if not job_name:
             raise Exception(f"Cloud Run Job not found for tier {tier}")
         
-        # Check Cloud Run configuration (more lenient - handles common mistakes)
+        # Check if Cloud Run Service is enabled (same pattern as performance scan)
         cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
-        # Remove common mistakes: quotes, extra spaces, etc.
         cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
         cloud_run_enabled = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"]
         
-        # Auto-enable if GCP_PROJECT_ID is set (smart default)
-        gcp_project_id = os.getenv("GCP_PROJECT_ID")
-        if not cloud_run_enabled and gcp_project_id:
-            logger.info(f"CLOUD_RUN_ENABLED is false/empty, but GCP_PROJECT_ID is set. Auto-enabling Cloud Run.")
-            cloud_run_enabled = True
+        # Get Cloud Run Service URL (same pattern as CLOUD_RUN_LIGHTHOUSE_URL)
+        cloud_run_url_raw = os.getenv("CLOUD_RUN_SECURITY_URL", "").strip()
+        if " -a " in cloud_run_url_raw:
+            cloud_run_url = cloud_run_url_raw.split(" -a ")[0].strip()
+        else:
+            cloud_run_url = cloud_run_url_raw
         
-        # Debug: Log what we're reading
-        logger.info(f"CLOUD_RUN_ENABLED raw value: '{cloud_run_enabled_raw}' -> parsed: {cloud_run_enabled}")
-        logger.info(f"Security scan configuration: cloud_run_enabled={cloud_run_enabled}, tier={tier}, job_name={job_name}")
+        logger.info(f"Security scan configuration: cloud_run_enabled={cloud_run_enabled}, tier={tier}, cloud_run_url={cloud_run_url[:50] if cloud_run_url else 'NOT SET'}...")
         
-        # REQUIRE Cloud Run - no local execution allowed
-        if not cloud_run_enabled:
-            error_msg = "Security scanning requires Cloud Run Jobs. Set CLOUD_RUN_ENABLED=true and configure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET."
+        if cloud_run_enabled and cloud_run_url:
+            # Use Cloud Run Service (same pattern as performance scan)
+            logger.info(f"Using Cloud Run Service for security scan: {job_id}")
+            await run_cloud_run_security_scan(job_id, url, tier, cloud_run_url, background_db)
+        else:
+            error_msg = f"Cloud Run not configured for security scans. Set CLOUD_RUN_ENABLED=true and CLOUD_RUN_SECURITY_URL=<service-url>"
             logger.error(error_msg)
             if scan_job:
                 scan_job.status = "error"
                 scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({"error": error_msg})
-                background_db.commit()
-            return
-        
-        # Trigger Cloud Run Job
-        try:
-            execution_id = await run_cloud_run_scan(job_id, url, tier, job_name, preset)
-            if scan_job:
-                scan_job.execution_id = execution_id
-                background_db.commit()
-                logger.info(f"Cloud Run Job triggered successfully for job {job_id}, execution_id={execution_id}")
-        except Exception as cloud_run_error:
-            error_msg = str(cloud_run_error)
-            logger.error(f"Cloud Run scan failed for job {job_id}: {error_msg}")
-            if scan_job:
-                scan_job.status = "error"
-                scan_job.finished_at = datetime.utcnow()
-                scan_job.summary = json.dumps({
-                    "error": error_msg,
-                    "hint": "Ensure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET are properly configured."
-                })
                 background_db.commit()
             
     except Exception as e:
@@ -443,115 +424,78 @@ async def run_security_scan(job_id: str, url: str, tier: str):
     finally:
         background_db.close()
 
-async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, preset: Dict[str, Any]):
-    """Trigger Cloud Run Job for security scanning using Google Cloud Run Jobs API - NO LOCAL EXECUTION"""
+async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_run_url: str, db: Session):
+    """Run security scan via Cloud Run Service (same pattern as performance scan)"""
+    logger.info(f"Calling Cloud Run Service: {cloud_run_url}/run for job {job_id}")
+    
+    scan_job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
+    
     try:
-        # Get project ID and region from environment
-        project_id = os.getenv("GCP_PROJECT_ID")
-        region = os.getenv("GCP_REGION", "us-central1")
-        
-        if not project_id:
-            raise Exception("GCP_PROJECT_ID environment variable is required for Cloud Run scanning.")
-        
-        # Prepare environment variables for the Cloud Run Job
-        backend_url = os.getenv("BACKEND_URL")
-        if not backend_url:
-            raise Exception("BACKEND_URL environment variable is required for Cloud Run scanning.")
-        
-        callback_url = f"{backend_url}/api/security-scan/callback/{job_id}"
-        callback_secret = os.getenv("CALLBACK_SECRET", "default-secret")
-        gcs_bucket = os.getenv("GCS_BUCKET", "thandev-reports")
-        
-        # Use new environment variable names as specified
-        env_vars = {
-            "TARGET_URL": url,
-            "SCAN_ID": job_id,
-            "CALLBACK_URL": callback_url,
-            "GCS_BUCKET": gcs_bucket,
-            "SCAN_TIER": tier,
-            "CALLBACK_SECRET": callback_secret
-        }
-        
-        logger.info(f"Triggering Cloud Run Job via API: project={project_id}, region={region}, job={job_name}, callback_url={callback_url}")
-        
-        # Use Google Cloud Run Jobs API instead of gcloud CLI
-        # The API endpoint format: https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{job}:run
-        import httpx
-        
-        api_url = f"https://run.googleapis.com/v2/projects/{project_id}/locations/{region}/jobs/{job_name}:run"
-        
-        # Get access token from metadata server (if running on GCP) or use service account
-        # For Fly.io, we'll need to use a service account key or OAuth token
-        # For now, try to get token from environment or use default credentials
-        access_token = os.getenv("GCP_ACCESS_TOKEN")
-        
-        if not access_token:
-            # Try to get token from metadata server (won't work on Fly.io, but good for GCP)
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    metadata_response = await client.get(
-                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-                        headers={"Metadata-Flavor": "Google"}
-                    )
-                    if metadata_response.status_code == 200:
-                        access_token = metadata_response.json().get("access_token")
-            except:
-                pass
-        
-        if not access_token:
-            # Fallback: Use gcloud CLI if available (for local dev)
-            try:
-                gcloud_check = subprocess.run(
-                    ["gcloud", "auth", "print-access-token"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5
-                )
-                if gcloud_check.returncode == 0:
-                    access_token = gcloud_check.stdout.strip()
-            except:
-                pass
-        
-        if not access_token:
-            raise Exception(
-                "GCP_ACCESS_TOKEN not set and cannot get from metadata server. "
-                "Set GCP_ACCESS_TOKEN environment variable or configure service account authentication."
-            )
-        
-        # Call Cloud Run Jobs API
+        # Call Cloud Run Service to start scan
         async with httpx.AsyncClient(timeout=30.0) as client:
+            logger.info(f"Sending POST request to Cloud Run Service: {cloud_run_url}/run")
             response = await client.post(
-                api_url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                },
+                f"{cloud_run_url}/run",
                 json={
-                    "overrides": {
-                        "containerOverrides": [{
-                            "env": [{"name": k, "value": v} for k, v in env_vars.items()]
-                        }]
-                    }
+                    "url": url,
+                    "tier": tier,
+                    "jobId": job_id,
+                    "category": "security"
                 }
             )
             
-            if response.status_code == 200:
-                execution_data = response.json()
-                execution_name = execution_data.get("name", job_id)
-                logger.info(f"Cloud Run Job execution started for job {job_id}, execution_name={execution_name}")
-                return execution_name
-            else:
+            logger.info(f"Cloud Run Service response: status={response.status_code}")
+            
+            if response.status_code != 200:
                 error_text = response.text[:500]
-                logger.error(f"Cloud Run Jobs API failed: status={response.status_code}, error={error_text}")
-                raise Exception(f"Cloud Run Jobs API failed: {error_text}")
+                logger.error(f"Cloud Run Service failed to start scan: status={response.status_code}, error={error_text}")
+                raise Exception(f"Cloud Run Service failed to start scan: {error_text}")
+            
+            cloud_job_data = response.json()
+            cloud_job_id = cloud_job_data.get("jobId") or job_id
+            
+            logger.info(f"Started Cloud Run security scan for job {job_id}, cloud job ID: {cloud_job_id}")
+            
+            # Poll for results (max 10 minutes for security scans)
+            max_polls = 120  # 120 polls * 5 seconds = 10 minutes
+            poll_interval = 5  # seconds
+            
+            for poll_count in range(max_polls):
+                await asyncio.sleep(poll_interval)
                 
+                status_response = await client.get(f"{cloud_run_url}/status/{cloud_job_id}")
+                
+                if status_response.status_code != 200:
+                    logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
+                    continue
+                
+                status_data = status_response.json()
+                cloud_status = status_data.get("status", "unknown")
+                
+                logger.info(f"Cloud Run scan status for job {job_id}: {cloud_status} (poll {poll_count + 1}/{max_polls})")
+                
+                if cloud_status == "completed":
+                    # Process and save results
+                    result = status_data.get("result", {})
+                    
+                    if scan_job:
+                        scan_job.status = "completed"
+                        scan_job.finished_at = datetime.utcnow()
+                        scan_job.summary = json.dumps(result.get("summary", {}))
+                        scan_job.artifact_urls = json.dumps(result.get("artifact_urls", []))
+                        db.commit()
+                        logger.info(f"Security scan completed for job {job_id}")
+                    return
+                
+                elif cloud_status == "failed":
+                    error_msg = status_data.get("error", "Unknown error")
+                    raise Exception(f"Cloud Run scan failed: {error_msg}")
+            
+            # Timeout
+            raise Exception("Cloud Run scan timed out after 10 minutes")
+            
     except httpx.TimeoutException:
-        logger.error(f"Cloud Run Job API request timed out for job {job_id}")
-        raise Exception("Cloud Run Job API request timed out")
+        raise Exception("Cloud Run Service request timed out")
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"Failed to trigger Cloud Run Job for {job_id}: {error_msg}")
-        logger.error(f"Diagnostic info: GCP_PROJECT_ID={'set' if os.getenv('GCP_PROJECT_ID') else 'NOT SET'}, "
-                    f"GCP_REGION={os.getenv('GCP_REGION', 'NOT SET')}, "
-                    f"BACKEND_URL={os.getenv('BACKEND_URL', 'NOT SET')}")
-        raise Exception(f"Failed to trigger Cloud Run Job: {error_msg}")
+        logger.error(f"Cloud Run scan error for job {job_id}: {str(e)}")
+        raise
