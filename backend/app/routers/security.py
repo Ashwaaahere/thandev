@@ -332,8 +332,8 @@ async def scan_callback(
         
         # Update scan job with results
         if status == "done":
-        scan_job.status = "completed"
-        scan_job.finished_at = datetime.utcnow()
+            scan_job.status = "completed"
+            scan_job.finished_at = datetime.utcnow()
         elif status == "error":
             scan_job.status = "error"
             scan_job.finished_at = datetime.utcnow()
@@ -406,11 +406,11 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         if not cloud_run_enabled:
             error_msg = "Security scanning requires Cloud Run Jobs. Set CLOUD_RUN_ENABLED=true and configure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET."
             logger.error(error_msg)
-                if scan_job:
-                    scan_job.status = "error"
-                    scan_job.finished_at = datetime.utcnow()
+            if scan_job:
+                scan_job.status = "error"
+                scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({"error": error_msg})
-                    background_db.commit()
+                background_db.commit()
             return
         
         # Trigger Cloud Run Job
