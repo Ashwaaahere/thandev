@@ -87,27 +87,52 @@ def run_scan_sync(job_id: str, url: str, tier: str):
         
         scanner = SecurityScanner()
         
-        # Get callback URL and other params from environment (if needed)
-        callback_url = os.getenv("CALLBACK_URL")
-        gcs_bucket = os.getenv("GCS_BUCKET", "thandev-reports")
-        scan_id = job_id
+        # Run scan methods directly (Service pattern - no callback)
+        from urllib.parse import urlparse
+        parsed_url = urlparse(url)
+        hostname = parsed_url.hostname
+        port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
         
-        if callback_url:
-            # Run with callback (original Job pattern)
-            loop.run_until_complete(scanner.run_scan_with_gcs(url, tier, callback_url, scan_id, gcs_bucket))
+        # Run scans based on tier
+        if tier == "level0":
+            loop.run_until_complete(scanner.run_level0_scan(url, hostname, port))
+        elif tier == "level1":
+            loop.run_until_complete(scanner.run_level0_scan(url, hostname, port))
+            loop.run_until_complete(scanner.run_level1_scan(url, hostname))
+        elif tier == "level2":
+            loop.run_until_complete(scanner.run_level0_scan(url, hostname, port))
+            loop.run_until_complete(scanner.run_level1_scan(url, hostname))
+            loop.run_until_complete(scanner.run_level2_scan(url, hostname))
         else:
-            # Run scan and store results in jobs dict
-            results = loop.run_until_complete(scanner.run_scan(url, tier))
-            
-            # Update job status
-            jobs[job_id]["status"] = "completed"
-            jobs[job_id]["result"] = results
-            jobs[job_id]["completed_at"] = datetime.utcnow().isoformat()
+            raise Exception(f"Unknown tier: {tier}")
+        
+        # Process results
+        processed_results = scanner.process_results(url, tier)
+        
+        # Format for API response
+        api_results = {
+            "summary": {
+                "total_findings": len(processed_results.get("vulnerabilities", [])),
+                "open_ports": len(processed_results.get("ports", [])),
+                "ssl_issues": len(processed_results.get("ssl_issues", []))
+            },
+            "vulnerabilities": processed_results.get("vulnerabilities", []),
+            "ports": processed_results.get("ports", []),
+            "ssl_issues": processed_results.get("ssl_issues", []),
+            "artifact_urls": []
+        }
+        
+        # Update job status
+        jobs[job_id]["status"] = "completed"
+        jobs[job_id]["result"] = api_results
+        jobs[job_id]["completed_at"] = datetime.utcnow().isoformat()
         
         loop.close()
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         jobs[job_id]["status"] = "failed"
         jobs[job_id]["error"] = str(e)
         jobs[job_id]["completed_at"] = datetime.utcnow().isoformat()
