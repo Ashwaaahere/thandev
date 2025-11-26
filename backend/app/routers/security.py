@@ -431,11 +431,33 @@ async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_ru
     scan_job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
     
     try:
+        # Get authentication token for Cloud Run Service
+        # For Fly.io, we need to use a service account token
+        access_token = os.getenv("GCP_ACCESS_TOKEN")
+        
+        headers = {"Content-Type": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        else:
+            # Try to get token from metadata server (if running on GCP)
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as metadata_client:
+                    metadata_response = await metadata_client.get(
+                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                        headers={"Metadata-Flavor": "Google"}
+                    )
+                    if metadata_response.status_code == 200:
+                        access_token = metadata_response.json().get("access_token")
+                        headers["Authorization"] = f"Bearer {access_token}"
+            except:
+                logger.warning("Could not get GCP access token. Service may require authentication.")
+        
         # Call Cloud Run Service to start scan
         async with httpx.AsyncClient(timeout=30.0) as client:
             logger.info(f"Sending POST request to Cloud Run Service: {cloud_run_url}/run")
             response = await client.post(
                 f"{cloud_run_url}/run",
+                headers=headers,
                 json={
                     "url": url,
                     "tier": tier,
