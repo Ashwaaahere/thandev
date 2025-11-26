@@ -332,8 +332,8 @@ async def scan_callback(
         
         # Update scan job with results
         if status == "done":
-            scan_job.status = "completed"
-            scan_job.finished_at = datetime.utcnow()
+        scan_job.status = "completed"
+        scan_job.finished_at = datetime.utcnow()
         elif status == "error":
             scan_job.status = "error"
             scan_job.finished_at = datetime.utcnow()
@@ -386,20 +386,31 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         if not job_name:
             raise Exception(f"Cloud Run Job not found for tier {tier}")
         
-        # Check Cloud Run configuration
-        cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
+        # Check Cloud Run configuration (more lenient - handles common mistakes)
+        cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
+        # Remove common mistakes: quotes, extra spaces, etc.
+        cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
+        cloud_run_enabled = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"]
         
+        # Auto-enable if GCP_PROJECT_ID is set (smart default)
+        gcp_project_id = os.getenv("GCP_PROJECT_ID")
+        if not cloud_run_enabled and gcp_project_id:
+            logger.info(f"CLOUD_RUN_ENABLED is false/empty, but GCP_PROJECT_ID is set. Auto-enabling Cloud Run.")
+            cloud_run_enabled = True
+        
+        # Debug: Log what we're reading
+        logger.info(f"CLOUD_RUN_ENABLED raw value: '{cloud_run_enabled_raw}' -> parsed: {cloud_run_enabled}")
         logger.info(f"Security scan configuration: cloud_run_enabled={cloud_run_enabled}, tier={tier}, job_name={job_name}")
         
         # REQUIRE Cloud Run - no local execution allowed
         if not cloud_run_enabled:
             error_msg = "Security scanning requires Cloud Run Jobs. Set CLOUD_RUN_ENABLED=true and configure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET."
             logger.error(error_msg)
-            if scan_job:
-                scan_job.status = "error"
-                scan_job.finished_at = datetime.utcnow()
+                if scan_job:
+                    scan_job.status = "error"
+                    scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({"error": error_msg})
-                background_db.commit()
+                    background_db.commit()
             return
         
         # Trigger Cloud Run Job
@@ -412,14 +423,14 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         except Exception as cloud_run_error:
             error_msg = str(cloud_run_error)
             logger.error(f"Cloud Run scan failed for job {job_id}: {error_msg}")
-            if scan_job:
-                scan_job.status = "error"
-                scan_job.finished_at = datetime.utcnow()
+                if scan_job:
+                    scan_job.status = "error"
+                    scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({
                     "error": error_msg,
                     "hint": "Ensure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET are properly configured."
                 })
-                background_db.commit()
+                    background_db.commit()
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
@@ -447,9 +458,9 @@ async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, pr
                 raise Exception("gcloud CLI not available or not working")
         except FileNotFoundError:
             raise Exception("gcloud CLI not installed. Cloud Run Jobs are required for security scanning.")
-        except Exception as e:
+    except Exception as e:
             raise Exception(f"gcloud CLI not available: {str(e)}")
-        
+
         # Get project ID and region from environment
         project_id = os.getenv("GCP_PROJECT_ID")
         region = os.getenv("GCP_REGION", "us-central1")

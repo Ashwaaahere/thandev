@@ -60,8 +60,17 @@ async def lifespan(app: FastAPI):
     else:
         logger.info(f"Database health check passed: {db_health}")
     
-    # Validate security scan configuration
-    cloud_run_enabled = os.getenv("CLOUD_RUN_ENABLED", "true").lower() == "true"
+    # Validate security scan configuration (more lenient)
+    cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
+    cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
+    cloud_run_enabled = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"]
+    
+    # Auto-enable if GCP_PROJECT_ID is set
+    gcp_project_id = os.getenv("GCP_PROJECT_ID")
+    if not cloud_run_enabled and gcp_project_id:
+        logger.info("CLOUD_RUN_ENABLED is false/empty, but GCP_PROJECT_ID is set. Auto-enabling Cloud Run.")
+        cloud_run_enabled = True
+    
     if cloud_run_enabled:
         gcp_project = os.getenv("GCP_PROJECT_ID")
         gcp_region = os.getenv("GCP_REGION", "us-central1")
@@ -207,6 +216,36 @@ async def health():
                 "version": "0.1.0",
             }
         )
+
+# Debug endpoint to check environment variables (for troubleshooting)
+@app.get("/debug/env")
+async def debug_env():
+    """Debug endpoint to check environment variable values (without exposing secrets)"""
+    cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "NOT_SET")
+    gcp_project_id = os.getenv("GCP_PROJECT_ID", "NOT_SET")
+    gcp_region = os.getenv("GCP_REGION", "NOT_SET")
+    backend_url = os.getenv("BACKEND_URL", "NOT_SET")
+    gcs_bucket = os.getenv("GCS_BUCKET", "NOT_SET")
+    
+    # Parse CLOUD_RUN_ENABLED like the code does
+    cloud_run_enabled_clean = cloud_run_enabled_raw.strip().split()[0].strip('"\'') if cloud_run_enabled_raw != "NOT_SET" else "NOT_SET"
+    cloud_run_enabled_parsed = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"] if cloud_run_enabled_clean != "NOT_SET" else False
+    
+    # Auto-enable if GCP_PROJECT_ID is set
+    if not cloud_run_enabled_parsed and gcp_project_id != "NOT_SET":
+        cloud_run_enabled_parsed = True
+    
+    return {
+        "CLOUD_RUN_ENABLED": {
+            "raw": cloud_run_enabled_raw[:20] + "..." if len(cloud_run_enabled_raw) > 20 else cloud_run_enabled_raw,
+            "parsed": cloud_run_enabled_parsed,
+            "auto_enabled": not cloud_run_enabled_parsed and gcp_project_id != "NOT_SET"
+        },
+        "GCP_PROJECT_ID": "SET" if gcp_project_id != "NOT_SET" else "NOT_SET",
+        "GCP_REGION": gcp_region if gcp_region != "NOT_SET" else "NOT_SET",
+        "BACKEND_URL": "SET" if backend_url != "NOT_SET" else "NOT_SET",
+        "GCS_BUCKET": gcs_bucket if gcs_bucket != "NOT_SET" else "NOT_SET",
+    }
 
 # Include routers
 app.include_router(news.router)
