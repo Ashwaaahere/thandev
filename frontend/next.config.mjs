@@ -249,3 +249,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+// Trigger deployment Wednesday 26 November 2025 01:15:35 PM EST
