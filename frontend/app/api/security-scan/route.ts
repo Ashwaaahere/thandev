@@ -153,12 +153,15 @@ export async function GET(request: NextRequest) {
 
     const data = await response.json();
     
+    // Always return success: true, even for running/queued status
     return NextResponse.json({
       success: true,
-      jobId: data.jobId,
-      status: data.status,
-      result: data.result,
-      completedAt: data.completedAt,
+      jobId: data.jobId || data.id,
+      status: data.status || 'running', // Default to 'running' if not set
+      result: data.result || null,
+      completedAt: data.finished_at || data.completedAt || null,
+      url: data.url || null,
+      tier: data.tier || null,
     });
 
   } catch (error) {
