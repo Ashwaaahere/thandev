@@ -140,6 +140,16 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
           const statusData = await statusResponse.json();
           console.log('Scan status response:', statusData);
           
+          // Handle error response
+          if (!statusData.success && statusData.error) {
+            clearInterval(pollInterval);
+            setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
+            setIsScanning(false);
+            setScanStatus('Scan failed: ' + statusData.error);
+            toast.error('Scan failed. Please try again.');
+            return;
+          }
+          
           if (statusData.success && statusData.status === 'completed') {
             clearInterval(pollInterval);
             
@@ -188,17 +198,22 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
             setScans(updatedScans);
             localStorage.setItem('thandev-security-scans', JSON.stringify(updatedScans));
             
-          } else if (statusData.status === 'error') {
+          } else if (statusData.status === 'error' || statusData.status === 'failed') {
             clearInterval(pollInterval);
             setCurrentScan(prev => prev ? { ...prev, status: 'error' } : null);
             setIsScanning(false);
             setScanStatus('Scan failed');
             toast.error('Scan failed. Please try again.');
-          } else {
-            // Update progress based on status
+          } else if (statusData.status === 'running' || statusData.status === 'queued') {
+            // Update progress based on status - keep polling
             const progress = statusData.status === 'running' ? 50 : 25;
             setScanProgress(progress);
             setScanStatus(`Scan ${statusData.status}...`);
+            console.log(`Scan still ${statusData.status}, continuing to poll...`);
+          } else {
+            // Unknown status, but keep polling
+            console.log(`Unknown status: ${statusData.status}, continuing to poll...`);
+            setScanStatus(`Scan ${statusData.status || 'processing'}...`);
           }
           
         } catch (error) {
