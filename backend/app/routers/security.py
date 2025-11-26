@@ -336,7 +336,7 @@ async def scan_callback(
             scan_job.finished_at = datetime.utcnow()
         elif status == "error":
             scan_job.status = "error"
-            scan_job.finished_at = datetime.utcnow()
+                    scan_job.finished_at = datetime.utcnow()
         else:
             scan_job.status = "running"  # Still running
         
@@ -407,11 +407,11 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         else:
             error_msg = f"Cloud Run not configured for security scans. Set CLOUD_RUN_ENABLED=true and CLOUD_RUN_SECURITY_URL=<service-url>"
             logger.error(error_msg)
-            if scan_job:
-                scan_job.status = "error"
-                scan_job.finished_at = datetime.utcnow()
+                if scan_job:
+                    scan_job.status = "error"
+                    scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({"error": error_msg})
-                background_db.commit()
+                    background_db.commit()
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
@@ -459,8 +459,8 @@ async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_ru
                 f"{cloud_run_url}/run",
                 headers=headers,
                 json={
-                    "url": url,
-                    "tier": tier,
+                "url": url,
+                "tier": tier,
                     "jobId": job_id,
                     "category": "security"
                 }
@@ -492,7 +492,7 @@ async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_ru
                 
                 if status_response.status_code != 200:
                     logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
-                    continue
+                        continue
                 
                 status_data = status_response.json()
                 cloud_status = status_data.get("status", "unknown")
