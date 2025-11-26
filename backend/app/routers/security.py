@@ -444,23 +444,8 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         background_db.close()
 
 async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, preset: Dict[str, Any]):
-    """Trigger Cloud Run Job for security scanning - NO LOCAL EXECUTION"""
+    """Trigger Cloud Run Job for security scanning using Google Cloud Run Jobs API - NO LOCAL EXECUTION"""
     try:
-        # Check if gcloud CLI is available
-        try:
-            gcloud_check = subprocess.run(
-                ["gcloud", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if gcloud_check.returncode != 0:
-                raise Exception("gcloud CLI not available or not working")
-        except FileNotFoundError:
-            raise Exception("gcloud CLI not installed. Cloud Run Jobs are required for security scanning.")
-        except Exception as e:
-            raise Exception(f"gcloud CLI not available: {str(e)}")
-
         # Get project ID and region from environment
         project_id = os.getenv("GCP_PROJECT_ID")
         region = os.getenv("GCP_REGION", "us-central1")
@@ -487,39 +472,82 @@ async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, pr
             "CALLBACK_SECRET": callback_secret
         }
         
-        # Build gcloud command to execute the job
-        cmd = [
-            "gcloud", "run", "jobs", "execute", job_name,
-            "--region", region,
-            "--project", project_id,
-            "--wait"
-        ]
+        logger.info(f"Triggering Cloud Run Job via API: project={project_id}, region={region}, job={job_name}, callback_url={callback_url}")
         
-        # Add environment variables
-        env_vars_str = ",".join([f"{key}={value}" for key, value in env_vars.items()])
-        cmd.extend(["--update-env-vars", env_vars_str])
+        # Use Google Cloud Run Jobs API instead of gcloud CLI
+        # The API endpoint format: https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{job}:run
+        import httpx
         
-        logger.info(f"Executing Cloud Run Job: {' '.join(cmd)}")
-        logger.info(f"Cloud Run configuration: project={project_id}, region={region}, job={job_name}, callback_url={callback_url}")
+        api_url = f"https://run.googleapis.com/v2/projects/{project_id}/locations/{region}/jobs/{job_name}:run"
         
-        # Execute the Cloud Run Job (non-blocking, job will callback when done)
-        # Use --no-wait to avoid blocking, or --wait if you want to wait for completion
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)  # 30 min timeout
+        # Get access token from metadata server (if running on GCP) or use service account
+        # For Fly.io, we'll need to use a service account key or OAuth token
+        # For now, try to get token from environment or use default credentials
+        access_token = os.getenv("GCP_ACCESS_TOKEN")
         
-        if result.returncode == 0:
-            logger.info(f"Cloud Run Job execution started for job {job_id}")
-            logger.debug(f"Job output: {result.stdout}")
-            return job_id  # Return execution ID
-        else:
-            error_msg = result.stderr or result.stdout or "Unknown error"
-            logger.error(f"Cloud Run Job failed for job {job_id}")
-            logger.error(f"Error output: {error_msg}")
-            logger.error(f"Command: {' '.join(cmd)}")
-            raise Exception(f"Cloud Run Job failed: {error_msg}")
+        if not access_token:
+            # Try to get token from metadata server (won't work on Fly.io, but good for GCP)
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    metadata_response = await client.get(
+                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+                        headers={"Metadata-Flavor": "Google"}
+                    )
+                    if metadata_response.status_code == 200:
+                        access_token = metadata_response.json().get("access_token")
+            except:
+                pass
+        
+        if not access_token:
+            # Fallback: Use gcloud CLI if available (for local dev)
+            try:
+                gcloud_check = subprocess.run(
+                    ["gcloud", "auth", "print-access-token"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if gcloud_check.returncode == 0:
+                    access_token = gcloud_check.stdout.strip()
+            except:
+                pass
+        
+        if not access_token:
+            raise Exception(
+                "GCP_ACCESS_TOKEN not set and cannot get from metadata server. "
+                "Set GCP_ACCESS_TOKEN environment variable or configure service account authentication."
+            )
+        
+        # Call Cloud Run Jobs API
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                api_url,
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "overrides": {
+                        "containerOverrides": [{
+                            "env": [{"name": k, "value": v} for k, v in env_vars.items()]
+                        }]
+                    }
+                }
+            )
+            
+            if response.status_code == 200:
+                execution_data = response.json()
+                execution_name = execution_data.get("name", job_id)
+                logger.info(f"Cloud Run Job execution started for job {job_id}, execution_name={execution_name}")
+                return execution_name
+            else:
+                error_text = response.text[:500]
+                logger.error(f"Cloud Run Jobs API failed: status={response.status_code}, error={error_text}")
+                raise Exception(f"Cloud Run Jobs API failed: {error_text}")
                 
-    except subprocess.TimeoutExpired:
-        logger.error(f"Cloud Run Job timed out for job {job_id}")
-        raise Exception("Cloud Run Job timed out after 30 minutes")
+    except httpx.TimeoutException:
+        logger.error(f"Cloud Run Job API request timed out for job {job_id}")
+        raise Exception("Cloud Run Job API request timed out")
     except Exception as e:
         error_msg = str(e)
         logger.error(f"Failed to trigger Cloud Run Job for {job_id}: {error_msg}")
