@@ -485,7 +485,10 @@ async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_ru
             for poll_count in range(max_polls):
                 await asyncio.sleep(poll_interval)
                 
-                status_response = await client.get(f"{cloud_run_url}/status/{cloud_job_id}")
+                status_response = await client.get(
+                    f"{cloud_run_url}/status/{cloud_job_id}",
+                    headers=headers if 'Authorization' in headers else {}
+                )
                 
                 if status_response.status_code != 200:
                     logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
