@@ -39,7 +39,7 @@ def health():
     return jsonify({"status": "ok", "service": "security-scanner"})
 
 @app.route('/run', methods=['POST'])
-async def run_scan():
+def run_scan():
     """Start a new security scan"""
     try:
         data = request.json
@@ -62,8 +62,11 @@ async def run_scan():
             "error": None
         }
         
-        # Run scan in background
-        asyncio.create_task(run_scan_async(job_id, url, tier))
+        # Run scan in background thread
+        import threading
+        thread = threading.Thread(target=run_scan_sync, args=(job_id, url, tier))
+        thread.daemon = True
+        thread.start()
         
         return jsonify({
             "jobId": job_id,
@@ -75,9 +78,13 @@ async def run_scan():
         logger.error(f"Error starting scan: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-async def run_scan_async(job_id: str, url: str, tier: str):
-    """Run the actual scan asynchronously"""
+def run_scan_sync(job_id: str, url: str, tier: str):
+    """Run the actual scan synchronously in background thread"""
     try:
+        # Run async scan in new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         scanner = SecurityScanner()
         
         # Get callback URL and other params from environment (if needed)
@@ -87,15 +94,17 @@ async def run_scan_async(job_id: str, url: str, tier: str):
         
         if callback_url:
             # Run with callback (original Job pattern)
-            await scanner.run_scan_with_gcs(url, tier, callback_url, scan_id, gcs_bucket)
+            loop.run_until_complete(scanner.run_scan_with_gcs(url, tier, callback_url, scan_id, gcs_bucket))
         else:
             # Run scan and store results in jobs dict
-            results = await scanner.run_scan(url, tier)
+            results = loop.run_until_complete(scanner.run_scan(url, tier))
             
             # Update job status
             jobs[job_id]["status"] = "completed"
             jobs[job_id]["result"] = results
             jobs[job_id]["completed_at"] = datetime.utcnow().isoformat()
+        
+        loop.close()
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
