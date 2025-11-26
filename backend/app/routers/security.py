@@ -423,14 +423,14 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         except Exception as cloud_run_error:
             error_msg = str(cloud_run_error)
             logger.error(f"Cloud Run scan failed for job {job_id}: {error_msg}")
-                if scan_job:
-                    scan_job.status = "error"
-                    scan_job.finished_at = datetime.utcnow()
+            if scan_job:
+                scan_job.status = "error"
+                scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({
                     "error": error_msg,
                     "hint": "Ensure GCP_PROJECT_ID, GCP_REGION, BACKEND_URL, and GCS_BUCKET are properly configured."
                 })
-                    background_db.commit()
+                background_db.commit()
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
@@ -458,7 +458,7 @@ async def run_cloud_run_scan(job_id: str, url: str, tier: str, job_name: str, pr
                 raise Exception("gcloud CLI not available or not working")
         except FileNotFoundError:
             raise Exception("gcloud CLI not installed. Cloud Run Jobs are required for security scanning.")
-    except Exception as e:
+        except Exception as e:
             raise Exception(f"gcloud CLI not available: {str(e)}")
 
         # Get project ID and region from environment
