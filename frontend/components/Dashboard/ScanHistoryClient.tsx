@@ -1,9 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { User } from 'next-auth';
+import { User, Session } from 'next-auth';
+import Link from 'next/link';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
+import { thandevFetchJSON } from '@/lib/thandevApi';
+import { formatDateTime } from '@/lib/formatDate';
 
 interface PerformanceScan {
   id: string;
@@ -44,6 +47,26 @@ interface PerformanceScan {
   screenshot?: string;
 }
 
+// Backend scan types
+type ScanJobListItem = {
+  id: string;
+  project_id: string;
+  project_name?: string | null;
+  target_url?: string | null;
+  scan_level: string;
+  status: string;
+  created_at: string;
+  completed_at?: string | null;
+  risk_score?: number | null;
+  findings_count?: number | null;
+};
+
+type ScanJobListResponse = {
+  items: ScanJobListItem[];
+  total: number;
+};
+
+// Legacy SecurityScan interface (for static/mock data compatibility)
 interface SecurityScan {
   id: string;
   url: string;
@@ -75,22 +98,28 @@ interface SecurityScan {
 
 interface ScanHistoryClientProps {
   user: any;
+  session: Session | null;
 }
 
-export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
+export default function ScanHistoryClient({ user, session }: ScanHistoryClientProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'performance' | 'security'>('performance');
   const [performanceScans, setPerformanceScans] = useState<PerformanceScan[]>([]);
   const [securityScans, setSecurityScans] = useState<SecurityScan[]>([]);
   const [selectedScan, setSelectedScan] = useState<PerformanceScan | SecurityScan | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  
+  // Real security scan data from backend
+  const [realSecurityScans, setRealSecurityScans] = useState<ScanJobListItem[]>([]);
+  const [securityTotal, setSecurityTotal] = useState(0);
+  const [isLoadingSecurity, setIsLoadingSecurity] = useState(false);
+  const [errorSecurity, setErrorSecurity] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load scan history from localStorage
+    // Load performance scan history from localStorage (keep static for now)
     const loadScanHistory = () => {
       try {
         const perfScans = localStorage.getItem('thandev-performance-scans');
-        const secScans = localStorage.getItem('thandev-security-scans');
         
         if (perfScans) {
           const parsed = JSON.parse(perfScans).map((scan: any) => ({
@@ -99,14 +128,6 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
           }));
           setPerformanceScans(parsed);
         }
-        
-        if (secScans) {
-          const parsed = JSON.parse(secScans).map((scan: any) => ({
-            ...scan,
-            timestamp: new Date(scan.timestamp)
-          }));
-          setSecurityScans(parsed);
-        }
       } catch (error) {
         console.error('Error loading scan history:', error);
       }
@@ -114,6 +135,36 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
 
     loadScanHistory();
   }, []);
+
+  // Fetch real security scans from backend
+  useEffect(() => {
+    async function fetchSecurityScans() {
+      if (!session) return;
+      
+      setIsLoadingSecurity(true);
+      setErrorSecurity(null);
+      
+      try {
+        const data = await thandevFetchJSON<ScanJobListResponse>(
+          '/api/scans?limit=20&offset=0',
+          session
+        );
+        
+        setRealSecurityScans(data.items);
+        setSecurityTotal(data.total);
+      } catch (err) {
+        console.error('Error fetching security scans:', err);
+        setErrorSecurity(err instanceof Error ? err.message : 'Failed to load security scans');
+      } finally {
+        setIsLoadingSecurity(false);
+      }
+    }
+
+    // Fetch when security tab is active or on mount
+    if (activeTab === 'security') {
+      fetchSecurityScans();
+    }
+  }, [activeTab, session]);
 
   const handleViewDetails = (scan: PerformanceScan | SecurityScan) => {
     setSelectedScan(scan);
@@ -138,24 +189,18 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
     }
   };
 
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
+  // Use formatDateTime from lib/formatDate.ts for consistent timezone handling
 
   const totalPerformanceScans = performanceScans.length;
-  const totalSecurityScans = securityScans.length;
+  const totalSecurityScans = securityTotal; // Use real total from backend
   const avgPerformance = performanceScans.length > 0 
     ? Math.round(performanceScans.reduce((sum, scan) => sum + scan.score, 0) / performanceScans.length)
     : 0;
-  const avgSecurity = securityScans.length > 0 
-    ? Math.round(securityScans.reduce((sum, scan) => sum + scan.score, 0) / securityScans.length)
+  
+  // Calculate avg security from real scans (100 - risk_score, or 0 if no risk_score)
+  const completedScans = realSecurityScans.filter(s => s.status === 'completed' && s.risk_score !== null);
+  const avgSecurity = completedScans.length > 0
+    ? Math.round(completedScans.reduce((sum, scan) => sum + (100 - (scan.risk_score || 0)), 0) / completedScans.length)
     : 0;
 
   return (
@@ -300,7 +345,7 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
                         <div className="flex-1">
                           <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--fg)' }}>{scan.url}</h3>
                           <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--muted)' }}>
-                            <span>{formatDate(scan.timestamp)}</span>
+                            <span>{formatDateTime(scan.timestamp)}</span>
                             <div className="flex items-center gap-1">
                               {scan.device === 'mobile' ? (
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -363,7 +408,36 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
               ))
             )
           ) : (
-            securityScans.length === 0 ? (
+            isLoadingSecurity ? (
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="mt-4" style={{ color: 'var(--muted)' }}>Loading security scans...</p>
+              </div>
+            ) : errorSecurity ? (
+              <div className="text-center py-12">
+                <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
+                  <p className="text-red-800 dark:text-red-200">{errorSecurity}</p>
+                </div>
+              </div>
+            ) : isLoadingSecurity ? (
+              <div className="space-y-4">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="p-6 rounded-2xl border animate-pulse" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2"></div>
+                    <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                  </div>
+                ))}
+              </div>
+            ) : errorSecurity ? (
+              <div className="text-center py-12">
+                <div className="p-3 rounded-lg border border-red-500/50 bg-red-500/10 mb-4">
+                  <p className="text-sm text-red-400">{errorSecurity}</p>
+                </div>
+                <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                  Could not load data. Please try again.
+                </p>
+              </div>
+            ) : realSecurityScans.length === 0 ? (
               <div className="text-center py-12">
                 <div className="w-24 h-24 mx-auto mb-4 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
                   <svg className="w-12 h-12" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -374,69 +448,70 @@ export default function ScanHistoryClient({ user }: ScanHistoryClientProps) {
                 <p style={{ color: 'var(--muted)' }}>Start scanning websites to see your security history here.</p>
               </div>
             ) : (
-              securityScans.map((scan) => (
-                <div key={scan.id} className="p-6 rounded-2xl border shadow-lg" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-4 mb-4">
-                        <div className="flex-1">
-                          <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--fg)' }}>{scan.url}</h3>
-                          <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--muted)' }}>
-                            <span>{formatDate(scan.timestamp)}</span>
-                            <span className="px-2 py-1 rounded-full text-xs font-medium" style={{ background: 'var(--surface-2)' }}>
-                              {scan.scanType.toUpperCase()}
-                            </span>
-                            <div className="flex items-center gap-1">
-                              <div className="w-2 h-2 rounded-full bg-green-500"></div>
-                              <span className="capitalize">{scan.status}</span>
+              realSecurityScans.map((scan) => {
+                const displayUrl = scan.target_url || scan.project_name || 'Unknown target';
+                const securityScore = scan.risk_score !== null && scan.risk_score !== undefined 
+                  ? Math.round(100 - scan.risk_score) 
+                  : null;
+                const findingsCount = scan.findings_count ?? 0;
+                const statusColor = scan.status === 'completed' 
+                  ? 'bg-green-500' 
+                  : scan.status === 'running' || scan.status === 'queued'
+                  ? 'bg-yellow-500'
+                  : 'bg-red-500';
+                
+                return (
+                  <div key={scan.id} className="p-6 rounded-2xl border shadow-lg" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-4 mb-4">
+                          <div className="flex-1">
+                            <h3 className="text-lg font-semibold mb-1" style={{ color: 'var(--fg)' }}>{displayUrl}</h3>
+                            <div className="flex items-center gap-4 text-sm" style={{ color: 'var(--muted)' }}>
+                              <span>{formatDateTime(scan.created_at)}</span>
+                              <span className="px-2 py-1 rounded-full text-xs font-medium" style={{ background: 'var(--surface-2)' }}>
+                                {scan.scan_level.toUpperCase()}
+                              </span>
+                              <div className="flex items-center gap-1">
+                                <div className={`w-2 h-2 rounded-full ${statusColor}`}></div>
+                                <span className="capitalize">{scan.status}</span>
+                              </div>
                             </div>
-                            <span>{scan.duration}s</span>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-center gap-6">
+                          {securityScore !== null && (
+                            <div className="text-center">
+                              <div className={`text-3xl font-bold ${getScoreColor(securityScore)}`}>
+                                {securityScore}
+                              </div>
+                              <div className="text-sm" style={{ color: 'var(--muted)' }}>Security Score</div>
+                            </div>
+                          )}
+                          
+                          <div className="text-center">
+                            <div className="text-3xl font-bold" style={{ color: 'var(--fg)' }}>
+                              {findingsCount}
+                            </div>
+                            <div className="text-sm" style={{ color: 'var(--muted)' }}>Findings</div>
                           </div>
                         </div>
                       </div>
                       
-                      <div className="flex items-center gap-6">
-                        <div className="text-center">
-                          <div className={`text-3xl font-bold ${getScoreColor(scan.score)}`}>
-                            {scan.score}
-                          </div>
-                          <div className="text-sm" style={{ color: 'var(--muted)' }}>Security Score</div>
-                        </div>
-                        
-                        <div className="flex-1">
-                          <div className="grid grid-cols-5 gap-2">
-                            {scan.severityBreakdown && Object.entries(scan.severityBreakdown).map(([severity, count]) => (
-                              <div key={severity} className="text-center">
-                                <div className={`text-lg font-bold ${getSeverityColor(severity).split(' ')[0]}`}>
-                                  {count}
-                                </div>
-                                <div className="text-xs capitalize" style={{ color: 'var(--muted)' }}>
-                                  {severity}
-                                </div>
-                              </div>
-                            ))}
-                            {!scan.severityBreakdown && (
-                              <div className="col-span-5 text-center text-sm" style={{ color: 'var(--muted)' }}>
-                                No severity data available
-                              </div>
-                            )}
-                          </div>
-                        </div>
+                      <div className="ml-6">
+                        <Link
+                          href={`/projects/${scan.project_id}/scans/${scan.id}`}
+                          className="px-6 py-2 rounded-lg font-medium transition-all hover:opacity-90 inline-block"
+                          style={{ background: 'var(--brand)', color: 'white' }}
+                        >
+                          View Details
+                        </Link>
                       </div>
                     </div>
-                    
-                    <div className="ml-6">
-                      <button
-                        onClick={() => handleViewDetails(scan)}
-                        className="px-6 py-2 rounded-lg font-medium transition-all hover:opacity-90"
-                        style={{ background: 'var(--brand)', color: 'white' }}
-                      >
-                        View Details
-                      </button>
-                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )
           )}
         </div>

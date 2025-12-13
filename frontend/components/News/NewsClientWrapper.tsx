@@ -20,9 +20,10 @@ type Props = {
   initialNews: NewsItem[];
   totalCount: number;
   onStatsUpdate?: (news: NewsItem[], totalCount: number) => void;
+  cveIds?: Set<string>;
 };
 
-export default function NewsClientWrapper({ initialNews, totalCount, onStatsUpdate }: Props) {
+export default function NewsClientWrapper({ initialNews, totalCount, onStatsUpdate, cveIds }: Props) {
   const [news, setNews] = useState(initialNews);
   const [totalNewsCount, setTotalNewsCount] = useState(totalCount);
   const [loading, setLoading] = useState(false);
@@ -94,7 +95,7 @@ export default function NewsClientWrapper({ initialNews, totalCount, onStatsUpda
 
   return (
     <>
-      <NewsList items={news} />
+      <NewsList items={news} cveIds={cveIds} />
       <LoadMoreButton
         currentCount={news.length}
         totalCount={totalNewsCount}
@@ -103,3 +104,6 @@ export default function NewsClientWrapper({ initialNews, totalCount, onStatsUpda
     </>
   );
 }
+
+
+

@@ -6,8 +6,8 @@ import Navbar from './Navbar';
 export default function ConditionalNavbar() {
   const pathname = usePathname();
   
-  // Hide navbar for dashboard pages
-  if (pathname.startsWith('/dashboard')) {
+  // Hide navbar for dashboard and projects pages (they use dashboard layout)
+  if (pathname.startsWith('/dashboard') || pathname.startsWith('/projects')) {
     return null;
   }
   

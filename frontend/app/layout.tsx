@@ -119,11 +119,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             __html: JSON.stringify(structuredData),
           }}
         />
-      </head>
-      {/* theme init: light/dark before first paint */}
-          <script
-            dangerouslySetInnerHTML={{
-              __html: `
+        {/* theme init: light/dark before first paint */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
           (function(){
             try {
               var t = localStorage.getItem('theme');
@@ -135,8 +134,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               r.classList.toggle('light', t === 'light');
             } catch (e) {}
           })();`,
-            }}
-          />
+          }}
+        />
+      </head>
 
       <body>
         <Providers>

@@ -1,9 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { Session } from 'next-auth';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
 import { toast } from '../Toast';
+import { thandevFetchJSON } from '@/lib/thandevApi';
+import { formatDateTime } from '@/lib/formatDate';
+
+// API base URL
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
 export interface ScanResult {
   id: string;
@@ -30,9 +37,11 @@ export interface Vulnerability {
 
 interface DashboardScanClientProps {
   user: any;
+  session: Session | null;
 }
 
-export default function DashboardScanClient({ user }: DashboardScanClientProps) {
+export default function DashboardScanClient({ user, session }: DashboardScanClientProps) {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scans, setScans] = useState<ScanResult[]>([]);
   const [currentScan, setCurrentScan] = useState<ScanResult | null>(null);
@@ -42,6 +51,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
   const [scanUrl, setScanUrl] = useState('');
   const [scanLevel, setScanLevel] = useState('level1');
   const [activeTab, setActiveTab] = useState('overview');
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     // Load scan history
@@ -60,21 +70,60 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
   }, []);
 
 
+  // Map frontend level0/level1/level2 to backend basic/pro/advanced
+  const mapScanLevel = (level: string): 'basic' | 'pro' | 'advanced' => {
+    switch (level) {
+      case 'level0':
+        return 'basic';
+      case 'level1':
+        return 'pro';
+      case 'level2':
+        return 'advanced';
+      default:
+        return 'basic';
+    }
+  };
+
   const startScan = async () => {
-    console.log('=== SCAN BUTTON CLICKED ===');
-    console.log('scanUrl:', scanUrl);
-    console.log('scanLevel:', scanLevel);
-    console.log('isScanning:', isScanning);
-    
     if (!scanUrl.trim()) {
-      console.log('ERROR: No URL provided');
+      setError('Please enter a target URL');
       return;
     }
 
-    console.log('Starting security scan...');
-    console.log('Scan URL:', scanUrl);
+    setIsScanning(true);
+    setError(null);
+    setScanStatus('Starting scan...');
 
-    await startSecurityScan();
+    try {
+      if (!session) {
+        throw new Error('Session required. Please log in again.');
+      }
+
+      const mappedLevel = mapScanLevel(scanLevel);
+      
+      const data = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
+        '/api/scans/quick',
+        session,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            target_url: scanUrl.trim(),
+            scan_level: mappedLevel,
+          }),
+        }
+      );
+      
+      // Redirect to scan report page
+      router.push(`/projects/${data.project_id}/scans/${data.scan_id}`);
+    } catch (e) {
+      console.error('Error starting scan:', e);
+      const errorMessage = e instanceof Error ? e.message : 'Failed to start scan';
+      setError(errorMessage);
+      setScanStatus('');
+      toast.error(errorMessage);
+    } finally {
+      setIsScanning(false);
+    }
   };
 
 
@@ -413,14 +462,18 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                         <input
                           type="url"
                           value={scanUrl}
-                          onChange={(e) => setScanUrl(e.target.value)}
+                          onChange={(e) => {
+                            setScanUrl(e.target.value);
+                            setError(null); // Clear error when user types
+                          }}
                           placeholder="https://example.com or 192.168.1.1"
                           className="w-full px-4 py-4 pl-12 border-2 rounded-xl focus:outline-none focus:ring-4 focus:ring-blue-500/20 transition-all duration-200 group-hover:border-blue-300"
                           style={{
-                            borderColor: 'var(--border)',
+                            borderColor: error ? '#ef4444' : 'var(--border)',
                             background: 'var(--surface-2)',
                             color: 'var(--fg)'
                           }}
+                          disabled={isScanning}
                         />
                         <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
                           <svg className="h-5 w-5" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -428,6 +481,11 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                           </svg>
                         </div>
                       </div>
+                      {error && (
+                        <div className="p-3 rounded-lg border border-red-500/50 bg-red-500/10">
+                          <p className="text-sm text-red-400">{error}</p>
+                        </div>
+                      )}
                     </div>
 
                     
@@ -559,17 +617,9 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                       title={`URL: ${scanUrl || 'none'}, Level: ${scanLevel}, Scanning: ${isScanning}`}
                     >
                       {isScanning ? (
-                        <div className="flex flex-col items-center justify-center gap-3">
-                          <div className="flex items-center gap-3">
+                        <div className="flex items-center justify-center gap-3">
                             <div className="animate-spin rounded-full h-6 w-6 border-3 border-white border-t-transparent"></div>
-                            <span className="text-lg">{scanStatus || 'Scanning in Progress...'}</span>
-                          </div>
-                          <div className="w-full bg-white/20 rounded-full h-2">
-                            <div 
-                              className="bg-white h-2 rounded-full transition-all duration-500 ease-out"
-                              style={{ width: `${scanProgress}%` }}
-                            ></div>
-                          </div>
+                          <span className="text-lg">{scanStatus || 'Starting scan...'}</span>
                         </div>
                       ) : (
                         <div className="flex items-center justify-center gap-3">
@@ -643,7 +693,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            <span>{currentScan.timestamp.toLocaleString()}</span>
+                            <span>{formatDateTime(currentScan.timestamp)}</span>
                           </div>
                           <div className="flex items-center gap-2">
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -937,7 +987,7 @@ export default function DashboardScanClient({ user }: DashboardScanClientProps) 
                                 <div>
                                   <div className="font-bold" style={{ color: 'var(--fg)' }}>{scan.url}</div>
                                   <div className="text-sm" style={{ color: 'var(--muted)' }}>
-                                    {scan.timestamp.toLocaleString()} • {scan.scanType} • {scan.duration}s
+                                    {formatDateTime(scan.timestamp)} • {scan.scanType} • {scan.duration}s
                                   </div>
                                 </div>
                               </div>

@@ -9,13 +9,9 @@ import json
 import time
 import yaml
 from datetime import datetime
-import subprocess
 import os
-import tempfile
-import shutil
 import httpx
 import logging
-import threading
 from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import ScanJob
@@ -357,10 +353,16 @@ async def scan_callback(
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail="Failed to process callback")
 
+# ============================================================================
+# LEGACY v1 CODE REMOVED
+# ============================================================================
 # All local scan functions removed - Cloud Run Jobs only
 # Local execution functions removed: run_local_scan_sync, run_local_scan, 
 # run_nuclei_scan, run_nmap_scan, run_ssl_scan, run_ffuf_scan, run_nikto_scan, etc.
 # All scanning now happens in Cloud Run Jobs
+# 
+# For documentation of removed v1 patterns, see: backend/legacy/README.md
+# ============================================================================
 
 async def run_security_scan(job_id: str, url: str, tier: str):
     """Run security scan using Cloud Run Job ONLY - no local execution"""

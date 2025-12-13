@@ -18,6 +18,6 @@ export default async function ScanHistoryPage() {
   }
 
   return (
-    <ScanHistoryClient user={session.user} />
+    <ScanHistoryClient user={session.user} session={session} />
   );
 }

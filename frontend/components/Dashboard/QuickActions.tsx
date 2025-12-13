@@ -13,6 +13,14 @@ export default function QuickActions() {
       textColor: 'text-blue-600 dark:text-blue-400'
     },
     {
+      title: 'View Projects',
+      description: 'Manage your targets and view scan history',
+      href: '/projects',
+      icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
+      color: 'bg-indigo-500',
+      textColor: 'text-indigo-600 dark:text-indigo-400'
+    },
+    {
       title: 'View Reports',
       description: 'Access detailed security reports',
       href: '/dashboard/reports',
@@ -106,5 +114,3 @@ export default function QuickActions() {
     </div>
   );
 }
-
-

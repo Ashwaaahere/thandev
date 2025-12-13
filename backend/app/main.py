@@ -1,180 +1,120 @@
+"""
+Thandev v2 - Main FastAPI application
+"""
 import os
 import logging
-import time
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
-load_dotenv()
 
-from fastapi import FastAPI, Request, Response, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-import sentry_sdk
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
-from .routers import news, exploits, performance, security
-from .db import check_database_health
+from app.core.config import settings
+from app.core.database import engine, Base
+from app.api import projects, scans, tenants, metrics, findings, performance, notifications
+
+# Load environment variables
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Initialize Sentry for error tracking
-sentry_dsn = os.getenv("SENTRY_DSN")
-if sentry_dsn:
-    sentry_sdk.init(
-        dsn=sentry_dsn,
-        integrations=[
-            FastApiIntegration(),
-            SqlalchemyIntegration(),
-        ],
-        traces_sample_rate=0.1,
-        environment=os.getenv("ENVIRONMENT", "production"),
-    )
-    logger.info("Sentry error tracking initialized")
-else:
-    logger.info("Sentry DSN not configured, error tracking disabled")
-
-# Initialize rate limiter
-limiter = Limiter(key_func=get_remote_address)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown"""
     # Startup
-    logger.info("Starting Thandev API...")
-    logger.info(f"Environment: {os.getenv('ENVIRONMENT', 'development')}")
+    logger.info("Starting Thandev v2 API...")
+    logger.info(f"Environment: {settings.ENVIRONMENT}")
+    logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'configured'}")
+    logger.info(f"Redis: {settings.REDIS_URL.split('@')[-1] if '@' in settings.REDIS_URL else 'configured'}")
     
-    # Check database health on startup
-    db_health = check_database_health()
-    if db_health.get("status") != "healthy":
-        logger.warning(f"Database health check failed: {db_health}")
-    else:
-        logger.info(f"Database health check passed: {db_health}")
-    
-    # Validate security scan configuration (more lenient)
-    cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
-    cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
-    cloud_run_enabled = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"]
-    
-    # Auto-enable if GCP_PROJECT_ID is set
-    gcp_project_id = os.getenv("GCP_PROJECT_ID")
-    if not cloud_run_enabled and gcp_project_id:
-        logger.info("CLOUD_RUN_ENABLED is false/empty, but GCP_PROJECT_ID is set. Auto-enabling Cloud Run.")
-        cloud_run_enabled = True
-    
-    if cloud_run_enabled:
-        gcp_project = os.getenv("GCP_PROJECT_ID")
-        gcp_region = os.getenv("GCP_REGION", "us-central1")
-        backend_url = os.getenv("BACKEND_URL")
-        
-        if not gcp_project:
-            logger.warning("⚠️  CLOUD_RUN_ENABLED=true but GCP_PROJECT_ID not set. Security scans will fail.")
-            logger.warning("   Set GCP_PROJECT_ID or use CLOUD_RUN_ENABLED=false for local scanning.")
-        else:
-            logger.info(f"✅ Cloud Run scanning enabled: project={gcp_project}, region={gcp_region}")
-        
-        if not backend_url:
-            logger.warning("⚠️  BACKEND_URL not set. Callback URLs may not work correctly.")
-        else:
-            logger.info(f"✅ Backend URL configured: {backend_url}")
-    else:
-        logger.info("ℹ️  Cloud Run scanning disabled. Using local scanning (if tools available).")
+    # Create database tables (in production, use Alembic migrations)
+    if settings.ENVIRONMENT == "development":
+        logger.info("Creating database tables...")
+        Base.metadata.create_all(bind=engine)
     
     yield
     
     # Shutdown
-    logger.info("Shutting down Thandev API...")
+    logger.info("Shutting down Thandev v2 API...")
+
 
 # Create FastAPI app
 app = FastAPI(
-    title="Thandev API",
-    version="0.1.0",
-    description="Real-time cybersecurity intelligence platform API",
+    title=settings.PROJECT_NAME,
+    version=settings.VERSION,
+    description="Security intelligence platform API",
     lifespan=lifespan,
 )
 
-# Add rate limiter to app state
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# CORS middleware configuration
-allowed_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,https://thandev.com").split(",")
+# CORS middleware
+# In development, the Next.js frontend at http://localhost:3000 calls this FastAPI backend at :8000.
+# In production, configure CORS_ORIGINS to allow your production frontend domain.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
 )
 
 # Response compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
+
 # Request logging middleware
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all requests with timing"""
+    import time
     start_time = time.time()
     
-    # Log request
-    logger.info(f"{request.method} {request.url.path} - Client: {get_remote_address(request)}")
+    logger.info(f"{request.method} {request.url.path}")
     
-    # Process request
-    response = await call_next(request)
-    
-    # Calculate duration
-    process_time = time.time() - start_time
-    
-    # Add timing header
-    response.headers["X-Process-Time"] = str(process_time)
-    
-    # Log response
-    logger.info(
-        f"{request.method} {request.url.path} - "
-        f"Status: {response.status_code} - "
-        f"Time: {process_time:.3f}s"
-    )
-    
-    return response
+    try:
+        response = await call_next(request)
+        
+        # Check if response was actually returned
+        if response is None:
+            logger.error(f"No response returned for {request.method} {request.url.path}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Internal server error",
+                    "message": "No response returned from route handler"
+                }
+            )
+        
+        process_time = time.time() - start_time
+        response.headers["X-Process-Time"] = str(process_time)
+        
+        logger.info(
+            f"{request.method} {request.url.path} - "
+            f"Status: {response.status_code} - "
+            f"Time: {process_time:.3f}s"
+        )
+        
+        return response
+    except RuntimeError as e:
+        if "No response returned" in str(e):
+            logger.error(f"No response returned for {request.method} {request.url.path}: {e}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Internal server error",
+                    "message": "Route handler did not return a response"
+                }
+            )
+        raise
 
-# Security headers middleware
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next):
-    """Add security headers to all responses"""
-    response = await call_next(request)
-    
-    # Security headers
-    response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
-    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    
-    # HSTS for HTTPS
-    if request.url.scheme == "https":
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-    
-    # Content Security Policy
-    csp = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
-        "connect-src 'self' https://api.github.com;"
-    )
-    response.headers["Content-Security-Policy"] = csp
-    
-    return response
 
 # Global exception handler
 @app.exception_handler(Exception)
@@ -182,76 +122,46 @@ async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler for unhandled errors"""
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     
-    # Send to Sentry if configured
-    if sentry_dsn:
-        sentry_sdk.capture_exception(exc)
-    
     return JSONResponse(
         status_code=500,
         content={
             "error": "Internal server error",
             "message": "An unexpected error occurred. Please try again later.",
-            "request_id": getattr(request.state, "request_id", None),
         }
     )
 
-# Health check endpoint with database health
+
+# Health check endpoint
 @app.get("/health")
 async def health():
     """Health check endpoint"""
-    db_health = check_database_health()
-    
-    if db_health.get("status") == "healthy":
-        return {
-            "status": "ok",
-            "database": db_health,
-            "version": "0.1.0",
-        }
-    else:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "degraded",
-                "database": db_health,
-                "version": "0.1.0",
-            }
-        )
-
-# Debug endpoint to check environment variables (for troubleshooting)
-@app.get("/debug/env")
-async def debug_env():
-    """Debug endpoint to check environment variable values (without exposing secrets)"""
-    cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "NOT_SET")
-    gcp_project_id = os.getenv("GCP_PROJECT_ID", "NOT_SET")
-    gcp_region = os.getenv("GCP_REGION", "NOT_SET")
-    backend_url = os.getenv("BACKEND_URL", "NOT_SET")
-    gcs_bucket = os.getenv("GCS_BUCKET", "NOT_SET")
-    
-    # Parse CLOUD_RUN_ENABLED like the code does
-    cloud_run_enabled_clean = cloud_run_enabled_raw.strip().split()[0].strip('"\'') if cloud_run_enabled_raw != "NOT_SET" else "NOT_SET"
-    cloud_run_enabled_parsed = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"] if cloud_run_enabled_clean != "NOT_SET" else False
-    
-    # Auto-enable if GCP_PROJECT_ID is set
-    if not cloud_run_enabled_parsed and gcp_project_id != "NOT_SET":
-        cloud_run_enabled_parsed = True
+    try:
+        from app.core.database import SessionLocal
+        from sqlalchemy import text
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+        db_status = "healthy"
+    except Exception as e:
+        logger.error(f"Database health check failed: {e}")
+        db_status = "unhealthy"
     
     return {
-        "CLOUD_RUN_ENABLED": {
-            "raw": cloud_run_enabled_raw[:20] + "..." if len(cloud_run_enabled_raw) > 20 else cloud_run_enabled_raw,
-            "parsed": cloud_run_enabled_parsed,
-            "auto_enabled": not cloud_run_enabled_parsed and gcp_project_id != "NOT_SET"
-        },
-        "GCP_PROJECT_ID": "SET" if gcp_project_id != "NOT_SET" else "NOT_SET",
-        "GCP_REGION": gcp_region if gcp_region != "NOT_SET" else "NOT_SET",
-        "BACKEND_URL": "SET" if backend_url != "NOT_SET" else "NOT_SET",
-        "GCS_BUCKET": gcs_bucket if gcs_bucket != "NOT_SET" else "NOT_SET",
+        "status": "ok" if db_status == "healthy" else "degraded",
+        "database": db_status,
+        "version": settings.VERSION,
     }
 
-# Include routers
-app.include_router(news.router)
-app.include_router(exploits.router)
-app.include_router(performance.router)
-app.include_router(security.router)
+
+# Include API routers
+app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
+app.include_router(scans.router, prefix=settings.API_V1_PREFIX)
+app.include_router(tenants.router, prefix=settings.API_V1_PREFIX)
+app.include_router(metrics.router, prefix=settings.API_V1_PREFIX)
+app.include_router(findings.router, prefix=settings.API_V1_PREFIX)
+app.include_router(performance.router, prefix=settings.API_V1_PREFIX)
+app.include_router(notifications.router, prefix=settings.API_V1_PREFIX)
+
 
 # Custom OpenAPI schema
 def custom_openapi():
@@ -259,9 +169,9 @@ def custom_openapi():
         return app.openapi_schema
     
     openapi_schema = get_openapi(
-        title="Thandev API",
-        version="0.1.0",
-        description="Real-time cybersecurity intelligence platform API",
+        title=settings.PROJECT_NAME,
+        version=settings.VERSION,
+        description="Security intelligence platform API",
         routes=app.routes,
     )
     
@@ -276,5 +186,6 @@ def custom_openapi():
     
     app.openapi_schema = openapi_schema
     return app.openapi_schema
+
 
 app.openapi = custom_openapi

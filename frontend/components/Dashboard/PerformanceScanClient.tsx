@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
 import { toast } from '../Toast';
+import { formatDateTime } from '@/lib/formatDate';
 
 export interface PerformanceScanResult {
   id: string;
@@ -984,7 +985,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                                       {domain.domain}
                                     </div>
                                     <div className="text-xs" style={{ color: 'var(--muted)' }}>
-                                      Verified {new Date(domain.verifiedAt).toLocaleDateString()}
+                                      Verified {formatDateTime(domain.verifiedAt)}
                                     </div>
                                   </div>
                                 </label>
@@ -1282,7 +1283,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                         </div>
                         <p className="text-sm mb-1" style={{ color: 'var(--fg)' }}>{currentScan.url}</p>
                         <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
-                          <span>📅 {currentScan.timestamp.toLocaleString()}</span>
+                          <span>📅 {formatDateTime(currentScan.timestamp)}</span>
                           <span>📱 {currentScan.device} scan</span>
                           <span>⚡ Performance Score: {currentScan.score != null && !isNaN(currentScan.score) ? currentScan.score : 'N/A'}</span>
                         </div>
@@ -1389,7 +1390,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                             <div>
                               <div className="font-medium" style={{ color: 'var(--fg)' }}>{scan.url}</div>
                               <div className="text-sm" style={{ color: 'var(--muted)' }}>
-                                {scan.timestamp.toLocaleString()} • {scan.device}
+                                {formatDateTime(scan.timestamp)} • {scan.device}
                               </div>
                             </div>
                             <div className="text-right">
@@ -1466,7 +1467,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
                       <div className="mt-6">
                         <h3 className="text-xl font-semibold mb-2" style={{ color: 'var(--fg)' }}>{currentScan.url}</h3>
                         <p className="text-sm" style={{ color: 'var(--muted)' }}>
-                          {currentScan.timestamp.toLocaleString()} • {currentScan.device} • Job ID: {currentScan.id}
+                          {formatDateTime(currentScan.timestamp)} • {currentScan.device} • Job ID: {currentScan.id}
                         </p>
                       </div>
                     </div>
@@ -1613,3 +1614,6 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
     </div>
   );
 }
+
+
+

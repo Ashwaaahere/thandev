@@ -2,6 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import GlobalSearch from './GlobalSearch';
+import NotificationBell from './NotificationBell';
 
 interface DashboardHeaderProps {
   user: any;
@@ -45,34 +47,13 @@ export default function DashboardHeader({ user, onMenuClick, showLogo = false }:
 
           {/* Center - Search */}
           <div className="flex flex-1 max-w-md mx-8">
-            <div className="relative w-full">
-              <input
-                type="text"
-                placeholder="Search scans, reports, or vulnerabilities..."
-                className="w-full pl-10 pr-4 py-2 rounded-lg border transition-all duration-200 focus:outline-none focus:ring-2 focus:border-transparent placeholder:text-[var(--muted)]"
-                style={{
-                  borderColor: 'var(--border)',
-                  background: 'var(--surface-2)',
-                  color: 'var(--fg)'
-                }}
-              />
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <svg className="h-5 w-5" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </div>
-            </div>
+            <GlobalSearch />
           </div>
 
           {/* Right side - Notifications and user menu */}
           <div className="flex items-center gap-4">
             {/* Notifications */}
-            <button className="relative p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors" style={{ color: 'var(--fg)' }}>
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-5 5v-5zM4 19h6v-6H4v6zM4 5h6V1H4v4zM15 7h5l-5-5v5z" />
-              </svg>
-              <span className="absolute top-1 right-1 h-2 w-2 bg-red-500 rounded-full"></span>
-            </button>
+            <NotificationBell />
 
             {/* User Menu */}
             <div className="relative">
@@ -81,14 +62,14 @@ export default function DashboardHeader({ user, onMenuClick, showLogo = false }:
                 className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
               >
                 <div className="h-8 w-8 rounded-full flex items-center justify-center text-sm font-semibold text-white" style={{ background: 'var(--brand)' }}>
-                  {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
+                  {user?.name ? user.name.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'U')}
                 </div>
                 <div className="hidden md:block text-left">
                   <p className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                    {user.name || 'User'}
+                    {user?.name || 'User'}
                   </p>
                   <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                    {user.email}
+                    {user?.email || 'No email'}
                   </p>
                 </div>
                 <svg className="w-4 h-4" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">

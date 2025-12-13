@@ -48,16 +48,30 @@ function normalizeImageUrl(url: string): string {
   }
 }
 
+// Helper function to check if text contains any CVE from the set
+function checkForCVE(title: string, summary: string, cveIds: Set<string>): boolean {
+  const text = `${title} ${summary}`.toUpperCase();
+  for (const cve of Array.from(cveIds)) {
+    if (text.includes(cve)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * NewsList – robust server component
  * - Defensive against undefined/empty items
  * - Shows a featured card (first item) + grid for the rest
  * - Gracefully handles missing images
+ * - Shows "Affects your assets" badge if news contains CVE from user's findings
  */
 export default function NewsList({
   items: rawItems,
+  cveIds,
 }: {
   items?: Item[] | null;
+  cveIds?: Set<string>;
 }) {
   // Always normalize to an array
   const items: Item[] = Array.isArray(rawItems) ? rawItems : [];
@@ -141,6 +155,11 @@ export default function NewsList({
                     {featured.source}
                   </span>
                 )}
+                {cveIds && checkForCVE(featured.title || '', featured.summary || '', cveIds) && (
+                  <span className="rounded-full bg-red-900/40 text-red-200 border border-red-500/50 px-3 py-1 text-xs font-semibold">
+                    Affects your assets
+                  </span>
+                )}
               </div>
 
               <h3 className="text-2xl font-bold leading-tight text-[var(--fg)] sm:text-3xl group-hover:text-[var(--brand)] transition-colors duration-200">
@@ -200,10 +219,15 @@ export default function NewsList({
                 </div>
 
                 <div className="relative p-5">
-                  <div className="mb-3 flex items-center gap-2 text-xs text-[var(--muted)]">
+                  <div className="mb-3 flex items-center gap-2 text-xs text-[var(--muted)] flex-wrap">
                     {it.source && (
                       <span className="rounded-full bg-[var(--brand)]/10 px-2 py-1 text-[var(--brand)] font-semibold">
                         {it.source}
+                      </span>
+                    )}
+                    {cveIds && checkForCVE(it.title || '', it.summary || '', cveIds) && (
+                      <span className="rounded-full bg-red-900/40 text-red-200 border border-red-500/50 px-2 py-1 text-xs font-semibold">
+                        Affects your assets
                       </span>
                     )}
                   </div>

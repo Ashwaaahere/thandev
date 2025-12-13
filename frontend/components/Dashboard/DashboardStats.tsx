@@ -1,6 +1,58 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { Session } from 'next-auth';
+import { thandevFetchJSON } from '@/lib/thandevApi';
+
+// Types matching backend response
+type DashboardMetrics = {
+  // Legacy fields
+  total_scans: number;
+  security_scans: number;
+  performance_scans: number;
+  vulnerabilities_found: number;
+  avg_security_score: number;
+  scans_this_month: number;
+  recent_scans: Array<{
+    id: string;
+    project_id: string;
+    project_name: string;
+    target_url: string;
+    level: string;
+    status: string;
+    created_at: string;
+    risk_score?: number | null;
+    findings_count?: number | null;
+  }>;
+  // Phase 2 fields
+  totals: {
+    projects: number;
+    scans: number;
+    findings: number;
+  };
+  recent_activity: {
+    last_scan_at: string | null;
+    scans_last_7_days: number;
+  };
+  findings_by_severity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
+  latest_scans: Array<{
+    id: string;
+    project_id: string;
+    project_name: string;
+    target_url: string;
+    scan_level: string;
+    status: string;
+    risk_score?: number | null;
+    findings_count?: number | null;
+    completed_at?: string | null;
+  }>;
+};
 
 interface StatCardProps {
   title: string;
@@ -68,77 +120,130 @@ function StatCard({ title, value, change, changeType, icon, description }: StatC
   );
 }
 
-export default function DashboardStats() {
+interface DashboardStatsProps {
+  session: Session | null;
+}
+
+export default function DashboardStats({ session }: DashboardStatsProps) {
   const [stats, setStats] = useState({
+    totalProjects: 0,
     totalScans: 0,
-    vulnerabilitiesFound: 0,
-    averageScore: 0,
-    scansThisMonth: 0
+    scansLast7Days: 0,
+    openFindings: 0,
   });
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load stats from localStorage or API
-    const scanHistory = JSON.parse(localStorage.getItem('thandev-scan-history') || '[]');
-    const totalScans = scanHistory.length;
-    const vulnerabilitiesFound = scanHistory.reduce((sum: number, scan: any) => sum + (scan.vulnerabilities?.length || 0), 0);
-    const averageScore = totalScans > 0 ? Math.round(scanHistory.reduce((sum: number, scan: any) => sum + (scan.score || 0), 0) / totalScans) : 0;
-    
-    // Calculate scans this month
-    const thisMonth = new Date().getMonth();
-    const scansThisMonth = scanHistory.filter((scan: any) => {
-      const scanDate = new Date(scan.timestamp);
-      return scanDate.getMonth() === thisMonth;
-    }).length;
+    let cancelled = false;
 
-    setStats({
-      totalScans,
-      vulnerabilitiesFound,
-      averageScore,
-      scansThisMonth
-    });
-  }, []);
+    async function loadMetrics() {
+      if (!session) return;
+      
+      setIsLoading(true);
+      setError(null);
+      try {
+        const data = await thandevFetchJSON<DashboardMetrics>(
+          '/api/metrics/overview',
+          session
+        );
+        
+        if (!cancelled) {
+          // Calculate open findings (exclude info)
+          const openFindings = 
+            (data.findings_by_severity?.critical || 0) +
+            (data.findings_by_severity?.high || 0) +
+            (data.findings_by_severity?.medium || 0) +
+            (data.findings_by_severity?.low || 0);
+          
+          setStats({
+            totalProjects: data.totals?.projects || 0,
+            totalScans: data.totals?.scans || 0,
+            scansLast7Days: data.recent_activity?.scans_last_7_days || 0,
+            openFindings: openFindings,
+          });
+        }
+      } catch (e) {
+        console.error('Error loading dashboard metrics:', e);
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : 'Failed to load metrics');
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadMetrics();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  if (isLoading) {
+    return (
+      <>
+        {[...Array(4)].map((_, i) => (
+          <div key={i} className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+            <div className="animate-pulse">
+              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2"></div>
+              <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-2"></div>
+              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+            </div>
+          </div>
+        ))}
+      </>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="col-span-full rounded-xl border p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+          Could not load data. Please try again.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>
       <StatCard
+        title="Total Projects"
+        value={stats.totalProjects}
+        change={`${stats.totalProjects === 1 ? 'project' : 'projects'}`}
+        changeType="neutral"
+        icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
+        description="Active security projects"
+      />
+      
+      <StatCard
         title="Total Scans"
         value={stats.totalScans}
-        change={`+${stats.scansThisMonth} this month`}
+        change={`${stats.scansLast7Days} in last 7 days`}
         changeType="positive"
         icon="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
         description="Security assessments completed"
       />
       
       <StatCard
-        title="Vulnerabilities Found"
-        value={stats.vulnerabilitiesFound}
-        change="Critical issues detected"
-        changeType={stats.vulnerabilitiesFound > 0 ? "negative" : "positive"}
+        title="Open Findings"
+        value={stats.openFindings}
+        change={stats.openFindings > 0 ? "Requires attention" : "All clear"}
+        changeType={stats.openFindings > 0 ? "negative" : "positive"}
         icon="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"
-        description="Security issues identified"
+        description="Security issues to address"
       />
       
       <StatCard
-        title="Average Score"
-        value={`${stats.averageScore}/100`}
-        change={stats.averageScore >= 80 ? "Excellent" : stats.averageScore >= 60 ? "Good" : "Needs improvement"}
-        changeType={stats.averageScore >= 80 ? "positive" : stats.averageScore >= 60 ? "neutral" : "negative"}
-        icon="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"
-        description="Overall security rating"
-      />
-      
-      <StatCard
-        title="This Month"
-        value={stats.scansThisMonth}
-        change="Active scanning period"
+        title="This Week"
+        value={stats.scansLast7Days}
+        change="Recent activity"
         changeType="positive"
         icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-        description="Scans performed this month"
+        description="Scans in last 7 days"
       />
     </>
   );
 }
-
-
-
-

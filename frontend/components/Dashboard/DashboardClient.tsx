@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { Session } from 'next-auth';
 import DashboardHeader from './DashboardHeader';
 import DashboardStats from './DashboardStats';
 import RecentScans from './RecentScans';
@@ -11,9 +12,10 @@ import DashboardSidebar from './DashboardSidebar';
 
 interface DashboardClientProps {
   user: any;
+  session: Session | null;
 }
 
-export default function DashboardClient({ user }: DashboardClientProps) {
+export default function DashboardClient({ user, session }: DashboardClientProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -49,14 +51,14 @@ export default function DashboardClient({ user }: DashboardClientProps) {
 
             {/* Stats Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <DashboardStats />
+              <DashboardStats session={session} />
             </div>
 
             {/* Main Content Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
               {/* Recent Scans - Takes 2 columns on large screens */}
               <div className="lg:col-span-2">
-                <RecentScans />
+                <RecentScans session={session} />
               </div>
               
               {/* Quick Actions - Takes 1 column on large screens */}

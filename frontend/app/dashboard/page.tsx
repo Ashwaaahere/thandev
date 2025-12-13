@@ -49,7 +49,7 @@ export default async function DashboardPage() {
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(dashboardStructuredData) }}
       />
-      <DashboardClient user={session.user} />
+      <DashboardClient user={session.user} session={session} />
     </>
   )
 }

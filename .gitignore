@@ -149,3 +149,10 @@ __pycache__/
 *.db-shm
 *.db-wal
 
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.db-shm
+*.db-wal
