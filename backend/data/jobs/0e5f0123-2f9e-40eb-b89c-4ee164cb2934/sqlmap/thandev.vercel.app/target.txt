@@ -1,0 +1,1 @@
+https://thandev.vercel.app/ (GET)  # /home/shree/ashwath/thandev/backend/.venv/bin/sqlmap -u https://thandev.vercel.app/ --batch --risk=1 --level=1 --timeout=10 --time-sec=5 --random-agent -v 0 --output-dir data/jobs/0e5f0123-2f9e-40eb-b89c-4ee164cb2934/sqlmap

@@ -1240,12 +1240,13 @@ def _build_top_exploitable_paths(findings: List[Finding], styles: dict) -> List:
     if not exploitable:
         return story
     
-    # Sort by severity, then by category
+    # PR-4D: Sort by severity (critical > high > medium), then by CVSS score (descending)
+    # Use negative severity_order so lower values (critical=0) come first
     sorted_exploitable = sorted(
         exploitable,
         key=lambda f: (
-            severity_order.get(_severity_label(getattr(f, "severity", "info")), 4),
-            _severity_label(getattr(f, "severity", "info"))
+            -severity_order.get(_severity_label(getattr(f, "severity", "info")), 4),  # Negate so critical comes first
+            -(getattr(f, "cvss_score", 0) or 0),  # Negate so higher CVSS comes first
         )
     )[:5]
     

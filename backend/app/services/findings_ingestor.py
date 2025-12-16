@@ -1185,15 +1185,23 @@ def ingest_httpx_findings(
     return findings
 
 
-def parse_ffuf_output(path: Path) -> List[Dict[str, Any]]:
+def parse_ffuf_output(path: Path, baseline_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
     Parse ffuf JSON output file into a list of finding dicts.
     
     ffuf with -json produces a JSON stream where each line contains a "result" object
     for discovered paths. We parse line by line and extract relevant information.
     
+    PR-4C: Filters out 404/wildcard responses using baseline signature.
+    
     Args:
         path: Path to the ffuf JSON output file
+        baseline_filter: Optional baseline signature dict with:
+            - status_code: Baseline status code
+            - content_length: Baseline content length
+            - word_count: Baseline word count
+            - line_count: Baseline line count
+            - content_hash: Baseline content hash (first 1000 chars)
         
     Returns:
         List of finding dicts (empty list if file is empty/missing or parsing fails)
@@ -1219,12 +1227,37 @@ def parse_ffuf_output(path: Path) -> List[Dict[str, Any]]:
                 try:
                     data = json.loads(line)
                     # ffuf JSON output contains a "result" key with the actual finding
+                    result = None
                     if "result" in data:
                         result = data["result"]
-                        findings.append(result)
                     # Some ffuf versions may output the result directly
                     elif "url" in data or "status" in data:
-                        findings.append(data)
+                        result = data
+                    
+                    if result:
+                        # PR-4C: Filter by baseline if provided
+                        if baseline_filter:
+                            # Check status code
+                            result_status = result.get("status", result.get("StatusCode", 0))
+                            if result_status == 404:
+                                continue  # Skip 404s
+                            
+                            # Check if matches baseline signature
+                            result_size = result.get("length", result.get("ContentLength", 0))
+                            baseline_size = baseline_filter.get("content_length", 0)
+                            
+                            if baseline_size > 0:
+                                tolerance = max(10, int(baseline_size * 0.05))
+                                if abs(result_size - baseline_size) <= tolerance:
+                                    # Size matches baseline, likely a wildcard 404
+                                    # Also check word/line count if available
+                                    result_words = result.get("words", 0)
+                                    baseline_words = baseline_filter.get("word_count", 0)
+                                    if baseline_words > 0 and abs(result_words - baseline_words) <= 2:
+                                        logger.debug(f"Filtered ffuf result matching baseline: {result.get('url', 'unknown')}")
+                                        continue
+                        
+                        findings.append(result)
                 except json.JSONDecodeError as e:
                     logger.warning(
                         "Failed to parse JSON line %d in ffuf output %s: %s | line=%r",
@@ -1680,11 +1713,10 @@ def ingest_dalfox_findings(
             raw_data["categories"] = ["xss"]
             
             # Create finding
+            # Note: project_id, tenant_id, and owner_id are not columns in Finding model
+            # They can be accessed via scan_job.project relationship if needed
             finding = Finding(
                 scan_job_id=scan_job_id,
-                project_id=scan_job.project_id,
-                tenant_id=scan_job.project.tenant_id,
-                owner_id=scan_job.project.owner_id,
                 title=title,
                 description=description,
                 severity=severity,
@@ -2970,11 +3002,10 @@ def ingest_dalfox_findings(
             raw_data["categories"] = ["xss"]
             
             # Create finding
+            # Note: project_id, tenant_id, and owner_id are not columns in Finding model
+            # They can be accessed via scan_job.project relationship if needed
             finding = Finding(
                 scan_job_id=scan_job_id,
-                project_id=scan_job.project_id,
-                tenant_id=scan_job.project.tenant_id,
-                owner_id=scan_job.project.owner_id,
                 title=title,
                 description=description,
                 severity=severity,
@@ -4025,11 +4056,10 @@ def ingest_dalfox_findings(
             raw_data["categories"] = ["xss"]
             
             # Create finding
+            # Note: project_id, tenant_id, and owner_id are not columns in Finding model
+            # They can be accessed via scan_job.project relationship if needed
             finding = Finding(
                 scan_job_id=scan_job_id,
-                project_id=scan_job.project_id,
-                tenant_id=scan_job.project.tenant_id,
-                owner_id=scan_job.project.owner_id,
                 title=title,
                 description=description,
                 severity=severity,
@@ -5080,11 +5110,10 @@ def ingest_dalfox_findings(
             raw_data["categories"] = ["xss"]
             
             # Create finding
+            # Note: project_id, tenant_id, and owner_id are not columns in Finding model
+            # They can be accessed via scan_job.project relationship if needed
             finding = Finding(
                 scan_job_id=scan_job_id,
-                project_id=scan_job.project_id,
-                tenant_id=scan_job.project.tenant_id,
-                owner_id=scan_job.project.owner_id,
                 title=title,
                 description=description,
                 severity=severity,

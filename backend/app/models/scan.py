@@ -55,6 +55,9 @@ class ScanJob(Base):
     # Celery task tracking
     celery_task_id = Column(String(255), nullable=True, index=True)
     
+    # PR-4E: Brain session tracking
+    brain_session_id = Column(String(36), nullable=True, index=True)
+    
     # Results summary (JSON field for flexibility)
     summary = Column(JSON, nullable=True)
     

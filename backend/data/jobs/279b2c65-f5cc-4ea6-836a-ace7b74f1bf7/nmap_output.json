@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94SVN scan initiated Sat Dec 13 14:18:10 2025 as: nmap -oX - -&#45;top-ports 100 -sV thandev.vercel.app -->
+<nmaprun scanner="nmap" args="nmap -oX - -&#45;top-ports 100 -sV thandev.vercel.app" start="1765653490" startstr="Sat Dec 13 14:18:10 2025" version="7.94SVN" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="100" services="7,9,13,21-23,25-26,37,53,79-81,88,106,110-111,113,119,135,139,143-144,179,199,389,427,443-445,465,513-515,543-544,548,554,587,631,646,873,990,993,995,1025-1029,1110,1433,1720,1723,1755,1900,2000-2001,2049,2121,2717,3000,3128,3306,3389,3986,4899,5000,5009,5051,5060,5101,5190,5357,5432,5631,5666,5800,5900,6000-6001,6646,7070,8000,8008-8009,8080-8081,8443,8888,9100,9999-10000,32768,49152-49157"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<hosthint><status state="up" reason="unknown-response" reason_ttl="0"/>
+<address addr="216.198.79.67" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+</hosthint>
+<host starttime="1765653490" endtime="1765653598"><status state="up" reason="syn-ack" reason_ttl="0"/>
+<address addr="216.198.79.67" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+<ports><extraports state="filtered" count="98">
+<extrareasons reason="no-response" count="98" proto="tcp" ports="7,9,13,21-23,25-26,37,53,79,81,88,106,110-111,113,119,135,139,143-144,179,199,389,427,444-445,465,513-515,543-544,548,554,587,631,646,873,990,993,995,1025-1029,1110,1433,1720,1723,1755,1900,2000-2001,2049,2121,2717,3000,3128,3306,3389,3986,4899,5000,5009,5051,5060,5101,5190,5357,5432,5631,5666,5800,5900,6000-6001,6646,7070,8000,8008-8009,8080-8081,8443,8888,9100,9999-10000,32768,49152-49157"/>
+</extraports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Vercel" servicefp="SF-Port80-TCP:V=7.94SVN%I=7%D=12/13%Time=693DBBFA%P=x86_64-pc-linux-gnu%r(GetRequest,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(HTTPOptions,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(FourOhFourRequest,D0,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nRefresh:\x200;url=https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;);" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="https" product="Vercel" servicefp="SF-Port443-TCP:V=7.94SVN%T=SSL%I=7%D=12/13%Time=693DBC01%P=x86_64-pc-linux-gnu%r(GetRequest,864C,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765653506\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7ZjY4ZWE2MTA7NTM4MTY2MmEwNDEzYjAyYTZmZjU2ZjgzNmMwYzhlMjUyMTQ3MmE2OTszO9pANEFyflKbw0lIr76o7O8Rve3kOinihql5RUgsV2OLMGp9sXnUgiT2KIuOpOEHPAEZT0ISHeREug==\.e02d4a69c52a455b45a44f16c148f5f6\r\nX-Vercel-Id:\x20iad1::1765653506-Wn0umtiWt8S0aMbMe6NdRCychJa19Ynr\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2019:18:26\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;)%r(HTTPOptions,2288,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765653506\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7NDljN2MxNWI7NGE2YTg1NmU0MWRiNThlMmM5NmVjYWQwNTM3NDY3NWE4Njg4YjM0NzszO9pANEFyflKbw0lIr76o7O8Rve3kOinihql5RUgsV2OLMGp9sXnUgiT2KIuOpOEHPAEZT0ISHeREug==\.5ba34c21703e4817ddb4276b3a3757af\r\nX-Vercel-Id:\x20iad1::1765653506-tQqCWEo7uAuqL1Mct33D29Pm0zCtmqi5\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2019:18:26\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;);" tunnel="ssl" method="probed" conf="10"/></port>
+</ports>
+<times srtt="34561" rttvar="23393" to="128133"/>
+</host>
+<runstats><finished time="1765653598" timestr="Sat Dec 13 14:19:58 2025" summary="Nmap done at Sat Dec 13 14:19:58 2025; 1 IP address (1 host up) scanned in 108.12 seconds" elapsed="108.12" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

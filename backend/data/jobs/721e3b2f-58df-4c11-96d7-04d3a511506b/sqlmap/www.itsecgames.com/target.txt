@@ -1,0 +1,1 @@
+http://www.itsecgames.com/ (GET)  # /home/shree/ashwath/thandev/backend/.venv/bin/sqlmap -u http://www.itsecgames.com/ --batch --risk=1 --level=1 --timeout=10 --time-sec=5 --random-agent -v 0 --output-dir data/jobs/721e3b2f-58df-4c11-96d7-04d3a511506b/sqlmap

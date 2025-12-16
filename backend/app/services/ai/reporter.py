@@ -38,12 +38,15 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
             "findings_count": 0
         }
     
-    # Sort findings by severity (critical > high > medium > low > info)
+    # PR-4D: Sort findings by severity (critical > high > medium > low > info)
+    # Use negative severity_order so lower values (critical=0) come first when sorted ascending
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     sorted_findings = sorted(
         findings,
-        key=lambda f: (severity_order.get(f.severity.value, 99), f.cvss_score or 0),
-        reverse=True
+        key=lambda f: (
+            -severity_order.get(f.severity.value, 99),  # Negate so critical (0) comes first
+            -(f.cvss_score or 0),  # Negate so higher CVSS comes first
+        )
     )
     
     # Get top 5 risks

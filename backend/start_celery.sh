@@ -11,6 +11,10 @@ fi
 # Set PYTHONPATH to current directory so app module can be found
 export PYTHONPATH="${PYTHONPATH}:$(pwd)"
 
+# Add scanning tools to PATH (required for nuclei, ffuf, dalfox, httpx, etc.)
+export PATH="$HOME/.local/thandev-tools/bin:$HOME/go/bin:$HOME/.local/go/bin:$PATH"
+export GOPATH="$HOME/go"
+
 # Start Celery worker
 # NOTE: Currently all tasks are routed to the default "celery" queue
 # (user-specific queues are temporarily disabled until proper multi-queue support is implemented)

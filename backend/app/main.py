@@ -15,6 +15,7 @@ from fastapi.openapi.utils import get_openapi
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import projects, scans, tenants, metrics, findings, performance, notifications
+from app.api import findings_batch
 
 # Load environment variables
 load_dotenv()
@@ -159,6 +160,7 @@ app.include_router(scans.router, prefix=settings.API_V1_PREFIX)
 app.include_router(tenants.router, prefix=settings.API_V1_PREFIX)
 app.include_router(metrics.router, prefix=settings.API_V1_PREFIX)
 app.include_router(findings.router, prefix=settings.API_V1_PREFIX)
+app.include_router(findings_batch.router, prefix=settings.API_V1_PREFIX)
 app.include_router(performance.router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications.router, prefix=settings.API_V1_PREFIX)
 

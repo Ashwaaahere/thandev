@@ -61,33 +61,3 @@ export default function RightSidebar({
     </aside>
   );
 }
-
-          <SubscribeCard />
-
-          {/* 6) Additional content to fill space */}
-          <AdditionalContent />
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-          <SubscribeCard />
-
-          {/* 6) Additional content to fill space */}
-          <AdditionalContent />
-        </div>
-      </div>
-    </aside>
-  );
-}
-
-          <SubscribeCard />
-
-          {/* 6) Additional content to fill space */}
-          <AdditionalContent />
-        </div>
-      </div>
-    </aside>
-  );
-}

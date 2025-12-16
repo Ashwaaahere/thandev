@@ -65,8 +65,13 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     DEBUG: bool = False
     
-    # OpenAI (for AI planner)
+    # OpenAI (for AI planner and report generation)
     OPENAI_API_KEY: Optional[str] = None
+    
+    # Brain Service (for RAG-powered planning and report prompts)
+    BRAIN_SERVICE_URL: str = "http://localhost:8001"
+    BRAIN_SERVICE_ENABLED: bool = True  # Set to False to disable brain service and use fallback
+    BRAIN_REQUIRED: bool = True  # If True, fail scan if brain is unreachable (PR-1 requirement)
     
     class Config:
         # Use absolute path to .env file to ensure it's found even when running from different directories

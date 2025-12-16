@@ -318,39 +318,115 @@ async def create_scan(
     db.commit()
     db.refresh(scan_job)
     
-    # Queue scan task using orchestrator
-    try:
-        orchestrator = ScanOrchestrator()
-        # Convert enum to string value
-        scan_level_str = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level)
-        # Pass user_id for user-specific queue routing
-        celery_task_id = await orchestrator.queue_scan(
-            scan_job.id, 
-            project.target_url, 
-            scan_level_str,
-            user_id=current_user.id
-        )
-        
-        # Update scan job with celery task ID
-        scan_job.celery_task_id = celery_task_id
-        scan_job.status = ScanStatus.QUEUED
-        db.commit()
-        db.refresh(scan_job)
-    except Exception as e:
-        # If Celery queueing fails, mark scan as failed but still return the scan job
-        error_msg = f"Failed to queue scan task: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        
-        scan_job.status = ScanStatus.FAILED
-        scan_job.error_message = error_msg
-        db.commit()
-        db.refresh(scan_job)
-        
-        # Raise HTTPException with detailed error for debugging
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to queue scan task. Error: {str(e)}. Make sure Celery worker is running."
-        )
+    # PR-4E: Start brain session instead of (or in addition to) Celery task
+    from app.core.config import settings
+    from app.services.brain_client import get_brain_client
+    
+    if settings.BRAIN_SERVICE_ENABLED:
+        try:
+            # Get stack_info (lightweight HTTP probe)
+            stack_info = {}
+            try:
+                import requests
+                resp = requests.head(project.target_url, timeout=5, allow_redirects=True)
+                stack_info["http"] = {
+                    "status_code": resp.status_code,
+                    "headers": {
+                        "server": resp.headers.get("Server"),
+                        "content_type": resp.headers.get("Content-Type"),
+                    },
+                }
+            except Exception:
+                pass  # stack_info can be empty
+            
+            # Convert enum to string value
+            scan_level_str = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level)
+            
+            # Start brain session
+            brain_client = get_brain_client()
+            session_response = await brain_client.start_session(
+                scan_job_id=scan_job.id,
+                target_url=project.target_url,
+                scan_level=scan_level_str,
+                org_id=tenant.id,
+                project_id=project.id,
+                stack_info=stack_info,
+                policy={
+                    "max_steps": 20,
+                    "max_runtime_sec": 3600,
+                },
+            )
+            
+            # Store session_id in scan_job
+            scan_job.brain_session_id = session_response.get("session_id")
+            scan_job.status = ScanStatus.RUNNING  # Brain owns the loop now
+            db.commit()
+            db.refresh(scan_job)
+            
+            logger.info(
+                f"Started brain session {scan_job.brain_session_id} for scan {scan_job.id}. "
+                f"Brain will own the closed-loop scanning process."
+            )
+        except Exception as e:
+            # If brain session fails and BRAIN_REQUIRED=true, fail the scan
+            if settings.BRAIN_REQUIRED:
+                # Get more detailed error message
+                error_detail = str(e) if str(e) else repr(e)
+                if not error_detail:
+                    error_detail = f"Unknown error: {type(e).__name__}"
+                error_msg = f"Failed to start brain session: {error_detail}. Brain service is required (BRAIN_REQUIRED=true)."
+                logger.error(error_msg, exc_info=True)
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = error_msg
+                db.commit()
+                db.refresh(scan_job)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=error_msg
+                )
+            else:
+                # Brain not required, fall back to legacy Celery orchestrator
+                logger.warning(f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery: {e}")
+                # Fall through to Celery queueing below
+    else:
+        logger.warning("Brain service disabled, using legacy Celery orchestrator")
+        # Fall through to Celery queueing below
+    
+    # Legacy path: Queue scan task using orchestrator (only if brain is disabled or not required)
+    if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
+        try:
+            from app.services.scan_orchestrator import ScanOrchestrator
+            orchestrator = ScanOrchestrator()
+            # Convert enum to string value
+            scan_level_str = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level)
+            # Pass user_id for user-specific queue routing
+            celery_task_id = await orchestrator.queue_scan(
+                scan_job.id, 
+                project.target_url, 
+                scan_level_str,
+                user_id=current_user.id
+            )
+            
+            # Update scan job with celery task ID
+            scan_job.celery_task_id = celery_task_id
+            scan_job.status = ScanStatus.QUEUED
+            db.commit()
+            db.refresh(scan_job)
+        except Exception as e:
+            # If Celery queueing fails, mark scan as failed but still return the scan job
+            error_msg = f"Failed to queue scan task: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            
+            scan_job.status = ScanStatus.FAILED
+            scan_job.error_message = error_msg
+            db.commit()
+            db.refresh(scan_job)
+            
+            # Raise HTTPException with detailed error for debugging
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to queue scan task. Error: {str(e)}. Make sure Celery worker is running."
+            )
     
     # Ensure findings relationship is accessible (empty list if none)
     try:
@@ -560,34 +636,106 @@ async def quick_scan(
     db.commit()
     db.refresh(scan_job)
     
-    # Queue scan task using orchestrator
-    try:
-        orchestrator = ScanOrchestrator()
-        scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
-        celery_task_id = await orchestrator.queue_scan(
-            scan_job.id, 
-            project.target_url, 
-            scan_level_str,
-            user_id=current_user.id
-        )
-        
-        # Update scan job with celery task ID
-        scan_job.celery_task_id = celery_task_id
-        scan_job.status = ScanStatus.QUEUED
-        db.commit()
-        db.refresh(scan_job)
-    except Exception as e:
-        # If Celery queueing fails, mark scan as failed but still return the scan job
-        error_msg = f"Failed to queue scan task: {str(e)}"
-        logger.error(error_msg, exc_info=True)
-        
-        scan_job.status = ScanStatus.FAILED
-        scan_job.error_message = error_msg
-        db.commit()
-        db.refresh(scan_job)
-        
-        # Still return the scan, but log the error
-        logger.warning(f"Quick scan created but queueing failed: {error_msg}")
+    # PR-4E: Start brain session instead of (or in addition to) Celery task
+    from app.core.config import settings
+    from app.services.brain_client import get_brain_client
+    
+    if settings.BRAIN_SERVICE_ENABLED:
+        try:
+            # Get stack_info (lightweight HTTP probe)
+            stack_info = {}
+            try:
+                import requests
+                resp = requests.head(project.target_url, timeout=5, allow_redirects=True)
+                stack_info["http"] = {
+                    "status_code": resp.status_code,
+                    "headers": {
+                        "server": resp.headers.get("Server"),
+                        "content_type": resp.headers.get("Content-Type"),
+                    },
+                }
+            except Exception:
+                pass  # stack_info can be empty
+            
+            # Convert enum to string value
+            scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
+            
+            # Start brain session
+            brain_client = get_brain_client()
+            session_response = await brain_client.start_session(
+                scan_job_id=scan_job.id,
+                target_url=project.target_url,
+                scan_level=scan_level_str,
+                org_id=tenant.id,
+                project_id=project.id,
+                stack_info=stack_info,
+                policy={
+                    "max_steps": 20,
+                    "max_runtime_sec": 3600,
+                },
+            )
+            
+            # Store session_id in scan_job
+            scan_job.brain_session_id = session_response.get("session_id")
+            scan_job.status = ScanStatus.RUNNING  # Brain owns the loop now
+            db.commit()
+            db.refresh(scan_job)
+            
+            logger.info(
+                f"Started brain session {scan_job.brain_session_id} for quick scan {scan_job.id}. "
+                f"Brain will own the closed-loop scanning process."
+            )
+        except Exception as e:
+            # If brain session fails and BRAIN_REQUIRED=true, fail the scan
+            if settings.BRAIN_REQUIRED:
+                # Get more detailed error message
+                error_detail = str(e) if str(e) else repr(e)
+                if not error_detail:
+                    error_detail = f"Unknown error: {type(e).__name__}"
+                error_msg = f"Failed to start brain session: {error_detail}. Brain service is required (BRAIN_REQUIRED=true)."
+                logger.error(error_msg, exc_info=True)
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = error_msg
+                db.commit()
+                db.refresh(scan_job)
+            else:
+                # Brain not required, fall back to legacy Celery orchestrator
+                logger.warning(f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery: {e}")
+                # Fall through to Celery queueing below
+    else:
+        logger.warning("Brain service disabled, using legacy Celery orchestrator")
+        # Fall through to Celery queueing below
+    
+    # Legacy path: Queue scan task using orchestrator (only if brain is disabled or not required)
+    if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
+        try:
+            from app.services.scan_orchestrator import ScanOrchestrator
+            orchestrator = ScanOrchestrator()
+            scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
+            celery_task_id = await orchestrator.queue_scan(
+                scan_job.id, 
+                project.target_url, 
+                scan_level_str,
+                user_id=current_user.id
+            )
+            
+            # Update scan job with celery task ID
+            scan_job.celery_task_id = celery_task_id
+            scan_job.status = ScanStatus.QUEUED
+            db.commit()
+            db.refresh(scan_job)
+        except Exception as e:
+            # If Celery queueing fails, mark scan as failed but still return the scan job
+            error_msg = f"Failed to queue scan task: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            
+            scan_job.status = ScanStatus.FAILED
+            scan_job.error_message = error_msg
+            db.commit()
+            db.refresh(scan_job)
+            
+            # Still return the scan, but log the error
+            logger.warning(f"Quick scan created but queueing failed: {error_msg}")
     
     return QuickScanResponse(
         project_id=project.id,
@@ -630,6 +778,45 @@ async def get_scan(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scan with id '{scan_id}' not found"
         )
+    
+    # PR-4E: If brain session exists, fetch latest status from brain
+    if scan_job.brain_session_id:
+        try:
+            from app.core.config import settings
+            if settings.BRAIN_SERVICE_ENABLED:
+                from app.services.brain_client import get_brain_client
+                brain_client = get_brain_client()
+                session_status = await brain_client.get_session(
+                    session_id=scan_job.brain_session_id,
+                    org_id=tenant.id,
+                    project_id=scan_job.project_id,
+                )
+                
+                # Update scan_job status based on brain session status
+                # Map brain session status to ScanStatus
+                brain_status = session_status.get("status", "running")
+                if brain_status == "completed":
+                    if scan_job.status != ScanStatus.COMPLETED:
+                        scan_job.status = ScanStatus.COMPLETED
+                        db.commit()
+                elif brain_status == "failed":
+                    if scan_job.status != ScanStatus.FAILED:
+                        scan_job.status = ScanStatus.FAILED
+                        db.commit()
+                elif brain_status == "cancelled" or brain_status == "stopping":
+                    if scan_job.status != ScanStatus.CANCELLED:
+                        scan_job.status = ScanStatus.CANCELLED
+                        db.commit()
+                # "running" or "planning" status is already set
+                
+                # Update progress if available
+                if "progress_percentage" in session_status:
+                    # Could store in scan_job.summary if needed for UI
+                    pass
+                
+        except Exception as e:
+            logger.warning(f"Failed to fetch brain session status for scan {scan_id}: {e}. Using DB status.")
+            # Continue with DB status - don't fail the request
     
     # Don't load all findings here - use paginated endpoint instead
     # Just get the count for summary generation

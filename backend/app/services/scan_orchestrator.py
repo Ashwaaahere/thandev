@@ -151,35 +151,55 @@ def _run_single_tool(
     if not scan_job:
         raise ValueError(f"Scan job {scan_job_id} not found")
     
-    tool_name = tool_config["name"]
+    # Support both old format (name/config) and new format (tool_id/mode_id)
+    tool_name = tool_config.get("name")
+    tool_id = tool_config.get("tool_id")
+    mode_id = tool_config.get("mode_id")
     tool_config_dict = tool_config.get("config", {})
     
-    logger.info(f"Running {tool_name} for scan {scan_job.id}")
-    
-    # Run tool
-    try:
-        # Pass scan_job_id and scan_job_dir to tools for better logging and output paths
-        tool_config_dict["scan_job_id"] = scan_job.id
-        tool_config_dict["scan_job_dir"] = job_dir
-        result = loop.run_until_complete(
-            executor.run_tool(tool_name, target_url, scan_job.scan_level.value, **tool_config_dict)
-        )
-    except Exception as e:
-        logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
-        result = {
-            "tool_name": tool_name,
-            "success": False,
-            "error": str(e),
-            "output": "",
-            "exit_code": -1,
-            "execution_time": 0,
-        }
+    # New format: tool_id/mode_id (from brain service plan)
+    if tool_id and mode_id:
+        logger.info(f"Running tool_id={tool_id}, mode_id={mode_id} for scan {scan_job.id}")
+        try:
+            params = tool_config_dict.copy()
+            result = loop.run_until_complete(
+                executor.run_step(
+                    tool_id=tool_id,
+                    mode_id=mode_id,
+                    target_url=target_url,
+                    params=params,
+                    scan_job_id=scan_job.id,
+                    job_dir=job_dir,
+                )
+            )
+            # Ensure result has tool_name for backward compatibility
+            if "tool_name" not in result:
+                result["tool_name"] = tool_id
+        except ValueError as e:
+            logger.error(f"Invalid tool_id/mode_id: {e}")
+            raise
+    # Legacy format: tool name (for backward compatibility during migration)
+    elif tool_name:
+        logger.info(f"Running {tool_name} for scan {scan_job.id} (legacy format)")
+        try:
+            # Pass scan_job_id and scan_job_dir to tools for better logging and output paths
+            tool_config_dict["scan_job_id"] = scan_job.id
+            tool_config_dict["scan_job_dir"] = job_dir
+            result = loop.run_until_complete(
+                executor.run_tool(tool_name, target_url, scan_job.scan_level.value, **tool_config_dict)
+            )
+        except Exception as e:
+            logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
+            raise
+    else:
+        raise ValueError(f"Tool config must have either (tool_id, mode_id) or 'name': {tool_config}")
     
     # Save tool result to database
     from app.models.finding import ToolResult
+    result_tool_name = result.get("tool_name") or tool_name or tool_id
     tool_result = ToolResult(
         scan_job_id=scan_job.id,
-        tool_name=result.get("tool_name", tool_name),
+        tool_name=result_tool_name,
         output=result.get("output", ""),
         exit_code=result.get("exit_code", 0),
         execution_time=result.get("execution_time", 0),
@@ -190,7 +210,8 @@ def _run_single_tool(
     db.add(tool_result)
     
     # Save tool output to file
-    output_file = job_dir / f"{tool_name}_output.json"
+    output_tool_name = tool_name or tool_id or result_tool_name
+    output_file = job_dir / f"{output_tool_name}_output.json"
     try:
         output_file.parent.mkdir(parents=True, exist_ok=True)
         output_text = result.get("output", "") or ""
@@ -241,7 +262,10 @@ def _run_single_tool(
         ingest_sqlmap_findings,
     )
     
-    if tool_name == "nmap" and result.get("success"):
+    # Use tool_id if available, fallback to tool_name
+    ingest_tool_name = tool_id or tool_name or result_tool_name
+    
+    if ingest_tool_name == "nmap" and result.get("success"):
         try:
             nmap_results = parse_nmap_output(output_file)
             logger.info("Parsed %d nmap findings for scan %s", len(nmap_results), scan_job.id)
@@ -249,7 +273,7 @@ def _run_single_tool(
         except Exception as e:
             logger.error("Failed to ingest nmap findings for scan %s: %s", scan_job.id, e, exc_info=True)
     
-    elif tool_name == "sslscan" and result.get("success"):
+    elif ingest_tool_name == "sslscan" and result.get("success"):
         try:
             sslscan_results = parse_sslscan_output(output_file)
             logger.info("Parsed %d sslscan findings for scan %s", len(sslscan_results), scan_job.id)
@@ -257,7 +281,7 @@ def _run_single_tool(
         except Exception as e:
             logger.error("Failed to ingest sslscan findings for scan %s: %s", scan_job.id, e, exc_info=True)
     
-    elif tool_name == "httpx" and result.get("success"):
+    elif ingest_tool_name == "httpx" and result.get("success"):
         try:
             httpx_results = parse_httpx_output(output_file)
             logger.info("Parsed %d httpx findings for scan %s", len(httpx_results), scan_job.id)
@@ -265,15 +289,18 @@ def _run_single_tool(
         except Exception as e:
             logger.error("Failed to ingest httpx findings for scan %s: %s", scan_job.id, e, exc_info=True)
     
-    elif tool_name == "ffuf" and result.get("success"):
+    elif ingest_tool_name == "ffuf" and result.get("success"):
         try:
-            ffuf_results = parse_ffuf_output(output_file)
-            logger.info("Parsed %d ffuf findings for scan %s", len(ffuf_results), scan_job.id)
+            # PR-4C: Extract baseline from result for filtering 404/wildcard responses
+            baseline_filter = result.get("baseline")
+            ffuf_results = parse_ffuf_output(output_file, baseline_filter=baseline_filter)
+            logger.info("Parsed %d ffuf findings for scan %s (baseline filter: %s)", 
+                       len(ffuf_results), scan_job.id, "enabled" if baseline_filter else "disabled")
             ingest_ffuf_findings(db, scan_job.id, ffuf_results)
         except Exception as e:
             logger.error("Failed to ingest ffuf findings for scan %s: %s", scan_job.id, e, exc_info=True)
     
-    elif tool_name == "dalfox" and result.get("success"):
+    elif ingest_tool_name == "dalfox" and result.get("success"):
         try:
             dalfox_results = parse_dalfox_output(output_file)
             if len(dalfox_results) > 0:
@@ -284,7 +311,7 @@ def _run_single_tool(
         except Exception as e:
             logger.error("Failed to ingest dalfox findings for scan %s: %s", scan_job.id, e, exc_info=True)
     
-    elif tool_name == "sqlmap" and result.get("success"):
+    elif ingest_tool_name == "sqlmap" and result.get("success"):
         try:
             # sqlmap outputs to a directory, not a single file
             output_dir = Path(result.get("output_dir", job_dir / "sqlmap"))
@@ -297,7 +324,79 @@ def _run_single_tool(
     # Commit this tool's results (each thread manages its own transaction)
     db.commit()
     
-    return tool_name
+    # PR-3: Ingest findings into brain RAG after DB commit
+    try:
+        from app.services.brain_client import get_brain_client
+        from app.core.config import settings
+        
+        if settings.BRAIN_SERVICE_ENABLED:
+            # Get org_id and project_id for RAG filtering
+            org_id = None
+            project_id = scan_job.project_id
+            if scan_job.project and scan_job.project.tenant:
+                org_id = scan_job.project.tenant.id
+            
+            # Query findings that were just created for this tool
+            from app.models.finding import Finding
+            recent_findings = db.query(Finding).filter(
+                Finding.scan_job_id == scan_job.id,
+                Finding.tool_name == output_tool_name
+            ).order_by(Finding.created_at.desc()).limit(100).all()
+            
+            if recent_findings:
+                # Convert Finding models to dict format for brain
+                findings_data = []
+                for finding in recent_findings:
+                    finding_dict = {
+                        "id": str(finding.id),
+                        "title": finding.title,
+                        "description": finding.description,
+                        "severity": finding.severity.value if hasattr(finding.severity, 'value') else str(finding.severity),
+                        "url": finding.url,
+                        "tool_id": finding.tool_name,
+                        "tool_name": finding.tool_name,  # For compatibility
+                        "org_id": org_id,
+                        "project_id": project_id,
+                        "target": target_url,
+                    }
+                    
+                    # Parse raw_data if available
+                    if finding.raw_data:
+                        try:
+                            import json
+                            raw_data = json.loads(finding.raw_data)
+                            finding_dict["raw_data"] = raw_data
+                            
+                            # Extract CVE ID if present
+                            if isinstance(raw_data, dict):
+                                cve_id = raw_data.get("cve_id") or raw_data.get("cve")
+                                if cve_id:
+                                    finding_dict["cve_id"] = cve_id
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    
+                    findings_data.append(finding_dict)
+                
+                # Ingest to brain RAG (async, but we're in a sync context)
+                # Use the existing event loop
+                try:
+                    brain_client = get_brain_client()
+                    loop.run_until_complete(
+                        brain_client.ingest_documents(
+                            findings=findings_data,
+                            org_id=org_id,
+                            project_id=project_id,
+                        )
+                    )
+                    logger.info(f"Ingested {len(findings_data)} findings from {output_tool_name} into brain RAG for scan {scan_job.id}")
+                except Exception as e:
+                    # Don't fail the scan if RAG ingestion fails
+                    logger.warning(f"Failed to ingest findings into brain RAG: {e}", exc_info=True)
+    except Exception as e:
+        # Don't fail the scan if RAG ingestion fails
+        logger.warning(f"RAG ingestion error (non-fatal): {e}", exc_info=True)
+    
+    return output_tool_name
 
 
 def run_scan_for_job(job: "ScanJob") -> None:
@@ -405,37 +504,205 @@ def run_scan_for_job(job: "ScanJob") -> None:
         db.refresh(scan_job)
         logger.info(f"Saved stack_info for scan {scan_job.id}: {stack_info}")
         
-        # Plan scan using AI planner
-        from app.services.ai.planner import plan_scan
+        # Initialize event loop for async operations (brain client calls)
         try:
-            plan = plan_scan(stack_info, scan_job.scan_level.value)
-            logger.info(f"Generated scan plan with {len(plan.get('waves', []))} wave(s)")
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        # PR-3: Ingest tech fingerprint into brain RAG
+        try:
+            from app.services.brain_client import get_brain_client
+            from app.core.config import settings
+            
+            if settings.BRAIN_SERVICE_ENABLED:
+                org_id = None
+                project_id = scan_job.project_id
+                if scan_job.project and scan_job.project.tenant:
+                    org_id = scan_job.project.tenant.id
+                
+                brain_client = get_brain_client()
+                loop.run_until_complete(
+                    brain_client.ingest_documents(
+                        tech_fingerprints=[{
+                            "target": target_url,
+                            "stack_info": stack_info,
+                            "org_id": org_id,
+                            "project_id": project_id,
+                        }],
+                        org_id=org_id,
+                        project_id=project_id,
+                    )
+                )
+                logger.info(f"Ingested tech fingerprint into brain RAG for scan {scan_job.id}")
         except Exception as e:
-            logger.error(f"Failed to generate scan plan: {e}", exc_info=True)
-            # Fallback to tool_matrix if planning fails
-            from app.core.tool_matrix import get_tools_for_level
-            tool_configs = get_tools_for_level(scan_job.scan_level)
-            tools = [
-                {
-                    "name": tool_cfg["key"],
-                    "config": {
-                        # Pass through extra config fields (intensity, profile, wordlist, etc.)
-                        k: v for k, v in tool_cfg.items()
-                        if k not in ("key", "enabled")
-                    }
-                }
-                for tool_cfg in tool_configs
-                if tool_cfg.get("enabled", True)
-            ]
-            plan = {
-                "waves": [
-                    {
-                        "phase": "initial",
-                        "tools": tools
-                    }
-                ]
-            }
-            logger.warning(f"Using fallback plan from tool_matrix")
+            # Don't fail the scan if RAG ingestion fails
+            logger.warning(f"Failed to ingest tech fingerprint into brain RAG: {e}", exc_info=True)
+        
+        # Plan scan using brain service (PR-1: brain-only planning)
+        plan = None
+        from app.core.config import settings
+        from app.services.ai.plan_validation import PlanExecutionValidator, PlanValidationError
+        import sys
+        from pathlib import Path
+        
+        # Add packages to path
+        # Go up from: backend/app/services/scan_orchestrator.py
+        # To: backend/../packages
+        packages_path = Path(__file__).parent.parent.parent.parent.parent / "packages"
+        if str(packages_path) not in sys.path:
+            sys.path.insert(0, str(packages_path))
+        
+        from thandev_schemas.planning import PlanScanResponse
+        
+        # PR-1: Core must NOT decide which tools to run
+        # Brain service is the only planner (unless explicitly disabled)
+        if settings.BRAIN_SERVICE_ENABLED:
+            try:
+                from app.services.brain_client import get_brain_client
+                brain_client = get_brain_client()
+                
+                # Get org_id and project_id for RAG filtering
+                org_id = None
+                project_id = scan_job.project_id
+                if scan_job.project and scan_job.project.tenant:
+                    org_id = scan_job.project.tenant.id
+                
+                # Call brain service (using existing event loop)
+                brain_plan_dict = loop.run_until_complete(
+                    brain_client.create_plan(
+                        target_url=target_url,
+                        scan_level=scan_job.scan_level.value,
+                        org_id=org_id,
+                        project_id=project_id,
+                        stack_info=stack_info,
+                    )
+                )
+                
+                # Validate plan using PlanExecutionValidator (PR-1 requirement)
+                try:
+                    brain_plan = PlanScanResponse(**brain_plan_dict)
+                    validator = PlanExecutionValidator()
+                    
+                    # Determine target type from URL
+                    target_type = "https" if target_url.startswith("https://") else "http"
+                    
+                    # Validate plan
+                    validator.validate_plan(
+                        brain_plan,
+                        target_type=target_type,
+                        max_steps=50,
+                        max_parallelism=10,
+                        max_total_runtime_sec=3600,
+                    )
+                    
+                    logger.info(
+                        f"Plan validated: {len(brain_plan.steps)} steps, "
+                        f"{brain_plan.timeline.total_estimated_sec}s estimated"
+                    )
+                    
+                except PlanValidationError as e:
+                    logger.error(f"Plan validation failed: {e}")
+                    raise ValueError(f"Invalid plan from brain service: {e}")
+                
+                # Convert brain plan format to orchestrator format
+                # Brain returns: {plan_id, steps: [{step_id, tool_id, mode_id, params, depends_on, reason, estimated_duration_sec}], timeline, metadata}
+                # Orchestrator expects: {waves: [{phase, tools: [{tool_id, mode_id, params}]}]}
+                
+                # Group steps by phase based on dependencies (topological sort)
+                steps_by_phase = {}
+                step_phases = {}  # Map step_id -> phase number
+                
+                # Build dependency graph
+                step_ids = {step.step_id for step in brain_plan.steps}
+                graph: Dict[str, List[str]] = {step.step_id: [] for step in brain_plan.steps}
+                in_degree: Dict[str, int] = {step_id: 0 for step_id in step_ids}
+                
+                for step in brain_plan.steps:
+                    for dep in step.depends_on:
+                        if dep in step_ids:
+                            graph[step.step_id].append(dep)
+                            in_degree[step.step_id] += 1
+                
+                # Topological sort to assign phases
+                phase = 1
+                queue = [step_id for step_id, degree in in_degree.items() if degree == 0]
+                
+                while queue:
+                    if phase not in steps_by_phase:
+                        steps_by_phase[phase] = []
+                    
+                    next_queue = []
+                    for node in queue:
+                        step_phases[node] = phase
+                        # Find step object
+                        step_obj = next(s for s in brain_plan.steps if s.step_id == node)
+                        
+                        # Convert to orchestrator format (NEW: tool_id/mode_id format)
+                        tool_config = {
+                            "tool_id": step_obj.tool_id,
+                            "mode_id": step_obj.mode_id,
+                            "config": step_obj.params,  # Already validated params
+                        }
+                        steps_by_phase[phase].append(tool_config)
+                        
+                        # Update in_degree for dependent steps
+                        for step in brain_plan.steps:
+                            if node in step.depends_on:
+                                in_degree[step.step_id] -= 1
+                                if in_degree[step.step_id] == 0:
+                                    next_queue.append(step.step_id)
+                    
+                    queue = next_queue
+                    phase += 1
+                
+                # Build waves
+                waves = []
+                for phase_num in sorted(steps_by_phase.keys()):
+                    waves.append({
+                        "phase": f"phase_{phase_num}",
+                        "tools": steps_by_phase[phase_num]
+                    })
+                
+                plan = {"waves": waves}
+                logger.info(
+                    f"Generated scan plan from brain service: {len(waves)} wave(s), "
+                    f"{len(brain_plan.steps)} step(s), validated and ready for execution"
+                )
+                
+            except Exception as e:
+                logger.error(f"Brain service planning failed: {e}", exc_info=True)
+                if settings.BRAIN_REQUIRED:
+                    # PR-1: If brain is required and fails, mark scan as failed
+                    scan_job.status = ScanStatus.FAILED
+                    scan_job.error_message = f"Brain service planning failed: {str(e)}. Brain service is required (BRAIN_REQUIRED=true)."
+                    db.commit()
+                    raise ValueError(f"Brain service required but failed: {e}")
+                else:
+                    # Brain not required, fall through to legacy planner
+                    logger.warning("Brain service failed but BRAIN_REQUIRED=false, falling back to legacy planner")
+                    plan = None
+        
+        # Fallback to legacy planner ONLY if brain is disabled or not required
+        if plan is None:
+            if not settings.BRAIN_SERVICE_ENABLED:
+                logger.warning("Brain service disabled, using legacy planner (this violates PR-1 requirements)")
+            else:
+                logger.warning("Brain service not required, using legacy planner (this violates PR-1 requirements)")
+            
+            from app.services.ai.planner import plan_scan
+            try:
+                plan = plan_scan(stack_info, scan_job.scan_level.value)
+                logger.info(f"Generated scan plan with {len(plan.get('waves', []))} wave(s) (legacy)")
+            except Exception as e:
+                logger.error(f"Failed to generate scan plan: {e}", exc_info=True)
+                # PR-1: Do NOT fallback to tool_matrix in main path
+                # If we get here, it's a critical error
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = f"All planning methods failed: {str(e)}"
+                db.commit()
+                raise ValueError(f"Planning failed: {e}")
         
         # Create job directory for artifacts
         job_dir = Path(f"data/jobs/{scan_job.id}")
@@ -461,12 +728,8 @@ def run_scan_for_job(job: "ScanJob") -> None:
         executor = ToolExecutor()
         tool_results = []
         
-        # Get or create event loop for async tool execution
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        # Event loop already initialized earlier (line 505-509)
+        # Reuse the same loop for async tool execution
         
         # Run HTTP security header checks (for HTTP/HTTPS URLs only)
         # This runs before other tools to collect headers early
@@ -534,9 +797,12 @@ def run_scan_for_job(job: "ScanJob") -> None:
                 finally:
                     thread_loop.close()
             
+            # Execute tools in parallel using ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=max_workers) as executor_pool:
                 future_map = {
-                    executor_pool.submit(run_tool_with_loop, tool_config): tool_config["name"]
+                    executor_pool.submit(run_tool_with_loop, tool_config): (
+                        tool_config.get("tool_id") or tool_config.get("name") or "unknown"
+                    )
                     for tool_config in tools
                 }
                 
@@ -589,9 +855,10 @@ def run_scan_for_job(job: "ScanJob") -> None:
         # Note: We'll ingest all Nuclei findings at the end after follow-up waves
         
         # Call AI planner after base tools finish
+        # PR-1: This section should also use brain service, but keeping legacy for now
+        # TODO: Refactor to use brain service for second wave planning
         from app.models.scan import AIStatus
         from app.services.ai.planner import generate_scan_plan_for_job
-        from app.core.tool_matrix import get_enabled_tool_keys, is_tool_enabled_for_level
         
         logger.info(f"Calling AI planner for scan {scan_job.id} after base tools completion")
         try:
@@ -636,15 +903,16 @@ def run_scan_for_job(job: "ScanJob") -> None:
         logger.info(f"Current findings count before refinement: {len(findings_list)}")
         
         # Execute second wave of tools from AI plan if available
+        # PR-1: This section should also use tool_id/mode_id format
+        # Note: Legacy AI planner returns tool "key" format, we convert to tool_id/mode_id
         ai_plan = scan_job.ai_plan or {}
         next_tools = ai_plan.get("next_tools", [])
         
         if next_tools and scan_job.ai_status == AIStatus.PLANNED.value:
             logger.info(f"Executing AI-planned second wave for scan {scan_job.id}")
             
-            # Filter tools: must exist in ToolExecutor.supported_tools and be allowed for scan level
+            # PR-1: Filter tools using catalog validation instead of tool_matrix
             executor = ToolExecutor()
-            enabled_tool_keys = get_enabled_tool_keys(scan_job.scan_level)
             
             tools_to_run = []
             for tool_rec in next_tools:
@@ -659,32 +927,23 @@ def run_scan_for_job(job: "ScanJob") -> None:
                     )
                     continue
                 
-                # Check if tool is allowed for this scan level
-                if not is_tool_enabled_for_level(tool_key, scan_job.scan_level):
-                    logger.warning(
-                        f"AI planner recommended tool '{tool_key}' not allowed for level {scan_job.scan_level.value}, skipping"
-                    )
-                    continue
+                # PR-1: Use catalog to determine default mode instead of tool_matrix
+                # For now, use a default mode based on tool_key (legacy compatibility)
+                # TODO: AI planner should return tool_id/mode_id pairs
+                default_mode_map = {
+                    "nuclei": "pro_web",
+                    "httpx": "medium",
+                    "ffuf": "standard",
+                    "dalfox": "constrained",
+                    "sqlmap": "sqli_light",
+                }
+                mode_id = default_mode_map.get(tool_key, "standard")
                 
-                # Get tool config from tool_matrix if available
-                from app.core.tool_matrix import get_tools_for_level
-                tool_configs = get_tools_for_level(scan_job.scan_level)
-                tool_config = next(
-                    (tc for tc in tool_configs if tc.get("key") == tool_key and tc.get("enabled")),
-                    None
-                )
-                
-                tool_cfg_dict = {}
-                if tool_config:
-                    # Pass through extra config fields (intensity, profile, wordlist, etc.)
-                    tool_cfg_dict = {
-                        k: v for k, v in tool_config.items()
-                        if k not in ("key", "enabled")
-                    }
-                
+                # Use new format: tool_id/mode_id
                 tools_to_run.append({
-                    "name": tool_key,
-                    "config": tool_cfg_dict
+                    "tool_id": tool_key,
+                    "mode_id": mode_id,
+                    "config": {}  # AI planner doesn't provide params yet
                 })
             
             if tools_to_run:
@@ -714,7 +973,9 @@ def run_scan_for_job(job: "ScanJob") -> None:
                 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor_pool:
                     future_map = {
-                        executor_pool.submit(run_tool_with_loop, tool_config): tool_config["name"]
+                        executor_pool.submit(run_tool_with_loop, tool_config): (
+                            tool_config.get("tool_id") or tool_config.get("name") or "unknown"
+                        )
                         for tool_config in tools_to_run
                     }
                     
@@ -761,18 +1022,40 @@ def run_scan_for_job(job: "ScanJob") -> None:
                     logger.info(f"Executing {phase} wave with {len(tools)} tool(s)")
                     
                     for tool_config in tools:
-                        tool_name = tool_config["name"]
+                        # Support both old format (name/config) and new format (tool_id/mode_id)
+                        tool_name = tool_config.get("name")
+                        tool_id = tool_config.get("tool_id")
+                        mode_id = tool_config.get("mode_id")
                         tool_config_dict = tool_config.get("config", {})
                         
-                        logger.info(f"Running {tool_name} for scan {scan_job.id} (follow-up)")
+                        tool_identifier = tool_name or f"{tool_id}/{mode_id}"
+                        logger.info(f"Running {tool_identifier} for scan {scan_job.id} (follow-up)")
                         
                         # Run tool
                         try:
-                            # Pass scan_job_id to tools for better logging
-                            tool_config_dict["scan_job_id"] = scan_job.id
-                            result = loop.run_until_complete(
-                                executor.run_tool(tool_name, target_url, scan_job.scan_level.value, **tool_config_dict)
-                            )
+                            # New format: tool_id/mode_id
+                            if tool_id and mode_id:
+                                params = tool_config_dict.copy()
+                                result = loop.run_until_complete(
+                                    executor.run_step(
+                                        tool_id=tool_id,
+                                        mode_id=mode_id,
+                                        target_url=target_url,
+                                        params=params,
+                                        scan_job_id=scan_job.id,
+                                        job_dir=job_dir,
+                                    )
+                                )
+                                if "tool_name" not in result:
+                                    result["tool_name"] = tool_id
+                            # Legacy format: tool name
+                            elif tool_name:
+                                tool_config_dict["scan_job_id"] = scan_job.id
+                                result = loop.run_until_complete(
+                                    executor.run_tool(tool_name, target_url, scan_job.scan_level.value, **tool_config_dict)
+                                )
+                            else:
+                                raise ValueError(f"Tool config must have either (tool_id, mode_id) or 'name': {tool_config}")
                         except Exception as e:
                             logger.error(f"Tool {tool_name} execution failed: {e}", exc_info=True)
                             result = {
@@ -847,8 +1130,11 @@ def run_scan_for_job(job: "ScanJob") -> None:
                         
                         elif tool_name == "ffuf" and result.get("success"):
                             try:
-                                ffuf_results = parse_ffuf_output(output_file)
-                                logger.info("Parsed %d ffuf findings for scan %s (follow-up)", len(ffuf_results), scan_job.id)
+                                # PR-4C: Extract baseline from result for filtering 404/wildcard responses
+                                baseline_filter = result.get("baseline")
+                                ffuf_results = parse_ffuf_output(output_file, baseline_filter=baseline_filter)
+                                logger.info("Parsed %d ffuf findings for scan %s (follow-up, baseline filter: %s)", 
+                                           len(ffuf_results), scan_job.id, "enabled" if baseline_filter else "disabled")
                                 ingest_ffuf_findings(db, scan_job.id, ffuf_results)
                             except Exception as e:
                                 logger.error("Failed to ingest ffuf findings for scan %s: %s", scan_job.id, e, exc_info=True)
@@ -887,6 +1173,74 @@ def run_scan_for_job(job: "ScanJob") -> None:
             ingested_findings = ingest_nuclei_findings(db, scan_job.id, all_nuclei_results)
             logger.info("Finished nuclei ingestion for scan %s", scan_job.id)
             
+            # PR-3: Ingest all findings into brain RAG after nuclei ingestion
+            try:
+                from app.services.brain_client import get_brain_client
+                from app.core.config import settings
+                from app.models.finding import Finding
+                
+                if settings.BRAIN_SERVICE_ENABLED:
+                    # Get org_id and project_id
+                    org_id = None
+                    project_id = scan_job.project_id
+                    if scan_job.project and scan_job.project.tenant:
+                        org_id = scan_job.project.tenant.id
+                    
+                    # Get all findings for this scan
+                    db.refresh(scan_job)
+                    all_findings = db.query(Finding).filter(
+                        Finding.scan_job_id == scan_job.id
+                    ).all()
+                    
+                    if all_findings:
+                        # Convert to dict format
+                        findings_data = []
+                        for finding in all_findings:
+                            finding_dict = {
+                                "id": str(finding.id),
+                                "title": finding.title,
+                                "description": finding.description,
+                                "severity": finding.severity.value if hasattr(finding.severity, 'value') else str(finding.severity),
+                                "url": finding.url,
+                                "tool_id": finding.tool_name or "unknown",
+                                "tool_name": finding.tool_name or "unknown",
+                                "org_id": org_id,
+                                "project_id": project_id,
+                                "target": target_url,
+                            }
+                            
+                            # Parse raw_data and extract CVE
+                            if finding.raw_data:
+                                try:
+                                    import json
+                                    raw_data = json.loads(finding.raw_data)
+                                    finding_dict["raw_data"] = raw_data
+                                    if isinstance(raw_data, dict):
+                                        cve_id = raw_data.get("cve_id") or raw_data.get("cve") or finding.cve_id
+                                        if cve_id:
+                                            finding_dict["cve_id"] = cve_id
+                                except (json.JSONDecodeError, TypeError):
+                                    pass
+                            
+                            if finding.cve_id:
+                                finding_dict["cve_id"] = finding.cve_id
+                            
+                            findings_data.append(finding_dict)
+                        
+                        # Ingest to brain RAG
+                        brain_client = get_brain_client()
+                        loop.run_until_complete(
+                            brain_client.ingest_documents(
+                                findings=findings_data,
+                                org_id=org_id,
+                                project_id=project_id,
+                            )
+                        )
+                        logger.info(f"Ingested {len(findings_data)} total findings into brain RAG for scan {scan_job.id}")
+            except Exception as e:
+                # Don't fail the scan if RAG ingestion fails
+                logger.warning(f"Failed to ingest findings into brain RAG: {e}", exc_info=True)
+            
             # Verify findings count in DB
             db.refresh(scan_job)
             db_findings_count = len(scan_job.findings) if scan_job.findings else 0
@@ -900,27 +1254,112 @@ def run_scan_for_job(job: "ScanJob") -> None:
             # The scan will have 0 findings but status will be "completed"
         
         # Generate AI report (after all waves complete)
+        # Use brain service for report prompt, then OpenAI for generation
+        db.refresh(scan_job)
+        final_findings_list = list(scan_job.findings)
+        
         try:
-            from app.services.ai.reporter import generate_basic_report
-            db.refresh(scan_job)
-            final_findings_list = list(scan_job.findings)
-            ai_report = generate_basic_report(scan_job, final_findings_list)
-            scan_job.summary = ai_report
-            logger.info(f"Generated AI report for scan {scan_job.id} with {len(final_findings_list)} findings")
+            from app.core.config import settings
+            
+            if settings.BRAIN_SERVICE_ENABLED and settings.OPENAI_API_KEY:
+                # Use brain service + OpenAI for report generation
+                try:
+                    from app.services.brain_client import get_brain_client
+                    from app.services.ai.openai_client import get_openai_client
+                    import json
+                    
+                    brain_client = get_brain_client()
+                    
+                    # Get org_id and project_id
+                    org_id = None
+                    project_id = scan_job.project_id
+                    if scan_job.project and scan_job.project.tenant:
+                        org_id = scan_job.project.tenant.id
+                    
+                    # Get finding IDs
+                    finding_ids = [f.id for f in final_findings_list]
+                    
+                    # Build artifact refs from tool results
+                    artifact_refs = []
+                    for tool_result in scan_job.tool_results:
+                        artifact_refs.append({
+                            "id": f"artifact_{tool_result.id}",
+                            "tool_name": tool_result.tool_name,
+                            "file_path": f"data/jobs/{scan_job.id}/{tool_result.tool_name}_output.json",
+                            "scan_job_id": scan_job.id,
+                            "summary": f"{tool_result.tool_name} scan results",
+                        })
+                    
+                    # Get prompt package from brain (using existing event loop)
+                    prompt_package = loop.run_until_complete(
+                        brain_client.build_report_prompt(
+                            scan_job_id=scan_job.id,
+                            finding_ids=finding_ids,
+                            artifact_refs=artifact_refs,
+                            org_id=org_id,
+                            project_id=project_id,
+                        )
+                    )
+                    
+                    # Call OpenAI with structured outputs (using existing event loop)
+                    openai_client = get_openai_client()
+                    response = loop.run_until_complete(
+                        openai_client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=[
+                                {"role": "system", "content": prompt_package["system_message"]},
+                                {"role": "user", "content": json.dumps(prompt_package["user_content"])},
+                            ],
+                            response_format={
+                                "type": "json_schema",
+                                "json_schema": {
+                                    "name": "security_report",
+                                    "schema": prompt_package["report_json_schema"],
+                                }
+                            },
+                            temperature=0.3,
+                            timeout=60.0,
+                        )
+                    )
+                    
+                    # Parse report JSON
+                    report_json = json.loads(response.choices[0].message.content)
+                    
+                    # Validate report structure
+                    # TODO: Add JSON Schema validation
+                    
+                    scan_job.summary = report_json
+                    logger.info(f"Generated AI report via brain service for scan {scan_job.id} with {len(final_findings_list)} findings")
+                    
+                except Exception as e:
+                    logger.warning(f"Brain service report generation failed: {e}, falling back to basic report", exc_info=True)
+                    # Fall through to basic report
+                    raise
+            else:
+                # Fallback to basic report (rule-based, no LLM)
+                raise ValueError("Brain service or OpenAI not configured")
+                
         except Exception as e:
-            logger.error(f"Failed to generate AI report: {e}", exc_info=True)
-            from collections import Counter
-            findings_list = list(scan_job.findings) if scan_job.findings else []
-            scan_job.summary = {
-                "executive_summary": f"Scan completed with {len(findings_list)} findings. AI report generation encountered an error.",
-                "top_risks": [],
-                "remediation_overview": "Review findings and apply security best practices.",
-                "risk_score": 0,
-                "findings_count": len(findings_list),
-                "severity_breakdown": dict(Counter(f.severity.value for f in findings_list)) if findings_list else {},
-                "error": f"AI report generation failed: {str(e)}"
-            }
-            logger.warning(f"Using fallback summary format for scan {scan_job.id}")
+            # Fallback to basic report
+            try:
+                from app.services.ai.reporter import generate_basic_report
+                ai_report = generate_basic_report(scan_job, final_findings_list)
+                scan_job.summary = ai_report
+                logger.info(f"Generated basic report for scan {scan_job.id} with {len(final_findings_list)} findings")
+            except Exception as e2:
+                logger.error(f"Failed to generate AI report: {e2}", exc_info=True)
+                from collections import Counter
+                findings_list = list(scan_job.findings) if scan_job.findings else []
+                scan_job.summary = {
+                    "executive_summary": f"Scan completed with {len(findings_list)} findings. AI report generation encountered an error.",
+                    "top_risks": [],
+                    "remediation_overview": "Review findings and apply security best practices.",
+                    "risk_score": 0,
+                    "findings_count": len(findings_list),
+                    "severity_breakdown": dict(Counter(f.severity.value for f in findings_list)) if findings_list else {},
+                    "error": f"AI report generation failed: {str(e2)}"
+                }
+                logger.warning(f"Using fallback summary format for scan {scan_job.id}")
         
         # Update scan job status to completed (or completed_with_errors if some tools failed)
         db.refresh(scan_job)

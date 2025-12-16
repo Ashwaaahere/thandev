@@ -5,9 +5,22 @@ Handles execution of various security scanning tools
 import logging
 import subprocess
 import os
+import json
 from pathlib import Path
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, TYPE_CHECKING, Tuple, Any
 from datetime import datetime
+
+# Ensure PATH includes common tool locations when module loads
+# This helps subprocess.find_executable() and subprocess.run() find tools
+_home_dir = os.path.expanduser("~")
+_go_bin = os.path.join(_home_dir, "go", "bin")
+_local_tools = os.path.join(_home_dir, ".local", "thandev-tools", "bin")
+_current_path = os.environ.get("PATH", "")
+if _go_bin not in _current_path or _local_tools not in _current_path:
+    _new_path = f"{_local_tools}:{_go_bin}:{_current_path}"
+    os.environ["PATH"] = _new_path
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Updated PATH to include tool directories: {_go_bin}, {_local_tools}")
 
 # Base directory: project root (backend/app/services/tools.py -> project root)
 # parents[0] = backend/app/services, parents[1] = backend/app, parents[2] = backend, parents[3] = project root
@@ -16,7 +29,9 @@ BASE_DIR = Path(__file__).resolve().parents[3]
 if TYPE_CHECKING:
     from app.models.scan import ScanJob
 
-logger = logging.getLogger(__name__)
+# Initialize logger after PATH setup
+if 'logger' not in locals():
+    logger = logging.getLogger(__name__)
 
 # Nuclei profile to tags mapping
 # Maps profile names from tool_matrix to Nuclei -tags CLI argument
@@ -61,7 +76,13 @@ def run_nuclei_basic(job: "ScanJob") -> None:
 class ToolExecutor:
     """Executes security scanning tools"""
     
-    def __init__(self):
+    def __init__(self, catalog_path: Optional[Path] = None):
+        """
+        Initialize ToolExecutor with catalog for tool_id/mode_id mapping.
+        
+        Args:
+            catalog_path: Path to catalog.json. If None, uses default location.
+        """
         self.supported_tools = {
             "nuclei": self._run_nuclei,
             "nmap": self._run_nmap,
@@ -71,6 +92,255 @@ class ToolExecutor:
             "dalfox": self._run_dalfox,
             "sqlmap": self._run_sqlmap,
         }
+        
+        # Load catalog for tool_id/mode_id mapping
+        if catalog_path is None:
+            catalog_path = BASE_DIR / "services" / "thandev-brain" / "catalog" / "catalog.json"
+        
+        self.catalog_path = catalog_path
+        self._catalog = self._load_catalog()
+        self._tool_mode_map = self._build_tool_mode_map()
+    
+    def _load_catalog(self) -> Dict:
+        """Load catalog from JSON file"""
+        if not self.catalog_path.exists():
+            logger.warning(f"Catalog file not found at {self.catalog_path}, tool_id/mode_id execution will be limited")
+            return {"tools": []}
+        
+        try:
+            with open(self.catalog_path, "r", encoding="utf-8") as f:
+                catalog = json.load(f)
+            logger.debug(f"Loaded catalog with {len(catalog.get('tools', []))} tools")
+            return catalog
+        except Exception as e:
+            logger.warning(f"Failed to load catalog: {e}, tool_id/mode_id execution will be limited")
+            return {"tools": []}
+    
+    def _build_tool_mode_map(self) -> Dict[Tuple[str, str], Dict]:
+        """
+        Build mapping from (tool_id, mode_id) to mode configuration.
+        
+        Returns:
+            Dict mapping (tool_id, mode_id) -> mode config dict
+        """
+        mapping = {}
+        for tool in self._catalog.get("tools", []):
+            tool_id = tool.get("tool_id")
+            if not tool_id:
+                continue
+            
+            for mode in tool.get("modes", []):
+                mode_id = mode.get("mode_id")
+                if mode_id:
+                    mapping[(tool_id, mode_id)] = {
+                        "tool_id": tool_id,
+                        "mode_id": mode_id,
+                        "params_schema": mode.get("params_schema", {}),
+                        "constraints": mode.get("constraints", {}),
+                    }
+        
+        logger.debug(f"Built tool_mode_map with {len(mapping)} entries")
+        return mapping
+    
+    async def run_step(
+        self,
+        tool_id: str,
+        mode_id: str,
+        target_url: str,
+        params: Optional[Dict[str, Any]] = None,
+        scan_job_id: Optional[str] = None,
+        job_dir: Optional[Path] = None,
+    ) -> Dict:
+        """
+        Execute a tool step using tool_id/mode_id (catalog-based execution).
+        
+        This is the new interface that accepts only allowlisted tool_id/mode_id
+        combinations. Commands are built internally from the catalog.
+        
+        Args:
+            tool_id: Tool identifier from catalog (e.g., "nuclei", "nmap")
+            mode_id: Mode identifier from catalog (e.g., "basic_web", "pro_web")
+            target_url: Target URL to scan
+            params: Validated parameters for this mode (from plan step)
+            scan_job_id: Optional scan job ID for logging
+            job_dir: Optional job directory for output files
+            
+        Returns:
+            Tool execution results dict
+            
+        Raises:
+            ValueError: If tool_id/mode_id not found in catalog or not supported
+        """
+        # Validate tool_id/mode_id exists in catalog
+        mode_key = (tool_id, mode_id)
+        if mode_key not in self._tool_mode_map:
+            available = list(self._tool_mode_map.keys())
+            raise ValueError(
+                f"Invalid tool_id/mode_id combination: ({tool_id}, {mode_id}). "
+                f"Available combinations: {available}"
+            )
+        
+        # Validate tool is supported
+        if tool_id not in self.supported_tools:
+            raise ValueError(
+                f"Tool '{tool_id}' is not supported. Supported tools: {list(self.supported_tools.keys())}"
+            )
+        
+        mode_config = self._tool_mode_map[mode_key]
+        params = params or {}
+        
+        # Defense-in-depth: Validate params against mode's params_schema
+        # (Plan validation already does this, but we validate again here for security)
+        params_schema = mode_config.get("params_schema", {})
+        if params_schema:
+            try:
+                from jsonschema import Draft202012Validator, ValidationError as SchemaValidationError
+                
+                # Ensure additionalProperties is false for strict validation
+                strict_schema = dict(params_schema)
+                if "additionalProperties" not in strict_schema:
+                    strict_schema["additionalProperties"] = False
+                
+                validator = Draft202012Validator(strict_schema)
+                validator.validate(params)
+            except SchemaValidationError as e:
+                raise ValueError(
+                    f"Invalid params for {tool_id}/{mode_id}: {e.message}. "
+                    f"Params must match schema with additionalProperties=false"
+                )
+            except ImportError:
+                # jsonschema not available, skip validation (should not happen in production)
+                logger.warning(f"jsonschema not available, skipping param validation for {tool_id}/{mode_id}")
+        
+        # Map mode_id to internal parameters based on catalog
+        # This is where we convert catalog modes to internal tool parameters
+        internal_kwargs = self._map_mode_to_internal_params(tool_id, mode_id, params, mode_config)
+        
+        # Add metadata
+        if scan_job_id:
+            internal_kwargs["scan_job_id"] = scan_job_id
+        if job_dir:
+            internal_kwargs["scan_job_dir"] = job_dir
+        
+        # Determine scan_level from mode_id (for backward compatibility)
+        # This is a temporary mapping until we fully remove scan_level dependency
+        scan_level = self._infer_scan_level_from_mode(mode_id)
+        
+        logger.info(f"Executing tool_id={tool_id}, mode_id={mode_id} on {target_url}")
+        
+        # Track execution time (like run_tool does)
+        start_time = datetime.utcnow()
+        
+        try:
+            # Call internal tool runner
+            tool_runner = self.supported_tools[tool_id]
+            result = await tool_runner(target_url, scan_level, **internal_kwargs)
+            
+            # Calculate and add execution time
+            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            result["execution_time"] = execution_time
+            result["success"] = result.get("success", True)  # Default to True if not set
+            
+            return result
+        except Exception as e:
+            logger.error(f"Tool {tool_id}/{mode_id} failed: {str(e)}", exc_info=True)
+            execution_time = (datetime.utcnow() - start_time).total_seconds()
+            
+            return {
+                "tool_name": tool_id,
+                "success": False,
+                "error": str(e),
+                "output": "",
+                "exit_code": -1,
+                "execution_time": execution_time,
+            }
+    
+    def _map_mode_to_internal_params(
+        self,
+        tool_id: str,
+        mode_id: str,
+        params: Dict[str, Any],
+        mode_config: Dict,
+    ) -> Dict[str, Any]:
+        """
+        Map catalog mode parameters to internal tool parameters.
+        
+        This is where we convert catalog-defined params to the internal
+        format expected by _run_* methods.
+        """
+        internal = {}
+        
+        if tool_id == "nuclei":
+            # Map mode_id to profile (for backward compatibility)
+            if mode_id in ["basic_web", "pro_web", "advanced_web"]:
+                internal["profile"] = mode_id
+            
+            # Map params
+            if "tags" in params:
+                internal["tags"] = params["tags"]
+            if "severity" in params:
+                internal["severity"] = params["severity"]
+        
+        elif tool_id == "httpx":
+            # Map intensity from mode_id
+            if mode_id == "low":
+                internal["intensity"] = "low"
+            elif mode_id == "medium":
+                internal["intensity"] = "medium"
+            elif mode_id == "high":
+                internal["intensity"] = "high"
+        
+        elif tool_id == "ffuf":
+            # Map wordlist from params
+            if "wordlist" in params:
+                internal["wordlist"] = params["wordlist"]
+        
+        elif tool_id == "nmap":
+            # Map profile from mode_id
+            if mode_id == "top_ports":
+                internal["profile"] = "top_ports"
+            elif mode_id == "full_ports_scripts":
+                internal["profile"] = "full_ports_scripts"
+        
+        elif tool_id == "sqlmap":
+            # Map level and risk from params
+            if "level" in params:
+                internal["level"] = params["level"]
+            if "risk" in params:
+                internal["risk"] = params["risk"]
+            if mode_id == "sqli_light":
+                internal["profile"] = "sqli_light"
+        
+        elif tool_id == "dalfox":
+            # Map aggressiveness from mode_id
+            if mode_id == "constrained":
+                internal["aggressiveness"] = "low"
+            elif mode_id == "standard":
+                internal["aggressiveness"] = "medium"
+            elif mode_id == "aggressive":
+                internal["aggressiveness"] = "high"
+        
+        # Pass through timeout if specified in constraints
+        constraints = mode_config.get("constraints", {})
+        if "max_timeout_sec" in constraints:
+            internal["timeout_seconds"] = constraints["max_timeout_sec"]
+        
+        return internal
+    
+    def _infer_scan_level_from_mode(self, mode_id: str) -> str:
+        """
+        Infer scan_level from mode_id (temporary for backward compatibility).
+        
+        This will be removed once we fully migrate away from scan_level.
+        """
+        if "basic" in mode_id.lower():
+            return "basic"
+        elif "pro" in mode_id.lower() or "standard" in mode_id.lower():
+            return "pro"
+        elif "advanced" in mode_id.lower() or "aggressive" in mode_id.lower():
+            return "advanced"
+        else:
+            return "basic"  # Default
     
     async def run_tool(
         self,
@@ -138,9 +408,50 @@ class ToolExecutor:
                     If provided, uses NUCLEI_PROFILE_TAGS to determine which tags to use
         """
         # Check if nuclei is installed
+        # Try common locations for nuclei (in order of preference)
+        nuclei_binary = None
+        possible_paths = [
+            os.path.expanduser("~/go/bin/nuclei"),  # Go bin directory (most common)
+            os.path.expanduser("~/.local/thandev-tools/bin/nuclei"),  # Local tools directory
+            "/usr/local/bin/nuclei",
+            "nuclei",  # In PATH
+        ]
+        
+        for binary_path in possible_paths:
+            try:
+                expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                    if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                        nuclei_binary = expanded_path
+                        logger.info(f"Found nuclei binary at: {nuclei_binary}")
+                        break
+                else:
+                    # Check if command exists in PATH
+                    check_result = subprocess.run(
+                        ["which", binary_path],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    if check_result.returncode == 0:
+                        nuclei_binary = check_result.stdout.strip()
+                        logger.info(f"Found nuclei binary at: {nuclei_binary}")
+                        break
+            except Exception:
+                continue
+        
+        if not nuclei_binary:
+            return {
+                "tool_name": "nuclei",
+                "output": "",
+                "exit_code": -1,
+                "error": "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest (ensure ~/go/bin is in PATH)",
+                "command": "nuclei -version",
+            }
+        
         try:
             check_result = subprocess.run(
-                ["nuclei", "-version"],
+                [nuclei_binary, "-version"],
                 capture_output=True,
                 timeout=5,
                 text=True
@@ -197,7 +508,7 @@ class ToolExecutor:
         # DO NOT use -json (not supported in v3.4.10)
         # DO NOT use -t with template paths (causes template update output)
         cmd = [
-            "nuclei",
+            nuclei_binary,  # Use the found binary path
             "-u", target_url,
             "-severity", severity_levels,
             "-jsonl",
@@ -652,9 +963,54 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info(f"Checking ffuf availability for scan {scan_job_id}")
         
+        # Try common locations for ffuf (in order of preference)
+        ffuf_binary = None
+        possible_paths = [
+            os.path.expanduser("~/go/bin/ffuf"),  # Go bin directory (most common)
+            os.path.expanduser("~/.local/thandev-tools/bin/ffuf"),  # Local tools directory
+            "/usr/local/bin/ffuf",
+            "ffuf",  # In PATH
+        ]
+        
+        for binary_path in possible_paths:
+            try:
+                expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                    if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                        ffuf_binary = expanded_path
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+                else:
+                    # Check if command exists in PATH
+                    check_result = subprocess.run(
+                        ["which", binary_path],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    if check_result.returncode == 0:
+                        ffuf_binary = check_result.stdout.strip()
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+            except Exception:
+                continue
+        
+        if not ffuf_binary:
+            error_msg = "ffuf binary not found. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest (ensure ~/go/bin is in PATH)"
+            logger.error(f"ffuf binary not found for scan {scan_job_id}")
+            return {
+                "tool_name": "ffuf",
+                "output": "",
+                "exit_code": -1,
+                "error": error_msg,
+                "command": "ffuf -V",
+                "timed_out": False,
+            }
+        
+        # Verify ffuf works
         try:
             check_result = subprocess.run(
-                ["ffuf", "-V"],
+                [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
                 text=True
@@ -663,7 +1019,7 @@ class ToolExecutor:
                 error_msg = f"ffuf command failed with exit code {check_result.returncode}: {check_result.stderr}"
                 logger.error(f"ffuf binary check failed for scan {scan_job_id}: {error_msg}")
                 raise FileNotFoundError("ffuf command failed")
-            logger.info(f"ffuf binary found for scan {scan_job_id}: {check_result.stdout.strip()}")
+            logger.info(f"ffuf binary verified for scan {scan_job_id}: {check_result.stdout.strip()}")
         except FileNotFoundError:
             error_msg = "ffuf binary not found in PATH. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest"
             logger.error(f"ffuf binary not found for scan {scan_job_id}. Check PATH or install ffuf.")
@@ -728,17 +1084,71 @@ class ToolExecutor:
         
         logger.info(f"ffuf wordlist verified for scan {scan_job_id}: {wordlist_path} ({os.path.getsize(wordlist_path)} bytes)")
         
+        # PR-4C: Baseline detection to filter out 404/wildcard responses
+        baseline = None
+        try:
+            import random
+            import string
+            import requests
+            
+            # Generate random baseline path
+            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            baseline_path = f"/THANDEV-BASELINE-{random_suffix}"
+            baseline_url = f"{target_url.rstrip('/')}{baseline_path}"
+            
+            logger.info(f"Performing baseline request for ffuf: {baseline_url}")
+            
+            # Make baseline request
+            baseline_resp = requests.get(
+                baseline_url,
+                timeout=10,
+                allow_redirects=True,
+                headers={"User-Agent": "Thandev-Baseline/1.0"},
+            )
+            
+            # Calculate baseline signature
+            response_text = baseline_resp.text
+            baseline = {
+                "status_code": baseline_resp.status_code,
+                "content_length": len(baseline_resp.content),
+                "word_count": len(response_text.split()),
+                "line_count": len(response_text.splitlines()),
+                "content_hash": hash(response_text[:1000]),  # Hash first 1000 chars
+            }
+            
+            logger.info(
+                f"Baseline signature for {target_url}: status={baseline['status_code']}, "
+                f"size={baseline['content_length']}, words={baseline['word_count']}, "
+                f"lines={baseline['line_count']}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
+            baseline = None
+        
         # Get timeout from config (default: 15 minutes)
         default_timeout = 900  # 15 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
+        # PR-4C: Add filters to exclude baseline and 404
         cmd = [
-            "ffuf",
+            ffuf_binary,  # Use the found binary path
             "-u", f"{target_url}/FUZZ",
             "-w", wordlist_path,
-            "-mc", "200,204,301,302,307,401,403",
+            "-mc", "200,204,301,302,307,401,403",  # Only allow relevant status codes
             "-json",
         ]
+        
+        # Add size filter if baseline available
+        if baseline:
+            # Exclude responses matching baseline size (with small tolerance)
+            baseline_size = baseline["content_length"]
+            if baseline_size > 0:
+                # Exclude responses within 5% of baseline size
+                tolerance = max(10, int(baseline_size * 0.05))
+                min_size = baseline_size - tolerance
+                max_size = baseline_size + tolerance
+                cmd.extend(["-fs", f"{min_size}-{max_size}"])  # Filter by size
+                logger.info(f"Added size filter to exclude baseline: {min_size}-{max_size} bytes")
         
         logger.info("ffuf command for scan %s: %s (timeout: %d seconds, wordlist: %s)", 
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
@@ -809,13 +1219,20 @@ class ToolExecutor:
                 logger.info("ffuf scan %s completed: no paths discovered (exit_code=%s, stderr_bytes=%d)", 
                            scan_job_id, exit_code, stderr_bytes)
             
-            return {
+            # PR-4C: Store baseline in result for filtering during parsing
+            result_dict = {
                 "tool_name": "ffuf",
                 "output": result.stdout,
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
                 "timed_out": False,
             }
+            
+            if baseline:
+                result_dict["baseline"] = baseline
+                logger.info(f"Stored baseline signature in ffuf result for filtering")
+            
+            return result_dict
         except subprocess.TimeoutExpired as exc:
             logger.warning("ffuf scan %s timed out after %d seconds (%d minutes). Results may be partial.", 
                           scan_job_id, timeout, timeout // 60)
@@ -1495,9 +1912,54 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info(f"Checking ffuf availability for scan {scan_job_id}")
         
+        # Try common locations for ffuf (in order of preference)
+        ffuf_binary = None
+        possible_paths = [
+            os.path.expanduser("~/go/bin/ffuf"),  # Go bin directory (most common)
+            os.path.expanduser("~/.local/thandev-tools/bin/ffuf"),  # Local tools directory
+            "/usr/local/bin/ffuf",
+            "ffuf",  # In PATH
+        ]
+        
+        for binary_path in possible_paths:
+            try:
+                expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                    if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                        ffuf_binary = expanded_path
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+                else:
+                    # Check if command exists in PATH
+                    check_result = subprocess.run(
+                        ["which", binary_path],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    if check_result.returncode == 0:
+                        ffuf_binary = check_result.stdout.strip()
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+            except Exception:
+                continue
+        
+        if not ffuf_binary:
+            error_msg = "ffuf binary not found. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest (ensure ~/go/bin is in PATH)"
+            logger.error(f"ffuf binary not found for scan {scan_job_id}")
+            return {
+                "tool_name": "ffuf",
+                "output": "",
+                "exit_code": -1,
+                "error": error_msg,
+                "command": "ffuf -V",
+                "timed_out": False,
+            }
+        
+        # Verify ffuf works
         try:
             check_result = subprocess.run(
-                ["ffuf", "-V"],
+                [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
                 text=True
@@ -1506,7 +1968,7 @@ class ToolExecutor:
                 error_msg = f"ffuf command failed with exit code {check_result.returncode}: {check_result.stderr}"
                 logger.error(f"ffuf binary check failed for scan {scan_job_id}: {error_msg}")
                 raise FileNotFoundError("ffuf command failed")
-            logger.info(f"ffuf binary found for scan {scan_job_id}: {check_result.stdout.strip()}")
+            logger.info(f"ffuf binary verified for scan {scan_job_id}: {check_result.stdout.strip()}")
         except FileNotFoundError:
             error_msg = "ffuf binary not found in PATH. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest"
             logger.error(f"ffuf binary not found for scan {scan_job_id}. Check PATH or install ffuf.")
@@ -1571,17 +2033,71 @@ class ToolExecutor:
         
         logger.info(f"ffuf wordlist verified for scan {scan_job_id}: {wordlist_path} ({os.path.getsize(wordlist_path)} bytes)")
         
+        # PR-4C: Baseline detection to filter out 404/wildcard responses
+        baseline = None
+        try:
+            import random
+            import string
+            import requests
+            
+            # Generate random baseline path
+            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            baseline_path = f"/THANDEV-BASELINE-{random_suffix}"
+            baseline_url = f"{target_url.rstrip('/')}{baseline_path}"
+            
+            logger.info(f"Performing baseline request for ffuf: {baseline_url}")
+            
+            # Make baseline request
+            baseline_resp = requests.get(
+                baseline_url,
+                timeout=10,
+                allow_redirects=True,
+                headers={"User-Agent": "Thandev-Baseline/1.0"},
+            )
+            
+            # Calculate baseline signature
+            response_text = baseline_resp.text
+            baseline = {
+                "status_code": baseline_resp.status_code,
+                "content_length": len(baseline_resp.content),
+                "word_count": len(response_text.split()),
+                "line_count": len(response_text.splitlines()),
+                "content_hash": hash(response_text[:1000]),  # Hash first 1000 chars
+            }
+            
+            logger.info(
+                f"Baseline signature for {target_url}: status={baseline['status_code']}, "
+                f"size={baseline['content_length']}, words={baseline['word_count']}, "
+                f"lines={baseline['line_count']}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
+            baseline = None
+        
         # Get timeout from config (default: 15 minutes)
         default_timeout = 900  # 15 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
+        # PR-4C: Add filters to exclude baseline and 404
         cmd = [
-            "ffuf",
+            ffuf_binary,  # Use the found binary path
             "-u", f"{target_url}/FUZZ",
             "-w", wordlist_path,
-            "-mc", "200,204,301,302,307,401,403",
+            "-mc", "200,204,301,302,307,401,403",  # Only allow relevant status codes
             "-json",
         ]
+        
+        # Add size filter if baseline available
+        if baseline:
+            # Exclude responses matching baseline size (with small tolerance)
+            baseline_size = baseline["content_length"]
+            if baseline_size > 0:
+                # Exclude responses within 5% of baseline size
+                tolerance = max(10, int(baseline_size * 0.05))
+                min_size = baseline_size - tolerance
+                max_size = baseline_size + tolerance
+                cmd.extend(["-fs", f"{min_size}-{max_size}"])  # Filter by size
+                logger.info(f"Added size filter to exclude baseline: {min_size}-{max_size} bytes")
         
         logger.info("ffuf command for scan %s: %s (timeout: %d seconds, wordlist: %s)", 
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
@@ -1953,9 +2469,54 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info(f"Checking ffuf availability for scan {scan_job_id}")
         
+        # Try common locations for ffuf (in order of preference)
+        ffuf_binary = None
+        possible_paths = [
+            os.path.expanduser("~/go/bin/ffuf"),  # Go bin directory (most common)
+            os.path.expanduser("~/.local/thandev-tools/bin/ffuf"),  # Local tools directory
+            "/usr/local/bin/ffuf",
+            "ffuf",  # In PATH
+        ]
+        
+        for binary_path in possible_paths:
+            try:
+                expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                    if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                        ffuf_binary = expanded_path
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+                else:
+                    # Check if command exists in PATH
+                    check_result = subprocess.run(
+                        ["which", binary_path],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    if check_result.returncode == 0:
+                        ffuf_binary = check_result.stdout.strip()
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+            except Exception:
+                continue
+        
+        if not ffuf_binary:
+            error_msg = "ffuf binary not found. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest (ensure ~/go/bin is in PATH)"
+            logger.error(f"ffuf binary not found for scan {scan_job_id}")
+            return {
+                "tool_name": "ffuf",
+                "output": "",
+                "exit_code": -1,
+                "error": error_msg,
+                "command": "ffuf -V",
+                "timed_out": False,
+            }
+        
+        # Verify ffuf works
         try:
             check_result = subprocess.run(
-                ["ffuf", "-V"],
+                [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
                 text=True
@@ -1964,7 +2525,7 @@ class ToolExecutor:
                 error_msg = f"ffuf command failed with exit code {check_result.returncode}: {check_result.stderr}"
                 logger.error(f"ffuf binary check failed for scan {scan_job_id}: {error_msg}")
                 raise FileNotFoundError("ffuf command failed")
-            logger.info(f"ffuf binary found for scan {scan_job_id}: {check_result.stdout.strip()}")
+            logger.info(f"ffuf binary verified for scan {scan_job_id}: {check_result.stdout.strip()}")
         except FileNotFoundError:
             error_msg = "ffuf binary not found in PATH. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest"
             logger.error(f"ffuf binary not found for scan {scan_job_id}. Check PATH or install ffuf.")
@@ -2029,17 +2590,71 @@ class ToolExecutor:
         
         logger.info(f"ffuf wordlist verified for scan {scan_job_id}: {wordlist_path} ({os.path.getsize(wordlist_path)} bytes)")
         
+        # PR-4C: Baseline detection to filter out 404/wildcard responses
+        baseline = None
+        try:
+            import random
+            import string
+            import requests
+            
+            # Generate random baseline path
+            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            baseline_path = f"/THANDEV-BASELINE-{random_suffix}"
+            baseline_url = f"{target_url.rstrip('/')}{baseline_path}"
+            
+            logger.info(f"Performing baseline request for ffuf: {baseline_url}")
+            
+            # Make baseline request
+            baseline_resp = requests.get(
+                baseline_url,
+                timeout=10,
+                allow_redirects=True,
+                headers={"User-Agent": "Thandev-Baseline/1.0"},
+            )
+            
+            # Calculate baseline signature
+            response_text = baseline_resp.text
+            baseline = {
+                "status_code": baseline_resp.status_code,
+                "content_length": len(baseline_resp.content),
+                "word_count": len(response_text.split()),
+                "line_count": len(response_text.splitlines()),
+                "content_hash": hash(response_text[:1000]),  # Hash first 1000 chars
+            }
+            
+            logger.info(
+                f"Baseline signature for {target_url}: status={baseline['status_code']}, "
+                f"size={baseline['content_length']}, words={baseline['word_count']}, "
+                f"lines={baseline['line_count']}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
+            baseline = None
+        
         # Get timeout from config (default: 15 minutes)
         default_timeout = 900  # 15 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
+        # PR-4C: Add filters to exclude baseline and 404
         cmd = [
-            "ffuf",
+            ffuf_binary,  # Use the found binary path
             "-u", f"{target_url}/FUZZ",
             "-w", wordlist_path,
-            "-mc", "200,204,301,302,307,401,403",
+            "-mc", "200,204,301,302,307,401,403",  # Only allow relevant status codes
             "-json",
         ]
+        
+        # Add size filter if baseline available
+        if baseline:
+            # Exclude responses matching baseline size (with small tolerance)
+            baseline_size = baseline["content_length"]
+            if baseline_size > 0:
+                # Exclude responses within 5% of baseline size
+                tolerance = max(10, int(baseline_size * 0.05))
+                min_size = baseline_size - tolerance
+                max_size = baseline_size + tolerance
+                cmd.extend(["-fs", f"{min_size}-{max_size}"])  # Filter by size
+                logger.info(f"Added size filter to exclude baseline: {min_size}-{max_size} bytes")
         
         logger.info("ffuf command for scan %s: %s (timeout: %d seconds, wordlist: %s)", 
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
@@ -2411,9 +3026,54 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info(f"Checking ffuf availability for scan {scan_job_id}")
         
+        # Try common locations for ffuf (in order of preference)
+        ffuf_binary = None
+        possible_paths = [
+            os.path.expanduser("~/go/bin/ffuf"),  # Go bin directory (most common)
+            os.path.expanduser("~/.local/thandev-tools/bin/ffuf"),  # Local tools directory
+            "/usr/local/bin/ffuf",
+            "ffuf",  # In PATH
+        ]
+        
+        for binary_path in possible_paths:
+            try:
+                expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                    if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                        ffuf_binary = expanded_path
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+                else:
+                    # Check if command exists in PATH
+                    check_result = subprocess.run(
+                        ["which", binary_path],
+                        capture_output=True,
+                        timeout=2,
+                        text=True
+                    )
+                    if check_result.returncode == 0:
+                        ffuf_binary = check_result.stdout.strip()
+                        logger.info(f"Found ffuf binary at: {ffuf_binary}")
+                        break
+            except Exception:
+                continue
+        
+        if not ffuf_binary:
+            error_msg = "ffuf binary not found. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest (ensure ~/go/bin is in PATH)"
+            logger.error(f"ffuf binary not found for scan {scan_job_id}")
+            return {
+                "tool_name": "ffuf",
+                "output": "",
+                "exit_code": -1,
+                "error": error_msg,
+                "command": "ffuf -V",
+                "timed_out": False,
+            }
+        
+        # Verify ffuf works
         try:
             check_result = subprocess.run(
-                ["ffuf", "-V"],
+                [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
                 text=True
@@ -2422,7 +3082,7 @@ class ToolExecutor:
                 error_msg = f"ffuf command failed with exit code {check_result.returncode}: {check_result.stderr}"
                 logger.error(f"ffuf binary check failed for scan {scan_job_id}: {error_msg}")
                 raise FileNotFoundError("ffuf command failed")
-            logger.info(f"ffuf binary found for scan {scan_job_id}: {check_result.stdout.strip()}")
+            logger.info(f"ffuf binary verified for scan {scan_job_id}: {check_result.stdout.strip()}")
         except FileNotFoundError:
             error_msg = "ffuf binary not found in PATH. Please install ffuf: go install -v github.com/ffuf/ffuf/v2@latest"
             logger.error(f"ffuf binary not found for scan {scan_job_id}. Check PATH or install ffuf.")
@@ -2487,17 +3147,71 @@ class ToolExecutor:
         
         logger.info(f"ffuf wordlist verified for scan {scan_job_id}: {wordlist_path} ({os.path.getsize(wordlist_path)} bytes)")
         
+        # PR-4C: Baseline detection to filter out 404/wildcard responses
+        baseline = None
+        try:
+            import random
+            import string
+            import requests
+            
+            # Generate random baseline path
+            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            baseline_path = f"/THANDEV-BASELINE-{random_suffix}"
+            baseline_url = f"{target_url.rstrip('/')}{baseline_path}"
+            
+            logger.info(f"Performing baseline request for ffuf: {baseline_url}")
+            
+            # Make baseline request
+            baseline_resp = requests.get(
+                baseline_url,
+                timeout=10,
+                allow_redirects=True,
+                headers={"User-Agent": "Thandev-Baseline/1.0"},
+            )
+            
+            # Calculate baseline signature
+            response_text = baseline_resp.text
+            baseline = {
+                "status_code": baseline_resp.status_code,
+                "content_length": len(baseline_resp.content),
+                "word_count": len(response_text.split()),
+                "line_count": len(response_text.splitlines()),
+                "content_hash": hash(response_text[:1000]),  # Hash first 1000 chars
+            }
+            
+            logger.info(
+                f"Baseline signature for {target_url}: status={baseline['status_code']}, "
+                f"size={baseline['content_length']}, words={baseline['word_count']}, "
+                f"lines={baseline['line_count']}"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
+            baseline = None
+        
         # Get timeout from config (default: 15 minutes)
         default_timeout = 900  # 15 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
+        # PR-4C: Add filters to exclude baseline and 404
         cmd = [
-            "ffuf",
+            ffuf_binary,  # Use the found binary path
             "-u", f"{target_url}/FUZZ",
             "-w", wordlist_path,
-            "-mc", "200,204,301,302,307,401,403",
+            "-mc", "200,204,301,302,307,401,403",  # Only allow relevant status codes
             "-json",
         ]
+        
+        # Add size filter if baseline available
+        if baseline:
+            # Exclude responses matching baseline size (with small tolerance)
+            baseline_size = baseline["content_length"]
+            if baseline_size > 0:
+                # Exclude responses within 5% of baseline size
+                tolerance = max(10, int(baseline_size * 0.05))
+                min_size = baseline_size - tolerance
+                max_size = baseline_size + tolerance
+                cmd.extend(["-fs", f"{min_size}-{max_size}"])  # Filter by size
+                logger.info(f"Added size filter to exclude baseline: {min_size}-{max_size} bytes")
         
         logger.info("ffuf command for scan %s: %s (timeout: %d seconds, wordlist: %s)", 
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)

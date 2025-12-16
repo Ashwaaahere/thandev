@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94SVN scan initiated Fri Dec 12 21:21:28 2025 as: nmap -oX - -sV -sC -A -p- thandev.vercel.app -->
+<nmaprun scanner="nmap" args="nmap -oX - -sV -sC -A -p- thandev.vercel.app" start="1765592488" startstr="Fri Dec 12 21:21:28 2025" version="7.94SVN" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="65535" services="1-65535"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<hosthint><status state="up" reason="unknown-response" reason_ttl="0"/>
+<address addr="64.29.17.67" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+</hosthint>
+<host starttime="1765592488" endtime="1765592978"><status state="up" reason="syn-ack" reason_ttl="0"/>
+<address addr="64.29.17.67" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+<ports><extraports state="filtered" count="65533">
+<extrareasons reason="no-response" count="65533" proto="tcp" ports="1-79,81-442,444-65535"/>
+</extraports>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Vercel" servicefp="SF-Port80-TCP:V=7.94SVN%I=7%D=12/12%Time=693CCF29%P=x86_64-pc-linux-gnu%r(GetRequest,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(HTTPOptions,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(FourOhFourRequest,D0,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nRefresh:\x200;url=https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;);" method="probed" conf="10"/><script id="http-title" output="Site doesn&apos;t have a title (text/plain)."></script><script id="fingerprint-strings" output="&#xa;  FourOhFourRequest: &#xa;    HTTP/1.0 308 Permanent Redirect&#xa;    Content-Type: text/plain&#xa;    Location: https:///nice%20ports%2C/Tri%6Eity.txt%2ebak&#xa;    Refresh: 0;url=https:///nice%20ports%2C/Tri%6Eity.txt%2ebak&#xa;    server: Vercel&#xa;    Redirecting...&#xa;  GetRequest, HTTPOptions: &#xa;    HTTP/1.0 308 Permanent Redirect&#xa;    Content-Type: text/plain&#xa;    Location: https:///&#xa;    Refresh: 0;url=https:///&#xa;    server: Vercel&#xa;    Redirecting..."><elem key="FourOhFourRequest">&#xa;    HTTP/1.0 308 Permanent Redirect&#xa;    Content-Type: text/plain&#xa;    Location: https:///nice%20ports%2C/Tri%6Eity.txt%2ebak&#xa;    Refresh: 0;url=https:///nice%20ports%2C/Tri%6Eity.txt%2ebak&#xa;    server: Vercel&#xa;    Redirecting...</elem>
+<elem key="GetRequest, HTTPOptions">&#xa;    HTTP/1.0 308 Permanent Redirect&#xa;    Content-Type: text/plain&#xa;    Location: https:///&#xa;    Refresh: 0;url=https:///&#xa;    server: Vercel&#xa;    Redirecting...</elem>
+</script><script id="http-server-header" output="Vercel"><elem>Vercel</elem>
+</script></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="https" product="Vercel" servicefp="SF-Port443-TCP:V=7.94SVN%T=SSL%I=7%D=12/12%Time=693CCF2F%P=x86_64-pc-linux-gnu%r(GetRequest,8651,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765592880\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTIxZGFjMzc7NmVlYjA1MjAwMTgyZWMwZDlkYWNiNTFjZjQ5NjEwZjY4YjUxN2RjMDszOwWa9NdwSLgBnBhB1d3Dk\+7Ps7A7Rdj5fBtl0fDKziriNG1OsBZCVNlrl0wfdGndDXknuEXLmBTemQ==\.9242f58cb6a8f35c029d468cb3cda6bc\r\nX-Vercel-Id:\x20iad1::1765592880-zeIC9OREadx5guUhcsYc9hnSSb3BF6jg\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2002:28:00\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;)%r(HTTPOptions,8658,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765592880\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTJjMDY0NTk7ZWY1NDYxZDQ4YTNkZDMwMWYwZGQ0Njc2YjQ4NDE2MWE0OTk2MTgxODszO\+nL23gNTEP\+ic17Wl/OmTOPU9WJEMmHATrJbFT5Zr75w0no7hJ0zK/0Zhn5HKYYMvfwA9ZHtf1vqg==\.64f0571eb4f07505793638a1ea33a038\r\nX-Vercel-Id:\x20iad1::1765592880-6ALKNRpbyFhea1s4Ep7SxHMc6Jb5m90g\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2002:28:00\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;);" tunnel="ssl" method="probed" conf="10"/><script id="http-server-header" output="Vercel"><elem>Vercel</elem>
+</script><script id="ssl-cert" output="Subject: commonName=*.vercel.app&#xa;Subject Alternative Name: DNS:*.vercel.app&#xa;Not valid before: 2025-10-25T22:29:14&#xa;Not valid after:  2026-01-23T22:29:13"><table key="subject">
+<elem key="commonName">*.vercel.app</elem>
+</table>
+<table key="issuer">
+<elem key="commonName">R13</elem>
+<elem key="countryName">US</elem>
+<elem key="organizationName">Let&apos;s Encrypt</elem>
+</table>
+<table key="pubkey">
+<elem key="type">rsa</elem>
+<elem key="bits">2048</elem>
+<elem key="modulus">C120E2AA12BD890DE886A09ADB900AF32688FEC59B3A6209441286DFC6C7F7D4573428D9B6748A36B51799280F518413ADFA7BE504D36DD209929BE05F6397576A321DBE8E6275BC443C0D81D2C3614A5357D842080634EA08D61AB22D540D2CE390304CEA0BEB682E63B00A34EDA8C38C59B868E1978A696E4D28D7144379E4555D9444285871275F4EE2B4833377AD658B046A805A257C2A53425B61555AA99F146648F5593110641940CA660D31A47618A89CA8E27BBC6A22440C859F21E7E7D531EE624A43890F26B5AA44E0C8C23B4A74B6A2E31651942F75BC7FF8AC752E009D9E23002A08CDC7ED7EE0F0CFDACDADFE6A9084A55ACDD32E1BCBBED88B</elem>
+<elem key="exponent">65537</elem>
+</table>
+<table key="extensions">
+<table>
+<elem key="name">X509v3 Key Usage</elem>
+<elem key="value">Digital Signature, Key Encipherment</elem>
+<elem key="critical">true</elem>
+</table>
+<table>
+<elem key="name">X509v3 Extended Key Usage</elem>
+<elem key="value">TLS Web Server Authentication, TLS Web Client Authentication</elem>
+</table>
+<table>
+<elem key="name">X509v3 Basic Constraints</elem>
+<elem key="value">CA:FALSE</elem>
+<elem key="critical">true</elem>
+</table>
+<table>
+<elem key="name">X509v3 Subject Key Identifier</elem>
+<elem key="value">C2:15:0C:1B:91:97:63:65:2F:B5:F5:66:E2:C1:3B:DA:8E:05:D8:16</elem>
+</table>
+<table>
+<elem key="name">X509v3 Authority Key Identifier</elem>
+<elem key="value">E7:AB:9F:0F:2C:33:A0:53:D3:5E:4F:78:C8:B2:84:0E:3B:D6:92:33</elem>
+</table>
+<table>
+<elem key="name">Authority Information Access</elem>
+<elem key="value">CA Issuers - URI:http://r13.i.lencr.org/</elem>
+</table>
+<table>
+<elem key="name">X509v3 Subject Alternative Name</elem>
+<elem key="value">DNS:*.vercel.app</elem>
+</table>
+<table>
+<elem key="name">X509v3 Certificate Policies</elem>
+<elem key="value">Policy: 2.23.140.1.2.1</elem>
+</table>
+<table>
+<elem key="name">X509v3 CRL Distribution Points</elem>
+<elem key="value">Full Name:&#xa;  URI:http://r13.c.lencr.org/63.crl</elem>
+</table>
+<table>
+<elem key="name">CT Precertificate SCTs</elem>
+<elem key="value">Signed Certificate Timestamp:&#xa;    Version   : v1 (0x0)&#xa;    Log ID    : 64:11:C4:6C:A4:12:EC:A7:89:1C:A2:02:2E:00:BC:AB:&#xa;                4F:28:07:D4:1E:35:27:AB:EA:FE:D5:03:C9:7D:CD:F0&#xa;    Timestamp : Oct 25 23:27:44.978 2025 GMT&#xa;    Extensions: none&#xa;    Signature : ecdsa-with-SHA256&#xa;                30:45:02:20:32:48:FC:5F:33:DB:CB:B1:8C:A6:27:8F:&#xa;                B6:D4:11:35:E1:55:D8:E7:6C:82:85:D5:CC:FF:5A:1E:&#xa;                5D:FB:38:15:02:21:00:E0:A8:FC:60:B4:D2:23:16:AB:&#xa;                26:0F:3F:E5:B9:EC:74:6F:CF:90:35:C0:DD:C8:2A:E8:&#xa;                0C:9C:35:2E:64:7E:AF&#xa;Signed Certificate Timestamp:&#xa;    Version   : v1 (0x0)&#xa;    Log ID    : CB:38:F7:15:89:7C:84:A1:44:5F:5B:C1:DD:FB:C9:6E:&#xa;                F2:9A:59:CD:47:0A:69:05:85:B0:CB:14:C3:14:58:E7&#xa;    Timestamp : Oct 25 23:27:44.997 2025 GMT&#xa;    Extensions: none&#xa;    Signature : ecdsa-with-SHA256&#xa;                30:46:02:21:00:E2:83:7C:A3:27:5A:C2:B4:BB:05:23:&#xa;                2C:0B:99:2B:CC:88:95:1C:B4:52:02:F6:40:E6:51:E0:&#xa;                D1:D4:AA:95:84:02:21:00:E0:B8:15:C0:6C:B4:B1:82:&#xa;                F7:46:8E:D0:9C:92:E3:8B:9E:24:32:41:E1:04:A4:68:&#xa;                A3:01:57:A3:7D:2C:C8:A4</elem>
+</table>
+</table>
+<elem key="sig_algo">sha256WithRSAEncryption</elem>
+<table key="validity">
+<elem key="notBefore">2025-10-25T22:29:14</elem>
+<elem key="notAfter">2026-01-23T22:29:13</elem>
+</table>
+<elem key="md5">4aedda0878ce1a4270c5cee2439ce6c4</elem>
+<elem key="sha1">6b2ce81ddd608e7954cefacd727f4dc07b8e6f6b</elem>
+<elem key="pem">-&#45;&#45;&#45;&#45;BEGIN CERTIFICATE-&#45;&#45;&#45;&#45;&#xa;MIIE9TCCA92gAwIBAgISBRR5Eg0wrPEQ480toUr9pjg+MA0GCSqGSIb3DQEBCwUA&#xa;MDMxCzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1MZXQncyBFbmNyeXB0MQwwCgYDVQQD&#xa;EwNSMTMwHhcNMjUxMDI1MjIyOTE0WhcNMjYwMTIzMjIyOTEzWjAXMRUwEwYDVQQD&#xa;DAwqLnZlcmNlbC5hcHAwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDB&#xa;IOKqEr2JDeiGoJrbkArzJoj+xZs6YglEEobfxsf31Fc0KNm2dIo2tReZKA9RhBOt&#xa;+nvlBNNt0gmSm+BfY5dXajIdvo5idbxEPA2B0sNhSlNX2EIIBjTqCNYasi1UDSzj&#xa;kDBM6gvraC5jsAo07ajDjFm4aOGXimluTSjXFEN55FVdlEQoWHEnX07itIMzd61l&#xa;iwRqgFolfCpTQlthVVqpnxRmSPVZMRBkGUDKZg0xpHYYqJyo4nu8aiJEDIWfIefn&#xa;1THuYkpDiQ8mtapE4MjCO0p0tqLjFlGUL3W8f/isdS4AnZ4jACoIzcftfuDwz9rN&#xa;rf5qkISlWs3TLhvLvtiLAgMBAAGjggIdMIICGTAOBgNVHQ8BAf8EBAMCBaAwHQYD&#xa;VR0lBBYwFAYIKwYBBQUHAwEGCCsGAQUFBwMCMAwGA1UdEwEB/wQCMAAwHQYDVR0O&#xa;BBYEFMIVDBuRl2NlL7X1ZuLBO9qOBdgWMB8GA1UdIwQYMBaAFOernw8sM6BT015P&#xa;eMiyhA471pIzMDMGCCsGAQUFBwEBBCcwJTAjBggrBgEFBQcwAoYXaHR0cDovL3Ix&#xa;My5pLmxlbmNyLm9yZy8wFwYDVR0RBBAwDoIMKi52ZXJjZWwuYXBwMBMGA1UdIAQM&#xa;MAowCAYGZ4EMAQIBMC4GA1UdHwQnMCUwI6AhoB+GHWh0dHA6Ly9yMTMuYy5sZW5j&#xa;ci5vcmcvNjMuY3JsMIIBBQYKKwYBBAHWeQIEAgSB9gSB8wDxAHYAZBHEbKQS7KeJ&#xa;HKICLgC8q08oB9QeNSer6v7VA8l9zfAAAAGaHbMNUgAABAMARzBFAiAySPxfM9vL&#xa;sYymJ4+21BE14VXY52yChdXM/1oeXfs4FQIhAOCo/GC00iMWqyYPP+W57HRvz5A1&#xa;wN3IKugMnDUuZH6vAHcAyzj3FYl8hKFEX1vB3fvJbvKaWc1HCmkFhbDLFMMUWOcA&#xa;AAGaHbMNZQAABAMASDBGAiEA4oN8oydawrS7BSMsC5krzIiVHLRSAvZA5lHg0dSq&#xa;lYQCIQDguBXAbLSxgvdGjtCckuOLniQyQeEEpGijAVejfSzIpDANBgkqhkiG9w0B&#xa;AQsFAAOCAQEAMDLKsQFVBG/pO/kuoEh4hLmkIrVPuGIEupQjpuryUIwrFMkebyfH&#xa;w3VTtPVT8xz03ZTIK6rSlxYsdchi6WfL/e90bbO6UvVLBMeEQottDpax4sQRHnCH&#xa;SB2Bh0f39LqnTLY4jKhC9Qd5sK4boJdU/RgWsHSurOofIHM/u96DxqqUKGsSUABF&#xa;WF72bw0QhF/Hk+Qt/uJn/nF8rnJcIjMjZ/8n4xGGxzpqm8t0wm1Bi8CZu5LCbX+D&#xa;wa65GRQ/+AMEdTuLV2CMUZory3wAyzNGJklhwm6ZzZ2LzrEZivweuIWc9HsCFYWa&#xa;D7tUia5JBJr2Cvy4fX7HPnfSPkOrYyekGQ==&#xa;-&#45;&#45;&#45;&#45;END CERTIFICATE-&#45;&#45;&#45;&#45;&#xa;</elem>
+</script><script id="fingerprint-strings" output="&#xa;  GetRequest: &#xa;    HTTP/1.0 403 Forbidden&#xa;    Cache-Control: private, no-store, max-age=0&#xa;    Content-Type: text/html; charset=utf-8&#xa;    Server: Vercel&#xa;    X-Vercel-Challenge-Token: 2.1765592880.60.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTIxZGFjMzc7NmVlYjA1MjAwMTgyZWMwZDlkYWNiNTFjZjQ5NjEwZjY4YjUxN2RjMDszOwWa9NdwSLgBnBhB1d3Dk+7Ps7A7Rdj5fBtl0fDKziriNG1OsBZCVNlrl0wfdGndDXknuEXLmBTemQ==.9242f58cb6a8f35c029d468cb3cda6bc&#xa;    X-Vercel-Id: iad1::1765592880-zeIC9OREadx5guUhcsYc9hnSSb3BF6jg&#xa;    X-Vercel-Mitigated: challenge&#xa;    Date: Sat, 13 Dec 2025 02:28:00 GMT&#xa;    &lt;!DOCTYPE html&gt;&lt;html lang=&quot;en&quot; data-astro-cid-nbv56vs3&gt; &lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;&lt;meta name=&quot;theme-color&quot; content=&quot;#000&quot;&gt;&lt;title&gt;Vercel Security Checkpoint&lt;/title&gt;&lt;style&gt;.spinner[data-astro-cid-jlpqxutv]{display:flex;flex-direction:column;justify-content:center;align-items:center}.spinner-circle[data-&#xa;  HTTPOptions: &#xa;    HTTP/1.0 403 Forbidden&#xa;    Cache-Control: private, no-store, max-age=0&#xa;    Content-Type: text/html; charset=utf-8&#xa;    Server: Vercel&#xa;    X-Vercel-Challenge-Token: 2.1765592880.60.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTJjMDY0NTk7ZWY1NDYxZDQ4YTNkZDMwMWYwZGQ0Njc2YjQ4NDE2MWE0OTk2MTgxODszO+nL23gNTEP+ic17Wl/OmTOPU9WJEMmHATrJbFT5Zr75w0no7hJ0zK/0Zhn5HKYYMvfwA9ZHtf1vqg==.64f0571eb4f07505793638a1ea33a038&#xa;    X-Vercel-Id: iad1::1765592880-6ALKNRpbyFhea1s4Ep7SxHMc6Jb5m90g&#xa;    X-Vercel-Mitigated: challenge&#xa;    Date: Sat, 13 Dec 2025 02:28:00 GMT&#xa;    &lt;!DOCTYPE html&gt;&lt;html lang=&quot;en&quot; data-astro-cid-nbv56vs3&gt; &lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;&lt;meta name=&quot;theme-color&quot; content=&quot;#000&quot;&gt;&lt;title&gt;Vercel Security Checkpoint&lt;/title&gt;&lt;style&gt;.spinner[data-astro-cid-jlpqxutv]{display:flex;flex-direction:column;justify-content:center;align-items:center}.spinner-circle[data-"><elem key="GetRequest">&#xa;    HTTP/1.0 403 Forbidden&#xa;    Cache-Control: private, no-store, max-age=0&#xa;    Content-Type: text/html; charset=utf-8&#xa;    Server: Vercel&#xa;    X-Vercel-Challenge-Token: 2.1765592880.60.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTIxZGFjMzc7NmVlYjA1MjAwMTgyZWMwZDlkYWNiNTFjZjQ5NjEwZjY4YjUxN2RjMDszOwWa9NdwSLgBnBhB1d3Dk+7Ps7A7Rdj5fBtl0fDKziriNG1OsBZCVNlrl0wfdGndDXknuEXLmBTemQ==.9242f58cb6a8f35c029d468cb3cda6bc&#xa;    X-Vercel-Id: iad1::1765592880-zeIC9OREadx5guUhcsYc9hnSSb3BF6jg&#xa;    X-Vercel-Mitigated: challenge&#xa;    Date: Sat, 13 Dec 2025 02:28:00 GMT&#xa;    &lt;!DOCTYPE html&gt;&lt;html lang=&quot;en&quot; data-astro-cid-nbv56vs3&gt; &lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;&lt;meta name=&quot;theme-color&quot; content=&quot;#000&quot;&gt;&lt;title&gt;Vercel Security Checkpoint&lt;/title&gt;&lt;style&gt;.spinner[data-astro-cid-jlpqxutv]{display:flex;flex-direction:column;justify-content:center;align-items:center}.spinner-circle[data-</elem>
+<elem key="HTTPOptions">&#xa;    HTTP/1.0 403 Forbidden&#xa;    Cache-Control: private, no-store, max-age=0&#xa;    Content-Type: text/html; charset=utf-8&#xa;    Server: Vercel&#xa;    X-Vercel-Challenge-Token: 2.1765592880.60.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7OTJjMDY0NTk7ZWY1NDYxZDQ4YTNkZDMwMWYwZGQ0Njc2YjQ4NDE2MWE0OTk2MTgxODszO+nL23gNTEP+ic17Wl/OmTOPU9WJEMmHATrJbFT5Zr75w0no7hJ0zK/0Zhn5HKYYMvfwA9ZHtf1vqg==.64f0571eb4f07505793638a1ea33a038&#xa;    X-Vercel-Id: iad1::1765592880-6ALKNRpbyFhea1s4Ep7SxHMc6Jb5m90g&#xa;    X-Vercel-Mitigated: challenge&#xa;    Date: Sat, 13 Dec 2025 02:28:00 GMT&#xa;    &lt;!DOCTYPE html&gt;&lt;html lang=&quot;en&quot; data-astro-cid-nbv56vs3&gt; &lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width, initial-scale=1&quot;&gt;&lt;meta name=&quot;theme-color&quot; content=&quot;#000&quot;&gt;&lt;title&gt;Vercel Security Checkpoint&lt;/title&gt;&lt;style&gt;.spinner[data-astro-cid-jlpqxutv]{display:flex;flex-direction:column;justify-content:center;align-items:center}.spinner-circle[data-</elem>
+</script><script id="http-title" output="Vercel Security Checkpoint"><elem key="title">Vercel Security Checkpoint</elem>
+</script></port>
+</ports>
+<times srtt="33677" rttvar="4499" to="100000"/>
+</host>
+<runstats><finished time="1765592978" timestr="Fri Dec 12 21:29:38 2025" summary="Nmap done at Fri Dec 12 21:29:38 2025; 1 IP address (1 host up) scanned in 489.87 seconds" elapsed="489.87" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>

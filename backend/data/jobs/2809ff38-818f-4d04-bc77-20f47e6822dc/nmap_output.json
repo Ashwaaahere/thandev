@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE nmaprun>
+<?xml-stylesheet href="file:///usr/bin/../share/nmap/nmap.xsl" type="text/xsl"?>
+<!-- Nmap 7.94SVN scan initiated Sat Dec 13 13:57:19 2025 as: nmap -oX - -&#45;top-ports 100 -sV thandev.vercel.app -->
+<nmaprun scanner="nmap" args="nmap -oX - -&#45;top-ports 100 -sV thandev.vercel.app" start="1765652239" startstr="Sat Dec 13 13:57:19 2025" version="7.94SVN" xmloutputversion="1.05">
+<scaninfo type="connect" protocol="tcp" numservices="100" services="7,9,13,21-23,25-26,37,53,79-81,88,106,110-111,113,119,135,139,143-144,179,199,389,427,443-445,465,513-515,543-544,548,554,587,631,646,873,990,993,995,1025-1029,1110,1433,1720,1723,1755,1900,2000-2001,2049,2121,2717,3000,3128,3306,3389,3986,4899,5000,5009,5051,5060,5101,5190,5357,5432,5631,5666,5800,5900,6000-6001,6646,7070,8000,8008-8009,8080-8081,8443,8888,9100,9999-10000,32768,49152-49157"/>
+<verbose level="0"/>
+<debugging level="0"/>
+<hosthint><status state="up" reason="unknown-response" reason_ttl="0"/>
+<address addr="64.29.17.131" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+</hosthint>
+<host starttime="1765652240" endtime="1765652456"><status state="up" reason="syn-ack" reason_ttl="0"/>
+<address addr="64.29.17.131" addrtype="ipv4"/>
+<hostnames>
+<hostname name="thandev.vercel.app" type="user"/>
+</hostnames>
+<ports><port protocol="tcp" portid="7"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="9"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="discard" method="table" conf="3"/></port>
+<port protocol="tcp" portid="13"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="21"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="22"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ssh" method="table" conf="3"/></port>
+<port protocol="tcp" portid="23"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="telnet" method="table" conf="3"/></port>
+<port protocol="tcp" portid="25"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="26"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="rsftp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="37"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="53"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="domain" method="table" conf="3"/></port>
+<port protocol="tcp" portid="79"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="finger" method="table" conf="3"/></port>
+<port protocol="tcp" portid="80"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" product="Vercel" servicefp="SF-Port80-TCP:V=7.94SVN%I=7%D=12/13%Time=693DB75C%P=x86_64-pc-linux-gnu%r(GetRequest,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(HTTPOptions,8A,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///\r\nRefresh:\x200;url=https:///\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;)%r(FourOhFourRequest,D0,&quot;HTTP/1\.0\x20308\x20Permanent\x20Redirect\r\nContent-Type:\x20text/plain\r\nLocation:\x20https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nRefresh:\x200;url=https:///nice%20ports%2C/Tri%6Eity\.txt%2ebak\r\nserver:\x20Vercel\r\n\r\nRedirecting\.\.\.&quot;);" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="81"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="hosts2-ns" method="table" conf="3"/></port>
+<port protocol="tcp" portid="88"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="106"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="110"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="111"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="rpcbind" method="table" conf="3"/></port>
+<port protocol="tcp" portid="113"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ident" method="table" conf="3"/></port>
+<port protocol="tcp" portid="119"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="135"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="139"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="netbios-ssn" method="table" conf="3"/></port>
+<port protocol="tcp" portid="143"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="144"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="179"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="bgp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="199"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="389"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="427"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="svrloc" method="table" conf="3"/></port>
+<port protocol="tcp" portid="443"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="https" product="Vercel" servicefp="SF-Port443-TCP:V=7.94SVN%T=SSL%I=7%D=12/13%Time=693DB767%P=x86_64-pc-linux-gnu%r(GetRequest,864C,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765652327\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7MjlhMWJlNjE7YmJiZWQyZTI2NWNiYThkYmUyNTcxM2M0MjAzNTdlY2NkZWZiOWYzYzszO8W1UtDjRnIBjuq00SLPporTS85oql0LJH1wOtHnaZwVmMcS9kSM6cjcn5rEzyfxHkXDxq872QWTqA==\.dd93968347d523c137c79f0260bfcabb\r\nX-Vercel-Id:\x20iad1::1765652327-nv0XuVsEdehe5pT1dtdNlD3U3P50tBZu\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2018:58:47\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;)%r(HTTPOptions,865C,&quot;HTTP/1\.0\x20403\x20Forbidden\r\nCache-Control:\x20private,\x20no-store,\x20max-age=0\r\nContent-Type:\x20text/html;\x20charset=utf-8\r\nServer:\x20Vercel\r\nX-Vercel-Challenge-Token:\x202\.1765652328\.60\.N2Y3ODUxMzc1M2I5ZjdiMWViNTllMDA1ZmJmOTAyYjU7ODQ0YjY1MzA7YjkzZjQ3MDIwZTYxMDFlMDA0Y2U0ZjJmZTJhOGRjODVhNWM3NmUxYjszO/QMWL8G\+k5sPhjAtuP15IAVpek4a0GN8vXdMZxMZe4DvE7Qx5cOKZRLtSwByRyJHC\+D5k28vyqT\+g==\.afb47f24213d49eb105c3e17417cd4ef\r\nX-Vercel-Id:\x20iad1::1765652328-82FzASenFneNvqyhVdkV4l7Ww5HXghny\r\nX-Vercel-Mitigated:\x20challenge\r\nDate:\x20Sat,\x2013\x20Dec\x202025\x2018:58:48\x20GMT\r\n\r\n&lt;!DOCTYPE\x20html&gt;&lt;html\x20lang=\&quot;en\&quot;\x20data-astro-cid-nbv56vs3&gt;\x20&lt;head&gt;&lt;meta\x20charset=\&quot;utf-8\&quot;&gt;&lt;meta\x20name=\&quot;viewport\&quot;\x20content=\&quot;width=device-width,\x20initial-scale=1\&quot;&gt;&lt;meta\x20name=\&quot;theme-color\&quot;\x20content=\&quot;#000\&quot;&gt;&lt;title&gt;Vercel\x20Security\x20Checkpoint&lt;/title&gt;&lt;style&gt;\.spinner\[data-astro-cid-jlpqxutv\]{display:flex;flex-direction:column;justify-content:center;align-items:center}\.spinner-circle\[data-&quot;);" tunnel="ssl" method="probed" conf="10"/></port>
+<port protocol="tcp" portid="444"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="snpp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="445"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="microsoft-ds" method="table" conf="3"/></port>
+<port protocol="tcp" portid="465"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="smtps" method="table" conf="3"/></port>
+<port protocol="tcp" portid="513"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="login" method="table" conf="3"/></port>
+<port protocol="tcp" portid="514"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="515"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="printer" method="table" conf="3"/></port>
+<port protocol="tcp" portid="543"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="klogin" method="table" conf="3"/></port>
+<port protocol="tcp" portid="544"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="kshell" method="table" conf="3"/></port>
+<port protocol="tcp" portid="548"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="afp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="554"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="587"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="631"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="646"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ldp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="873"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="rsync" method="table" conf="3"/></port>
+<port protocol="tcp" portid="990"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ftps" method="table" conf="3"/></port>
+<port protocol="tcp" portid="993"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="995"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="pop3s" method="table" conf="3"/></port>
+<port protocol="tcp" portid="1025"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="NFS-or-IIS" method="table" conf="3"/></port>
+<port protocol="tcp" portid="1026"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="1027"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="IIS" method="table" conf="3"/></port>
+<port protocol="tcp" portid="1028"><state state="open" reason="syn-ack" reason_ttl="0"/></port>
+<port protocol="tcp" portid="1029"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="1110"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="1433"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ms-sql-s" method="table" conf="3"/></port>
+<port protocol="tcp" portid="1720"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="h323q931" method="table" conf="3"/></port>
+<port protocol="tcp" portid="1723"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="1755"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="1900"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="upnp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="2000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="cisco-sccp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="2001"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="2049"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="nfs" method="table" conf="3"/></port>
+<port protocol="tcp" portid="2121"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="2717"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="3000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="ppp" method="table" conf="3"/></port>
+<port protocol="tcp" portid="3128"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="squid-http" method="table" conf="3"/></port>
+<port protocol="tcp" portid="3306"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="3389"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="3986"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="mapper-ws_ethd" method="table" conf="3"/></port>
+<port protocol="tcp" portid="4899"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5009"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5051"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5060"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5101"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="admdog" method="table" conf="3"/></port>
+<port protocol="tcp" portid="5190"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5357"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="wsdapi" method="table" conf="3"/></port>
+<port protocol="tcp" portid="5432"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="postgresql" method="table" conf="3"/></port>
+<port protocol="tcp" portid="5631"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5666"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="nrpe" method="table" conf="3"/></port>
+<port protocol="tcp" portid="5800"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="5900"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="vnc" method="table" conf="3"/></port>
+<port protocol="tcp" portid="6000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="X11" method="table" conf="3"/></port>
+<port protocol="tcp" portid="6001"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="X11:1" method="table" conf="3"/></port>
+<port protocol="tcp" portid="6646"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="7070"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="realserver" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http-alt" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8008"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8009"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="8080"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="http-proxy" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8081"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="8443"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="https-alt" method="table" conf="3"/></port>
+<port protocol="tcp" portid="8888"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="sun-answerbook" method="table" conf="3"/></port>
+<port protocol="tcp" portid="9100"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="jetdirect" method="table" conf="3"/></port>
+<port protocol="tcp" portid="9999"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="abyss" method="table" conf="3"/></port>
+<port protocol="tcp" portid="10000"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="snet-sensor-mgmt" method="table" conf="3"/></port>
+<port protocol="tcp" portid="32768"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="filenet-tms" method="table" conf="3"/></port>
+<port protocol="tcp" portid="49152"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="49153"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="49154"><state state="open" reason="syn-ack" reason_ttl="0"/><service name="tcpwrapped" method="probed" conf="8"/></port>
+<port protocol="tcp" portid="49155"><state state="open" reason="syn-ack" reason_ttl="0"/></port>
+<port protocol="tcp" portid="49156"><state state="open" reason="syn-ack" reason_ttl="0"/></port>
+<port protocol="tcp" portid="49157"><state state="open" reason="syn-ack" reason_ttl="0"/></port>
+</ports>
+<times srtt="65511" rttvar="52638" to="276063"/>
+</host>
+<runstats><finished time="1765652456" timestr="Sat Dec 13 14:00:56 2025" summary="Nmap done at Sat Dec 13 14:00:56 2025; 1 IP address (1 host up) scanned in 216.91 seconds" elapsed="216.91" exit="success"/><hosts up="1" down="0" total="1"/>
+</runstats>
+</nmaprun>
