@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     
     # Execution Configuration
     EXECUTION_ADAPTER: str = os.getenv("EXECUTION_ADAPTER", "local")  # local or remote
-    MAX_CONCURRENT_STEPS: int = int(os.getenv("MAX_CONCURRENT_STEPS", "5"))
-    MAX_INFLIGHT_PER_SESSION: int = int(os.getenv("MAX_INFLIGHT_PER_SESSION", "2"))
+    MAX_CONCURRENT_STEPS: int = int(os.getenv("MAX_CONCURRENT_STEPS", "20"))
+    MAX_INFLIGHT_PER_SESSION: int = int(os.getenv("MAX_INFLIGHT_PER_SESSION", "100"))
     
     # Tool Execution
     TOOLS_BASE_DIR: str = os.getenv("TOOLS_BASE_DIR", os.path.expanduser("~"))

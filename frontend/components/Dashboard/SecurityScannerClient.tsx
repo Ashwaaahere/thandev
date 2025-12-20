@@ -162,7 +162,7 @@ export default function SecurityScannerClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session?.user} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />

@@ -40,10 +40,10 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
     ScanLevel.PRO: [
         {"key": "httpx", "enabled": True, "intensity": "medium"},
         {"key": "nuclei", "enabled": True, "profile": "pro_web"},
-        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-pro.txt", "timeout_seconds": 900},
+        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-pro.txt", "timeout_seconds": 300},
         {"key": "nmap", "enabled": True, "profile": "top_ports"},
         {"key": "sslscan", "enabled": True},
-        {"key": "dalfox", "enabled": True, "timeout_seconds": 900},
+        {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
     ],
     ScanLevel.ADVANCED: [
         {"key": "httpx", "enabled": True, "intensity": "high"},

@@ -90,6 +90,7 @@ async def create_session(
         total_runtime_sec=0.0,
         consecutive_failures=0,
         no_new_findings_iterations=0,
+        executed_step_ids=[],
         created_at=now,
         last_updated=now,
     )

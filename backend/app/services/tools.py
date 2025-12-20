@@ -4,6 +4,7 @@ Handles execution of various security scanning tools
 """
 import logging
 import subprocess
+import asyncio
 import os
 import json
 from pathlib import Path
@@ -32,6 +33,15 @@ if TYPE_CHECKING:
 # Initialize logger after PATH setup
 if 'logger' not in locals():
     logger = logging.getLogger(__name__)
+
+
+async def run_subprocess_async(*args, **kwargs):
+    """
+    Run subprocess.run() in a thread executor to avoid blocking the event loop.
+    This enables true parallel execution of tools.
+    """
+    return await asyncio.to_thread(subprocess.run, *args, **kwargs)
+
 
 # Nuclei profile to tags mapping
 # Maps profile names from tool_matrix to Nuclei -tags CLI argument
@@ -320,10 +330,27 @@ class ToolExecutor:
             elif mode_id == "aggressive":
                 internal["aggressiveness"] = "high"
         
-        # Pass through timeout if specified in constraints
+        # Set timeout: use reduced defaults (5 min for pro, 10 min for advanced)
+        # Override catalog max_timeout_sec with our optimized defaults
         constraints = mode_config.get("constraints", {})
-        if "max_timeout_sec" in constraints:
-            internal["timeout_seconds"] = constraints["max_timeout_sec"]
+        scan_level = self._infer_scan_level_from_mode(mode_id)
+        
+        # Use optimized timeouts: 300s (5 min) for pro, 600s (10 min) for advanced
+        # Only use catalog max_timeout if it's lower than our default (safety limit)
+        if tool_id == "ffuf":
+            # ffuf gets 5 min for pro, 10 min for advanced
+            default_timeout = 300 if scan_level.lower() == "pro" else 600
+        else:
+            # Other tools: 5 min default
+            default_timeout = 300
+        
+        catalog_max_timeout = constraints.get("max_timeout_sec")
+        if catalog_max_timeout and catalog_max_timeout < default_timeout:
+            # Use catalog max if it's lower (safety limit)
+            internal["timeout_seconds"] = catalog_max_timeout
+        else:
+            # Use our optimized default
+            internal["timeout_seconds"] = default_timeout
         
         return internal
     
@@ -528,7 +555,7 @@ class ToolExecutor:
         logger.info("Nuclei v3.4.10 command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -676,7 +703,7 @@ class ToolExecutor:
         cmd = ["nmap", "-oX", "-"] + scan_args + [hostname]
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -713,7 +740,7 @@ class ToolExecutor:
         cmd = ["sslscan", "--json", target]
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -854,7 +881,7 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -957,7 +984,7 @@ class ToolExecutor:
         Optional kwargs:
             wordlist: wordlist filename from tool config (e.g., "ffuf-pro.txt", "ffuf-advanced.txt")
                      If provided, will use wordlists/{wordlist} instead of default
-            timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
+            timeout_seconds: timeout in seconds (default: 300 for 5 minutes)
         """
         # Check if ffuf is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
@@ -1125,8 +1152,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -1154,7 +1181,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1269,7 +1296,7 @@ class ToolExecutor:
         Run Dalfox XSS scanner
         
         Optional kwargs:
-            timeout_seconds: timeout in seconds (default: 900 for Pro, 1800 for Advanced)
+            timeout_seconds: timeout in seconds (default: 300 for Pro, 600 for Advanced)
         """
         # Check if dalfox is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
@@ -1324,8 +1351,8 @@ class ToolExecutor:
                 "timed_out": False,
             }
         
-        # Get timeout from config (default: 900 for Pro, 1800 for Advanced)
-        default_timeout = 900 if scan_level.lower() == "pro" else 1800
+        # Get timeout from config (default: 300 for Pro, 600 for Advanced)
+        default_timeout = 300 if scan_level.lower() == "pro" else 600
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # Dalfox command flags:
@@ -1352,7 +1379,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout)
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1458,38 +1485,45 @@ class ToolExecutor:
         """
         Run sqlmap SQL injection scanner
         
+        Automatically detects and tests both GET and POST parameters:
+        - Uses --forms flag to auto-detect and test POST forms (e.g., login.php)
+        - Uses --crawl=2 to discover parameters if forms are not detected
+        - This allows detection of SQL injection in POST-based login forms
+        
         Optional kwargs:
-            timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
+            timeout_seconds: timeout in seconds (default: 300 for 5 minutes)
             profile: profile name (e.g., "sqli_light") - currently not used but available
         """
         # Check if sqlmap is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info(f"Checking sqlmap availability for scan {scan_job_id}")
         
-        try:
-            check_result = subprocess.run(
-                ["sqlmap", "--version"],
-                capture_output=True,
-                timeout=5,
-                text=True
-            )
-            if check_result.returncode != 0:
-                raise FileNotFoundError("sqlmap command failed")
-            logger.info(f"sqlmap binary found for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
-        except FileNotFoundError:
-            error_msg = "sqlmap binary not found in PATH. Please install sqlmap: pip install sqlmap or download from https://github.com/sqlmapproject/sqlmap"
-            logger.error(f"sqlmap binary not found for scan {scan_job_id}")
-            return {
-                "tool_name": "sqlmap",
-                "output": "",
-                "exit_code": -1,
-                "error": error_msg,
-                "command": "sqlmap --version",
-                "timed_out": False,
-            }
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-            error_msg = f"sqlmap binary check failed: {str(e)}"
-            logger.error(f"sqlmap binary check error for scan {scan_job_id}: {error_msg}")
+        # Try to find sqlmap in common locations
+        sqlmap_path = None
+        possible_paths = [
+            "sqlmap",  # In PATH
+            str(Path(__file__).parent.parent.parent / ".venv" / "bin" / "sqlmap"),  # Backend venv
+            str(Path(__file__).parent.parent.parent.parent / "backend" / ".venv" / "bin" / "sqlmap"),  # From runner
+        ]
+        
+        for path in possible_paths:
+            try:
+                check_result = subprocess.run(
+                    [path, "--version"],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if check_result.returncode == 0:
+                    sqlmap_path = path
+                    logger.info(f"sqlmap binary found at {path} for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                continue
+        
+        if not sqlmap_path:
+            error_msg = "sqlmap binary not found. Please install sqlmap: pip install sqlmap or download from https://github.com/sqlmapproject/sqlmap"
+            logger.error(f"sqlmap binary not found for scan {scan_job_id} (checked: {possible_paths})")
             return {
                 "tool_name": "sqlmap",
                 "output": "",
@@ -1499,8 +1533,8 @@ class ToolExecutor:
                 "timed_out": False,
             }
         
-        # Get timeout from kwargs or default to 900 seconds (15 minutes)
-        timeout = kwargs.get("timeout_seconds", 900)
+        # Get timeout from kwargs or default to 300 seconds (5 minutes)
+        timeout = kwargs.get("timeout_seconds", 300)
         
         # Get output directory from kwargs (scan_job_dir)
         scan_job_dir = kwargs.get("scan_job_dir")
@@ -1525,24 +1559,33 @@ class ToolExecutor:
         # --random-agent: use random User-Agent
         # -v 0: verbosity level 0 (minimal output)
         # --output-dir: directory for output files
+        # --forms: auto-detect and test forms (POST parameters)
+        # --crawl=2: crawl depth 2 to discover parameters if no forms found
         cmd = [
-            "sqlmap",
+            sqlmap_path,  # Use found sqlmap path
             "-u", target_url,
-            "--batch",
+            "--batch",  # Non-interactive mode (auto-answers most prompts)
             "--risk=1",
             "--level=1",
             "--timeout=10",
             "--time-sec=5",
             "--random-agent",
             "-v", "0",
+            "--forms",  # Auto-detect and test POST forms (e.g., login.php)
+            # Note: --crawl removed as it causes too many prompts; --forms is sufficient
             "--output-dir", str(sqlmap_output_dir),
         ]
+        
+        # Prepare stdin responses for remaining prompts that --batch doesn't handle
+        # Format: answers for common prompts (sitemap=N, threads=1, normalize=Y, store=N, test=Y, fill=Y, skip=Y, extend=Y)
+        stdin_input = "N\n1\nY\nN\nY\nY\nY\nY\n"
         
         logger.info("sqlmap command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
+                input=stdin_input,  # Pass stdin to handle remaining prompts
                 capture_output=True,
                 text=True,
                 timeout=timeout,
@@ -1662,7 +1705,7 @@ class ToolExecutor:
         cmd = ["sslscan", "--json", target]
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1803,7 +1846,7 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1906,7 +1949,7 @@ class ToolExecutor:
         Optional kwargs:
             wordlist: wordlist filename from tool config (e.g., "ffuf-pro.txt", "ffuf-advanced.txt")
                      If provided, will use wordlists/{wordlist} instead of default
-            timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
+            timeout_seconds: timeout in seconds (default: 300 for 5 minutes)
         """
         # Check if ffuf is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
@@ -2074,8 +2117,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -2103,7 +2146,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2219,7 +2262,7 @@ class ToolExecutor:
         cmd = ["sslscan", "--json", target]
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2360,7 +2403,7 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2463,7 +2506,7 @@ class ToolExecutor:
         Optional kwargs:
             wordlist: wordlist filename from tool config (e.g., "ffuf-pro.txt", "ffuf-advanced.txt")
                      If provided, will use wordlists/{wordlist} instead of default
-            timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
+            timeout_seconds: timeout in seconds (default: 300 for 5 minutes)
         """
         # Check if ffuf is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
@@ -2631,8 +2674,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -2660,7 +2703,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2776,7 +2819,7 @@ class ToolExecutor:
         cmd = ["sslscan", "--json", target]
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2917,7 +2960,7 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,
@@ -3020,7 +3063,7 @@ class ToolExecutor:
         Optional kwargs:
             wordlist: wordlist filename from tool config (e.g., "ffuf-pro.txt", "ffuf-advanced.txt")
                      If provided, will use wordlists/{wordlist} instead of default
-            timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
+            timeout_seconds: timeout in seconds (default: 300 for 5 minutes)
         """
         # Check if ffuf is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
@@ -3188,8 +3231,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -3217,7 +3260,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await run_subprocess_async(
                 cmd,
                 capture_output=True,
                 text=True,

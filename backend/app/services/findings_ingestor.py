@@ -1770,11 +1770,12 @@ def parse_sqlmap_output(output_dir: Path) -> List[Dict[str, Any]]:
         return []
     
     # sqlmap creates CSV files with results
-    # Look for CSV files in the output directory
-    csv_files = list(output_dir.glob("*.csv"))
+    # Look for CSV files recursively in the output directory and subdirectories
+    # sqlmap may create subdirectories per host (e.g., output_dir/hostname/results.csv)
+    csv_files = list(output_dir.rglob("*.csv"))  # Recursive search
     
     if not csv_files:
-        logger.info("No sqlmap CSV result files found in %s", output_dir)
+        logger.info("No sqlmap CSV result files found in %s (searched recursively)", output_dir)
         return []
     
     import csv
@@ -1791,17 +1792,31 @@ def parse_sqlmap_output(output_dir: Path) -> List[Dict[str, Any]]:
                 reader = csv.DictReader(f, delimiter=delimiter)
                 for row in reader:
                     # Extract relevant fields from CSV row
-                    # sqlmap CSV typically has: url, parameter, title, payload, etc.
-                    url = row.get("url", "") or row.get("target", "")
-                    parameter = row.get("parameter", "") or row.get("Parameter", "")
-                    title = row.get("title", "") or row.get("Title", "")
-                    payload = row.get("payload", "") or row.get("Payload", "")
-                    dbms = row.get("dbms", "") or row.get("DBMS", "") or row.get("database", "")
+                    # sqlmap CSV format: "Target URL", "Place", "Parameter", "Technique(s)", "Note(s)"
+                    # Try multiple possible column name variations (case-insensitive matching)
+                    url = (row.get("Target URL", "") or row.get("target url", "") or 
+                           row.get("url", "") or row.get("target", ""))
+                    parameter = (row.get("Parameter", "") or row.get("parameter", "") or 
+                               row.get("Param", "") or row.get("param", ""))
+                    place = (row.get("Place", "") or row.get("place", ""))  # POST, GET, etc.
+                    techniques = (row.get("Technique(s)", "") or row.get("Technique", "") or 
+                                row.get("technique(s)", "") or row.get("technique", ""))
+                    notes = (row.get("Note(s)", "") or row.get("Note", "") or 
+                            row.get("note(s)", "") or row.get("note", ""))
+                    # For older formats or variations
+                    title = (row.get("title", "") or row.get("Title", "") or 
+                            row.get("Type", "") or row.get("type", "") or techniques)
+                    payload = (row.get("payload", "") or row.get("Payload", "") or 
+                              row.get("Payload(s)", "") or notes)
+                    dbms = (row.get("dbms", "") or row.get("DBMS", "") or 
+                           row.get("database", "") or row.get("Database", ""))
                     
                     if url or parameter:
                         results.append({
                             "url": url,
                             "parameter": parameter,
+                            "place": place,  # POST, GET, etc.
+                            "techniques": techniques,  # Injection techniques detected
                             "title": title,
                             "payload": payload,
                             "dbms": dbms,
@@ -1814,8 +1829,8 @@ def parse_sqlmap_output(output_dir: Path) -> List[Dict[str, Any]]:
             )
             continue
     
-    # Also check for JSON files if available
-    json_files = list(output_dir.glob("*.json"))
+    # Also check for JSON files if available (recursive search)
+    json_files = list(output_dir.rglob("*.json"))
     for json_file in json_files:
         try:
             with open(json_file, 'r', encoding='utf-8') as f:

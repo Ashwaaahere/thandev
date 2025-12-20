@@ -24,7 +24,7 @@ export default function HistoryClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session ? session.user : undefined} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />
@@ -59,7 +59,7 @@ export default function HistoryClient() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <DashboardHeader 
-          user={session ? session.user : undefined} 
+          user={session?.user} 
           onMenuClick={() => setSidebarOpen(true)}
           showLogo={sidebarOpen}
         />
@@ -112,7 +112,7 @@ export default function HistoryClient() {
             {/* Tab Content */}
             <div>
               {activeTab === 'security' ? (
-                <ScanHistoryContent user={session ? session.user : undefined} session={session} />
+                <ScanHistoryContent user={session?.user} session={session} />
               ) : (
                 <PerformanceHistoryContent />
               )}

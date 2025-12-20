@@ -290,6 +290,58 @@ class BrainClient:
             logger.error(f"Unexpected error calling brain service: {e}", exc_info=True)
             raise
     
+    async def stop_session(
+        self,
+        session_id: str,
+        org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Stop a running brain session.
+        
+        Args:
+            session_id: Session ID
+            org_id: Organization ID (optional)
+            project_id: Project ID (optional)
+            
+        Returns:
+            Dict with stop result
+            
+        Raises:
+            httpx.HTTPError: If request fails
+        """
+        endpoint = f"{self.base_url}/v1/sessions/{session_id}/stop"
+        
+        params = {}
+        if org_id:
+            params["org_id"] = org_id
+        if project_id:
+            params["project_id"] = project_id
+        
+        logger.info(f"Stopping brain session {session_id}: {endpoint}")
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    endpoint,
+                    params=params,
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"Brain session {session_id} stopped: {data.get('status')}")
+                return data
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Brain service returned error: {e.response.status_code} - {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Failed to connect to brain service: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error calling brain service: {e}", exc_info=True)
+            raise
+    
     async def ingest_documents(
         self,
         findings: Optional[List[Dict[str, Any]]] = None,

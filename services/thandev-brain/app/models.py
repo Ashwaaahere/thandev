@@ -191,6 +191,7 @@ class SessionState(BaseModel):
     total_runtime_sec: float = Field(default=0.0, ge=0.0, description="Total runtime in seconds")
     consecutive_failures: int = Field(default=0, ge=0, description="Consecutive step failures")
     no_new_findings_iterations: int = Field(default=0, ge=0, description="Iterations with no new findings")
+    executed_step_ids: List[str] = Field(default_factory=list, description="List of step IDs that have been executed")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Session creation time")
     last_updated: datetime = Field(default_factory=datetime.utcnow, description="Last update time")
     

@@ -4,6 +4,7 @@ Celery tasks for step execution
 import logging
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Dict, Any, List
 
@@ -46,6 +47,39 @@ async def process_step_request(message: Dict[str, Any]) -> None:
         await ack_step_request(settings.CONSUMER_GROUP, message_id)
         return
     
+    # Check if session is stopped/cancelled before executing
+    try:
+        from app.queue.streams import get_redis_client
+        redis_client = get_redis_client()
+        
+        # Try to get session state from Redis
+        # Session key format: session:org_id:project_id:session_id
+        # Use org_id and project_id from message for exact key lookup (more efficient)
+        session_data = None
+        if org_id and project_id:
+            # Use exact key (fast)
+            session_key = f"session:{org_id}:{project_id}:{session_id}"
+            session_data = redis_client.get(session_key)
+        # Note: If org_id/project_id not available, skip status check and proceed
+        # This is acceptable because the session will be checked again after slot acquisition
+        # and the runner will handle gracefully if session is stopped
+        
+        if session_data:
+            session_state = json.loads(session_data)
+            session_status = session_state.get("status", "unknown")
+            
+            # Status is stored as lowercase enum value ("running", "completed", "failed", "stopped")
+            if session_status != "running":
+                logger.info(
+                    f"Session {session_id} is {session_status}, skipping step {step_id}. "
+                    f"Session may have been stopped/cancelled."
+                )
+                await ack_step_request(settings.CONSUMER_GROUP, message_id)
+                return
+    except Exception as e:
+        logger.warning(f"Failed to check session status for {session_id}: {e}. Continuing with step execution.")
+        # Continue execution if we can't check status (fail open)
+    
     # Per-session concurrency control: acquire slot
     if not await acquire_session_slot(session_id):
         logger.info(
@@ -73,8 +107,8 @@ async def process_step_request(message: Dict[str, Any]) -> None:
         return
     
     # Wrap main execution in try/finally for cleanup
-    import time
     start_time = time.time()
+    MAX_EXECUTION_TIME_SEC = getattr(settings, "MAX_STEP_EXECUTION_TIME_SEC", 3600)  # Default 1 hour
     
     try:
         logger.info(
@@ -222,36 +256,60 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         parse_httpx_output,
                         parse_ffuf_output,
                         parse_dalfox_output,
+                        parse_sqlmap_output,
                         ingest_nuclei_findings,
                         ingest_nmap_findings,
                         ingest_httpx_findings,
                         ingest_ffuf_findings,
                         ingest_dalfox_findings,
+                        ingest_sqlmap_findings,
                     )
                     
                     baseline_filter = result.get("baseline")  # For ffuf
                     
-                    if output_file and output_file.exists():
-                        if tool_name == "nuclei":
-                            findings = parse_nuclei_output(output_file)
-                            ingested = ingest_nuclei_findings(db, scan_job_id, findings)
-                            findings_count = len(ingested)
-                        elif tool_name == "nmap":
-                            findings = parse_nmap_output(output_file)
-                            ingested = ingest_nmap_findings(db, scan_job_id, findings)
-                            findings_count = len(ingested)
-                        elif tool_name == "httpx":
-                            findings = parse_httpx_output(output_file)
-                            ingested = ingest_httpx_findings(db, scan_job_id, findings)
-                            findings_count = len(ingested)
-                        elif tool_name == "ffuf":
-                            findings = parse_ffuf_output(output_file, baseline_filter=baseline_filter)
-                            ingested = ingest_ffuf_findings(db, scan_job_id, findings)
-                            findings_count = len(ingested)
-                        elif tool_name == "dalfox":
-                            findings = parse_dalfox_output(output_file)
-                            ingested = ingest_dalfox_findings(db, scan_job_id, findings)
-                            findings_count = len(ingested)
+                    findings = None
+                    try:
+                        # sqlmap outputs to a directory, not a single file
+                        if tool_name == "sqlmap":
+                            output_dir = result.get("output_dir")
+                            if output_dir:
+                                output_dir_path = Path(output_dir)
+                                # Resolve to absolute path if relative
+                                if not output_dir_path.is_absolute():
+                                    output_dir_path = output_dir_path.resolve()
+                                if output_dir_path.exists() and output_dir_path.is_dir():
+                                    findings = parse_sqlmap_output(output_dir_path) or []
+                                    ingest_sqlmap_findings(db, scan_job_id, findings)
+                                    logger.info(f"Parsed {len(findings)} sqlmap findings from {output_dir_path}")
+                                else:
+                                    logger.warning(f"sqlmap output_dir does not exist: {output_dir_path}")
+                            else:
+                                logger.warning("sqlmap result missing output_dir field")
+                        elif output_file and output_file.exists():
+                            if tool_name == "nuclei":
+                                findings = parse_nuclei_output(output_file) or []
+                                ingest_nuclei_findings(db, scan_job_id, findings)
+                            elif tool_name == "nmap":
+                                findings = parse_nmap_output(output_file) or []
+                                ingest_nmap_findings(db, scan_job_id, findings)
+                            elif tool_name == "httpx":
+                                findings = parse_httpx_output(output_file) or []
+                                ingest_httpx_findings(db, scan_job_id, findings)
+                            elif tool_name == "ffuf":
+                                findings = parse_ffuf_output(output_file, baseline_filter=baseline_filter) or []
+                                ingest_ffuf_findings(db, scan_job_id, findings)
+                            elif tool_name == "dalfox":
+                                findings = parse_dalfox_output(output_file) or []
+                                ingest_dalfox_findings(db, scan_job_id, findings)
+                        
+                        # Count findings safely
+                        if findings is not None:
+                            findings_count = len(findings)
+                        else:
+                            findings_count = 0
+                    except Exception as parse_err:
+                        logger.error(f"Failed to parse/ingest findings for {tool_name}: {parse_err}", exc_info=True)
+                        findings_count = 0
                 finally:
                     db.close()
             except Exception as e:
@@ -293,23 +351,43 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             f"findings={findings_count}, time={execution_time:.2f}s"
         )
     except Exception as e:
-        logger.error(f"Step {step_id} execution failed: {e}", exc_info=True)
+        logger.error(
+            f"Step {step_id} execution failed after {time.time() - start_time:.2f}s: {e}",
+            exc_info=True
+        )
         execution_time = time.time() - start_time if 'start_time' in locals() else 0.0
         
         # Publish error result
-        await publish_step_result(StepResult(
-            session_id=session_id,
-            step_id=step_id,
-            status="failed",
-            execution_time_sec=execution_time,
-            error=str(e),
-        ))
+        try:
+            await publish_step_result(StepResult(
+                session_id=session_id,
+                step_id=step_id,
+                status="failed",
+                execution_time_sec=execution_time,
+                error=str(e),
+                tool_id=tool_id,
+            ))
+        except Exception as pub_error:
+            logger.error(f"Failed to publish error result for step {step_id}: {pub_error}", exc_info=True)
     finally:
+        execution_time_total = time.time() - start_time
+        if execution_time_total > MAX_EXECUTION_TIME_SEC:
+            logger.warning(
+                f"Step {step_id} took {execution_time_total:.2f}s (exceeds max {MAX_EXECUTION_TIME_SEC}s)"
+            )
+        
         # Always release session slot, even on error
-        await release_session_slot(session_id)
+        try:
+            await release_session_slot(session_id)
+        except Exception as release_error:
+            logger.error(f"Failed to release session slot for {session_id}: {release_error}", exc_info=True)
         
         # Acknowledge message (even on error to avoid infinite retries)
-        await ack_step_request(settings.CONSUMER_GROUP, message_id)
+        try:
+            await ack_step_request(settings.CONSUMER_GROUP, message_id)
+            logger.debug(f"Acknowledged message {message_id} for step {step_id}")
+        except Exception as ack_error:
+            logger.error(f"Failed to acknowledge message {message_id}: {ack_error}", exc_info=True)
 
 
 async def run_worker_loop() -> None:
@@ -325,6 +403,10 @@ async def run_worker_loop() -> None:
         f"Starting runner worker (group={settings.CONSUMER_GROUP}, "
         f"name={settings.CONSUMER_NAME})"
     )
+    
+    iteration_count = 0
+    last_health_log = time.time()
+    HEALTH_LOG_INTERVAL = 300  # Log health every 5 minutes
     
     while True:
         try:
@@ -357,6 +439,17 @@ async def run_worker_loop() -> None:
             if tasks:
                 await asyncio.gather(*tasks, return_exceptions=True)
                 logger.info(f"Completed processing {len(tasks)} step request(s)")
+            
+            iteration_count += 1
+            
+            # Health check logging
+            current_time = time.time()
+            if current_time - last_health_log >= HEALTH_LOG_INTERVAL:
+                logger.info(
+                    f"Runner worker health check: {iteration_count} iterations completed, "
+                    f"worker={settings.CONSUMER_NAME}, group={settings.CONSUMER_GROUP}"
+                )
+                last_health_log = current_time
         
         except Exception as e:
             logger.error(f"Worker loop error: {e}", exc_info=True)
@@ -379,10 +472,6 @@ async def process_step_request_with_error_handling(message: Dict[str, Any]) -> N
             await ack_step_request(settings.CONSUMER_GROUP, message.get("id", ""))
         except Exception as ack_error:
             logger.error(f"Failed to acknowledge message: {ack_error}", exc_info=True)
-        
-        except Exception as e:
-            logger.error(f"Worker loop error: {e}", exc_info=True)
-            await asyncio.sleep(5)  # Wait before retrying
 
 
 if __name__ == "__main__":

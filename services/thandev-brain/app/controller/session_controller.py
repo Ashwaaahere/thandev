@@ -112,7 +112,8 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
         logger.info(f"Starting session loop for {session_id} (scan_job: {session_state.scan_job_id})")
         
         iteration = 0
-        while True:
+        MAX_ITERATIONS = 100  # Failsafe to prevent infinite loops
+        while iteration < MAX_ITERATIONS:
             iteration += 1
             logger.info(f"Session {session_id} iteration {iteration}")
             
@@ -180,9 +181,11 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                 
                 # Enqueue steps
                 step_ids = []
+                step_request_map = {}  # Map step_id -> StepRequest for later lookup
                 for step in next_steps:
                     if await publish_step_request(step):
                         step_ids.append(step.step_id)
+                        step_request_map[step.step_id] = step  # Store for later lookup
                         logger.info(f"Enqueued step {step.step_id} ({step.tool_id}/{step.mode_id}) for session {session_id}")
                 
                 if not step_ids:
@@ -191,15 +194,55 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                     continue
                 
                 # Wait for results
+                # Timeout to accommodate tool execution (max 5 minutes per tool, now 300s)
+                # Add buffer: 5 min max tool time + 2 min buffer = 7 minutes (420 seconds)
+                # This should be sufficient for 300s timeout tools
                 logger.info(f"Waiting for {len(step_ids)} step results for session {session_id}")
-                results = await read_step_results(session_id, step_ids, timeout_sec=600)
+                results = await read_step_results(session_id, step_ids, timeout_sec=420)
+                
+                # After reading results, check if session was stopped externally
+                # (runner may have skipped steps if session was stopped)
+                session_state = await get_session(org_id, project_id, session_id)
+                if session_state and session_state.status != SessionStatus.RUNNING:
+                    logger.info(f"Session {session_id} was stopped externally (status: {session_state.status}) during result wait")
+                    # Create placeholder results for any missing steps
+                    # Use stored step_request_map to preserve tool_id and mode_id
+                    for step_id in step_ids:
+                        if step_id not in results:
+                            from app.queue.streams import StepResult
+                            step_request = step_request_map.get(step_id)
+                            # Preserve tool_id from original step request for proper tracking
+                            tool_id = step_request.tool_id if step_request else None
+                            results[step_id] = StepResult(
+                                session_id=session_id,
+                                step_id=step_id,
+                                status="failed",
+                                execution_time_sec=0.0,
+                                findings_count=0,
+                                error=f"Step cancelled - session was stopped ({session_state.status.value})",
+                                tool_id=tool_id,  # Preserve tool_id for tracking
+                            )
+                    # Update session state with any results we got before the stop
+                    await update_session_from_results(
+                        org_id,
+                        project_id,
+                        session_id,
+                        results,
+                        step_request_map=step_request_map,  # Use our local map instead of Redis lookup
+                    )
+                    # Break out of the loop immediately since session is stopped
+                    # The stop_reason_code should already be set correctly when the session was stopped
+                    logger.info(f"Session {session_id} loop ending due to external stop (status: {session_state.status})")
+                    break
                 
                 # Update session state
+                # Pass step_request_map to avoid Redis lookup and ensure accurate tracking
                 await update_session_from_results(
                     org_id,
                     project_id,
                     session_id,
                     results,
+                    step_request_map=step_request_map,  # Use our local map instead of Redis lookup
                 )
                 
                 # Ingest summaries to RAG
@@ -213,8 +256,22 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
             finally:
                 await release_session_lock(session_id)
             
-            # Small delay between iterations
-            await asyncio.sleep(1)
+            # Small delay between iterations (reduced for faster processing)
+            await asyncio.sleep(0.1)
+        
+        # If we exit the loop due to max iterations, stop the session
+        if iteration >= MAX_ITERATIONS:
+            logger.warning(f"Session {session_id} reached maximum iterations ({MAX_ITERATIONS}), stopping")
+            try:
+                await stop_session(
+                    org_id,
+                    project_id,
+                    session_id,
+                    SessionStatus.FAILED,
+                    StopReasonCode.BUDGET_EXCEEDED,
+                )
+            except Exception as stop_error:
+                logger.error(f"Failed to stop session after max iterations: {stop_error}")
     
     except Exception as e:
         logger.error(f"Session loop error for {session_id}: {e}", exc_info=True)
@@ -243,6 +300,11 @@ async def check_stop_conditions(
     Returns:
         Tuple of (should_stop, reason_code)
     """
+    # Check if session is already stopped FIRST - this takes priority over other conditions
+    # to preserve the original stop reason (e.g., USER_STOPPED, external stop)
+    if session_state.status != SessionStatus.RUNNING:
+        return True, session_state.stop_reason_code
+    
     # Check max steps
     if session_state.current_step_count >= settings.SESSION_MAX_STEPS:
         return True, StopReasonCode.BUDGET_EXCEEDED
@@ -258,10 +320,6 @@ async def check_stop_conditions(
     # Check no new findings iterations
     if session_state.no_new_findings_iterations >= settings.SESSION_NO_NEW_FINDINGS_ITERATIONS:
         return True, StopReasonCode.DIMINISHING_RETURNS
-    
-    # Check if session is already stopped
-    if session_state.status != SessionStatus.RUNNING:
-        return True, session_state.stop_reason_code
     
     return False, None
 
@@ -324,9 +382,25 @@ async def decide_next_steps(
         )
         
         # Convert plan steps to StepRequest objects
-        # For now, return all steps (in future, filter by what's already done)
+        # Filter out steps that have already been executed using step signatures
+        # Since StepRequest generates new UUID step_ids each time, we track by signature
+        # (tool_id:mode_id:params_hash) instead
+        import json
+        import hashlib
+        
+        executed_signatures = set(session_state.executed_step_ids or [])
         steps = []
+        
         for plan_step in plan.steps:
+            # Create signature for this plan step based on tool_id, mode_id, and params
+            params_json = json.dumps(plan_step.params, sort_keys=True) if plan_step.params else "{}"
+            signature = f"{plan_step.tool_id}:{plan_step.mode_id}:{hashlib.md5(params_json.encode()).hexdigest()[:8]}"
+            
+            # Skip if this signature is already in executed_step_ids
+            if signature in executed_signatures:
+                logger.debug(f"Skipping already-executed step: {signature} ({plan_step.tool_id}/{plan_step.mode_id})")
+                continue
+            
             step_request = StepRequest(
                 session_id=session_state.session_id,
                 tool_id=plan_step.tool_id,
@@ -341,6 +415,9 @@ async def decide_next_steps(
             )
             steps.append(step_request)
         
+        if not steps:
+            logger.info(f"All steps have been executed for session {session_state.session_id}")
+        
         return steps
         
     except Exception as e:
@@ -353,9 +430,19 @@ async def update_session_from_results(
     project_id: Optional[str],
     session_id: str,
     results: Dict[str, "StepResult"],
+    step_request_map: Optional[Dict[str, StepRequest]] = None,
 ) -> None:
     """
     Update session state based on step results.
+    
+    Args:
+        org_id: Organization ID
+        project_id: Project ID
+        session_id: Session ID
+        results: Dictionary of step_id -> StepResult
+        step_request_map: Optional map of step_id -> StepRequest. If provided, uses this
+                         instead of looking up from Redis stream. This ensures accurate
+                         tracking especially for cancelled steps.
     """
     if not results:
         return
@@ -389,6 +476,96 @@ async def update_session_from_results(
         updates["no_new_findings_iterations"] = session_state.no_new_findings_iterations + 1
     else:
         updates["no_new_findings_iterations"] = 0
+
+    # Track executed step signatures for filtering in decide_next_steps()
+    # Use step_request_map if provided, otherwise fall back to Redis lookup
+    import json
+    import hashlib
+    from app.session.state import get_redis_client
+    from app.queue.streams import STREAM_STEP_REQUESTS
+    
+    executed_signatures = list(session_state.executed_step_ids or [])
+    
+    # Build step request data map
+    step_request_data_map = {}
+    
+    if step_request_map:
+        # Use provided step_request_map (more reliable, especially for cancelled steps)
+        for step_id, step_request in step_request_map.items():
+            if step_id in results:
+                step_request_data_map[step_id] = {
+                    "mode_id": step_request.mode_id,
+                    "params": step_request.params,
+                    "tool_id": step_request.tool_id,
+                }
+    else:
+        # Fallback: lookup from Redis stream
+        redis_client = get_redis_client()
+        step_ids_to_lookup = [step_result.step_id for step_result in results.values()]
+        
+        try:
+            stream_data = redis_client.xrevrange(STREAM_STEP_REQUESTS, count=5000)
+            for msg_id, msg_data in stream_data:
+                step_id = msg_data.get("step_id")
+                if step_id in step_ids_to_lookup and step_id not in step_request_data_map:
+                    step_request_data_map[step_id] = msg_data
+        except Exception as e:
+            logger.warning(f"Failed to read step requests from stream: {e}", exc_info=True)
+    
+    for step_result in results.values():
+        # Get step request data (mode_id and params) to create signature
+        try:
+            step_data = step_request_data_map.get(step_result.step_id)
+            
+            if step_data:
+                # Extract mode_id and params
+                if isinstance(step_data, dict) and "mode_id" in step_data:
+                    # From step_request_map (StepRequest object converted to dict)
+                    mode_id = step_data.get("mode_id")
+                    params = step_data.get("params", {})
+                    tool_id = step_data.get("tool_id") or step_result.tool_id
+                else:
+                    # From Redis stream (string format)
+                    mode_id = step_data.get("mode_id")
+                    params_str = step_data.get("params", "{}")
+                    try:
+                        params = json.loads(params_str) if params_str else {}
+                    except json.JSONDecodeError:
+                        params = {}
+                    tool_id = step_result.tool_id
+                
+                # Create signature (same format as in decide_next_steps)
+                if mode_id and tool_id:
+                    params_json = json.dumps(params, sort_keys=True) if params else "{}"
+                    signature = f"{tool_id}:{mode_id}:{hashlib.md5(params_json.encode()).hexdigest()[:8]}"
+                    
+                    # Add signature if not already in list
+                    if signature not in executed_signatures:
+                        executed_signatures.append(signature)
+                        logger.info(f"Tracked executed step signature: {signature} (step_id: {step_result.step_id}, tool: {tool_id}, mode: {mode_id})")
+                    else:
+                        logger.debug(f"Signature already tracked: {signature} (step_id: {step_result.step_id})")
+                else:
+                    logger.warning(f"Missing tool_id or mode_id for step {step_result.step_id}: tool_id={tool_id}, mode_id={mode_id}")
+            else:
+                logger.warning(f"Original step request not found for step_id {step_result.step_id}. Cannot track signature precisely.")
+                # Fallback: use tool_id only (less precise but prevents some duplicates)
+                if step_result.tool_id:
+                    # Use a generic signature that will prevent re-execution of the same tool
+                    # This is a fallback, so we'll be more conservative
+                    signature = f"{step_result.tool_id}:*:*"
+                    if signature not in executed_signatures:
+                        # Only add if we don't already have any signature for this tool
+                        tool_has_signature = any(sig.startswith(f"{step_result.tool_id}:") for sig in executed_signatures)
+                        if not tool_has_signature:
+                            executed_signatures.append(signature)
+                            logger.info(f"Tracked fallback signature: {signature} (step_id: {step_result.step_id})")
+        except Exception as e:
+            logger.warning(f"Failed to create signature for step {step_result.step_id}: {e}", exc_info=True)
+    
+    if executed_signatures != (session_state.executed_step_ids or []):
+        updates["executed_step_ids"] = executed_signatures
+        logger.info(f"Updated executed_step_ids: {len(executed_signatures)} signatures tracked for session {session_id}")
 
     await update_session(org_id, project_id, session_id, updates)
 

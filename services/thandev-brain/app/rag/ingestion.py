@@ -1,6 +1,7 @@
 """
 Document ingestion utilities for RAG
 """
+import asyncio
 import logging
 import uuid
 from typing import List, Dict, Any, Optional
@@ -270,6 +271,7 @@ async def query_rag_lanes(
 ) -> Dict[str, List[Dict[str, Any]]]:
     """
     Query RAG store across multiple "lanes" (document types).
+    All queries run in parallel for better performance.
     
     Retrieval lanes:
     - latest_findings: Recent findings for this project/target
@@ -291,6 +293,9 @@ async def query_rag_lanes(
     """
     lanes = {}
     
+    # Prepare all query tasks for parallel execution
+    tasks = []
+    
     # Lane 1: Latest findings
     if not doc_types or "finding" in doc_types:
         filters = {"doc_type": "finding"}
@@ -301,12 +306,11 @@ async def query_rag_lanes(
         if target:
             filters["target"] = target
         
-        findings = await rag_store.query(
+        tasks.append(("latest_findings", rag_store.query(
             query_text=query_text,
             filters=filters,
             top_k=top_k_per_lane,
-        )
-        lanes["latest_findings"] = findings
+        )))
     
     # Lane 2: Tech fingerprint
     if not doc_types or "tech_fingerprint" in doc_types:
@@ -314,23 +318,21 @@ async def query_rag_lanes(
         if target:
             filters["target"] = target
         
-        tech = await rag_store.query(
+        tasks.append(("tech_fingerprint", rag_store.query(
             query_text=query_text,
             filters=filters,
             top_k=top_k_per_lane,
-        )
-        lanes["tech_fingerprint"] = tech
+        )))
     
     # Lane 3: CVE templates
     if not doc_types or "cve_template" in doc_types:
         filters = {"doc_type": "cve_template"}
         
-        cves = await rag_store.query(
+        tasks.append(("cve_templates", rag_store.query(
             query_text=query_text,
             filters=filters,
             top_k=top_k_per_lane,
-        )
-        lanes["cve_templates"] = cves
+        )))
     
     # Lane 4: Artifact summaries
     if not doc_types or "artifact_summary" in doc_types:
@@ -342,12 +344,26 @@ async def query_rag_lanes(
         if target:
             filters["target"] = target
         
-        artifacts = await rag_store.query(
+        tasks.append(("artifact_summaries", rag_store.query(
             query_text=query_text,
             filters=filters,
             top_k=top_k_per_lane,
+        )))
+    
+    # Execute all queries in parallel
+    if tasks:
+        results = await asyncio.gather(
+            *[task[1] for task in tasks],
+            return_exceptions=True
         )
-        lanes["artifact_summaries"] = artifacts
+        
+        # Map results back to lane names with error handling
+        for (lane_name, _), result in zip(tasks, results):
+            if isinstance(result, Exception):
+                logger.warning(f"RAG query failed for {lane_name}: {result}", exc_info=True)
+                lanes[lane_name] = []
+            else:
+                lanes[lane_name] = result
     
     return lanes
 
