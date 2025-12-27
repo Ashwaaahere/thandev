@@ -215,20 +215,16 @@ async def get_dashboard_overview(
     # Average security score
     # For completed scans with risk_score, convert to score = 100 - risk_score
     try:
-        if has_scan_level:
+        # Try to fetch completed scans - if it fails due to missing columns, return empty
+        try:
             completed_scans = (
                 scans_query
                 .filter(ScanJob.status == ScanStatus.COMPLETED)
                 .all()
             )
-        else:
-            # If scan_level doesn't exist, query only columns that exist
-            completed_scans = (
-                scans_query
-                .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary, ScanJob.project_id, ScanJob.created_at, ScanJob.completed_at)
-                .filter(ScanJob.status == ScanStatus.COMPLETED)
-                .all()
-            )
+        except Exception as fetch_error:
+            logger.warning(f"Error fetching completed scans, likely due to missing columns: {fetch_error}")
+            completed_scans = []
     except Exception as e:
         logger.error(f"Error fetching completed scans: {type(e).__name__}: {str(e)}", exc_info=True)
         completed_scans = []
@@ -258,7 +254,8 @@ async def get_dashboard_overview(
     # Use joinedload to avoid N+1 queries
     from sqlalchemy.orm import joinedload
     try:
-        if has_scan_level:
+        # Try to fetch recent scans - if it fails due to missing columns, return empty
+        try:
             recent_scan_jobs = (
                 scans_query
                 .options(joinedload(ScanJob.project))
@@ -266,18 +263,8 @@ async def get_dashboard_overview(
                 .limit(10)
                 .all()
             )
-        else:
-            # If scan_level doesn't exist, query only columns that exist
-            recent_scan_jobs = (
-                scans_query
-                .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary, ScanJob.project_id, ScanJob.created_at, ScanJob.completed_at, ScanJob.project)
-                .options(joinedload(ScanJob.project))
-                .order_by(ScanJob.created_at.desc())
-                .limit(10)
-                .all()
-            )
-            # Since we used with_entities, we get tuples, not ScanJob objects
-            # We need to handle this differently - let's just skip scan_level for now
+        except Exception as fetch_error:
+            logger.warning(f"Error fetching recent scans, likely due to missing columns: {fetch_error}")
             recent_scan_jobs = []
     except Exception as e:
         logger.error(f"Error fetching recent scans: {type(e).__name__}: {str(e)}", exc_info=True)
@@ -295,8 +282,11 @@ async def get_dashboard_overview(
         # Extract risk_score and findings_count from summary
         risk_score, findings_count = _extract_summary_fields(scan_job.summary)
         
-        # Get scan level as string
-        scan_level = scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else str(scan_job.scan_level)
+        # Get scan level as string - handle missing scan_level column
+        if has_scan_level and hasattr(scan_job, 'scan_level') and scan_job.scan_level:
+            scan_level = scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else str(scan_job.scan_level)
+        else:
+            scan_level = "basic"  # Default value if column doesn't exist
         
         # Get status as string
         scan_status = scan_job.status.value if hasattr(scan_job.status, 'value') else str(scan_job.status)
