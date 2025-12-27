@@ -244,11 +244,23 @@ async def get_dashboard_overview(
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    scans_this_month = (
-        scans_query
-        .filter(ScanJob.created_at >= month_start)
-        .count()
-    )
+    try:
+        scans_this_month = (
+            scans_query
+            .filter(ScanJob.created_at >= month_start)
+            .count()
+        )
+    except Exception as count_error:
+        try:
+            scans_this_month = (
+                scans_query
+                .with_entities(ScanJob.id)
+                .filter(ScanJob.created_at >= month_start)
+                .count()
+            )
+        except Exception:
+            logger.error(f"Error counting scans this month: {count_error}", exc_info=True)
+            scans_this_month = 0
     
     # Recent scans (last 10, ordered by created_at DESC)
     # Use joinedload to avoid N+1 queries
