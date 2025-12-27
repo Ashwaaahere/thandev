@@ -2,6 +2,7 @@
   "name": "thandev-frontend",
   "private": true,
   "version": "0.1.0",
+  "_deployment_trigger": "2025-01-27",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
