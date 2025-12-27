@@ -49,7 +49,7 @@ class ScanJob(Base):
     __tablename__ = "scan_jobs"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # nullable=True to support migration from old schema
     scan_level = Column(SQLEnum(ScanLevel), nullable=False)
     status = Column(SQLEnum(ScanStatus), default=ScanStatus.PENDING, nullable=False, index=True)
     
