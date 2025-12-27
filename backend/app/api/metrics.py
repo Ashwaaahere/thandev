@@ -98,11 +98,6 @@ async def get_dashboard_overview(
     if not has_project_id:
         logger.warning("scan_jobs table does not have project_id column yet, returning empty metrics")
         # Return empty metrics if column doesn't exist
-        from app.schemas.metrics import (
-            TotalsMetrics,
-            RecentActivityMetrics,
-            FindingsBySeverityMetrics,
-        )
         return DashboardOverviewMetrics(
             total_scans=0,
             security_scans=0,
