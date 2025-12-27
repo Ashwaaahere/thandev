@@ -81,7 +81,11 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Start the application
-# Note: Migrations run via Fly.io release_command, not on every boot
-# This ensures migrations run once per deploy, not on every machine restart
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Copy entrypoint script
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+# Start the application via entrypoint script
+# Entrypoint handles: DB wait, init_db.py, alembic upgrade head, then uvicorn
+# This ensures migrations run before the app starts, and DB is ready
+ENTRYPOINT ["/app/entrypoint.sh"]

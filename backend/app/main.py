@@ -162,6 +162,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Health check endpoint
 @app.get("/health")
+@app.get("/healthz")  # Alternative health endpoint for Fly.io and other platforms
 async def health():
     """Health check endpoint - returns service status"""
     return {

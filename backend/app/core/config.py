@@ -39,10 +39,12 @@ class Settings(BaseSettings):
     _superadmin_external_ids_set: Set[Tuple[str, str]] = PrivateAttr(default_factory=set)
     
     # Database
+    # CANONICAL ENV VAR: DATABASE_URL (used by both app runtime and Alembic migrations)
     # Default to SQLite for local/development, Postgres for production/docker/testing
     # For local development: uses SQLite by default (sqlite:///./thandev.db)
     # For production/docker/testing: set DATABASE_URL=postgresql://user:pass@host:port/db in .env
     # Or set ENVIRONMENT=production to default to Postgres
+    # Note: migrations/env.py uses settings.DATABASE_URL, ensuring consistency
     DATABASE_URL: str = "sqlite:///./thandev.db"  # Default to SQLite for development (overridden in __init__ if needed)
     
     # Redis

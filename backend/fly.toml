@@ -5,8 +5,8 @@ primary_region = "iad"
 [build]
 
 [deploy]
-  # Run migrations during deployment, not on every boot
-  release_command = "python init_db.py && alembic upgrade head"
+  # Migrations are handled by entrypoint.sh (runs before uvicorn starts)
+  # No release_command needed - entrypoint.sh ensures DB is ready and migrations are applied
 
 [env]
   PORT = "8000"

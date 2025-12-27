@@ -23,6 +23,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Set the database URL from settings
+# CANONICAL ENV VAR: DATABASE_URL (same as app.core.config.Settings.DATABASE_URL)
+# This ensures migrations run against the same database as the application
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Set target metadata
