@@ -77,26 +77,58 @@ def upgrade():
     
     # Add constraints to scan_jobs (SQLite doesn't support ALTER TABLE for constraints)
     if not is_sqlite:
-        # PostgreSQL and other databases support ALTER TABLE
-        # Check if constraints already exist before creating
-        try:
-            op.create_check_constraint(
-                'check_tier',
-                'scan_jobs',
-                "tier IN ('level0', 'level1', 'level2')"
-            )
-        except Exception as e:
-            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
-                raise
-        try:
-            op.create_check_constraint(
-                'check_status',
-                'scan_jobs',
-                "status IN ('pending', 'running', 'completed', 'error')"
-            )
-        except Exception as e:
-            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
-                raise
+        # PostgreSQL: Use DO blocks for idempotent constraint creation
+        # This prevents InFailedSqlTransaction errors if constraints already exist
+        if is_postgresql:
+            # Create check_tier constraint if it doesn't exist
+            op.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint 
+                        WHERE conname = 'check_tier' 
+                        AND conrelid = 'scan_jobs'::regclass
+                    ) THEN
+                        ALTER TABLE scan_jobs
+                        ADD CONSTRAINT check_tier CHECK (tier IN ('level0', 'level1', 'level2'));
+                    END IF;
+                END $$;
+            """)
+            
+            # Create check_status constraint if it doesn't exist
+            op.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint 
+                        WHERE conname = 'check_status' 
+                        AND conrelid = 'scan_jobs'::regclass
+                    ) THEN
+                        ALTER TABLE scan_jobs
+                        ADD CONSTRAINT check_status CHECK (status IN ('pending', 'running', 'completed', 'error'));
+                    END IF;
+                END $$;
+            """)
+        else:
+            # For other databases (non-SQLite, non-PostgreSQL), use try/except
+            try:
+                op.create_check_constraint(
+                    'check_tier',
+                    'scan_jobs',
+                    "tier IN ('level0', 'level1', 'level2')"
+                )
+            except Exception as e:
+                if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
+                    raise
+            try:
+                op.create_check_constraint(
+                    'check_status',
+                    'scan_jobs',
+                    "status IN ('pending', 'running', 'completed', 'error')"
+                )
+            except Exception as e:
+                if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
+                    raise
     # For SQLite, constraints are enforced at the application level
     
     # Create performance_scan_jobs table

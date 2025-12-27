@@ -66,12 +66,17 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
-
-# Create non-root user
+# Create non-root user first (needed for COPY --chown)
 RUN useradd --create-home --shell /bin/bash app
-RUN chown -R app:app /app
+
+# Copy application code with app user ownership
+COPY --chown=app:app . .
+
+# Copy entrypoint script with executable permissions (overwrites the one from COPY . .)
+# Use COPY --chmod to set executable permission at build time
+COPY --chown=app:app --chmod=755 entrypoint.sh /app/entrypoint.sh
+
+# Switch to non-root user
 USER app
 
 # Expose port
@@ -81,11 +86,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Copy entrypoint script
-COPY entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
-
 # Start the application via entrypoint script
-# Entrypoint handles: DB wait, init_db.py, alembic upgrade head, then uvicorn
-# This ensures migrations run before the app starts, and DB is ready
+# Entrypoint handles: DB wait, then uvicorn
+# Migrations are handled by Fly.io release_command (see fly.toml)
 ENTRYPOINT ["/app/entrypoint.sh"]

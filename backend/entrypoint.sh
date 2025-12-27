@@ -21,13 +21,8 @@ else
   echo "Using SQLite database (no connection wait needed)"
 fi
 
-# Run database initialization
-echo "Running database initialization..."
-python init_db.py
-
-# Run migrations
-echo "Running Alembic migrations..."
-alembic upgrade head
+# Note: Migrations are handled by Fly.io release_command (see fly.toml)
+# This ensures migrations run once per deploy, not on every container restart
 
 # Start the application
 echo "Starting application..."

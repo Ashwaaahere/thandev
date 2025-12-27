@@ -5,11 +5,13 @@ primary_region = "iad"
 [build]
 
 [deploy]
-  # Migrations are handled by entrypoint.sh (runs before uvicorn starts)
-  # No release_command needed - entrypoint.sh ensures DB is ready and migrations are applied
+  # Run migrations once per deploy via release_command
+  # This ensures migrations run on the same database as the app, before containers start
+  release_command = "alembic upgrade head"
 
 [env]
   PORT = "8000"
+  ENVIRONMENT = "production"
 
 [http_service]
   internal_port = 8000
