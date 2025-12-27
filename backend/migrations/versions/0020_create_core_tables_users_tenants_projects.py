@@ -10,6 +10,7 @@ It is idempotent and will skip creation if tables already exist.
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
+from sqlalchemy.sql import text
 import logging
 
 # revision identifiers, used by Alembic.
@@ -127,6 +128,62 @@ def upgrade():
         logger.info("✓ projects table created")
     else:
         logger.info("projects table already exists, skipping")
+    
+    # 4. Add foreign keys to notifications table if it exists but doesn't have them
+    # This handles the case where notifications table was created before tenants/users
+    if table_exists('notifications'):
+        logger.info("Checking notifications table foreign keys...")
+        # Check if foreign key constraints exist
+        notifications_fks = inspector.get_foreign_keys('notifications')
+        fk_names = {fk['name'] for fk in notifications_fks}
+        
+        # Add tenant_id FK if missing and tenants table exists
+        if 'fk_notifications_tenant_id' not in fk_names and table_exists('tenants'):
+            if is_postgresql:
+                op.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint 
+                            WHERE conname = 'fk_notifications_tenant_id' 
+                            AND conrelid = 'notifications'::regclass
+                        ) THEN
+                            ALTER TABLE notifications
+                            ADD CONSTRAINT fk_notifications_tenant_id
+                            FOREIGN KEY (tenant_id) REFERENCES tenants(id);
+                        END IF;
+                    END $$;
+                """)
+            else:
+                try:
+                    op.create_foreign_key('fk_notifications_tenant_id', 'notifications', 'tenants', ['tenant_id'], ['id'])
+                except Exception:
+                    pass  # May already exist
+            logger.info("✓ Added tenant_id foreign key to notifications")
+        
+        # Add owner_id FK if missing and users table exists
+        if 'fk_notifications_owner_id' not in fk_names and table_exists('users'):
+            if is_postgresql:
+                op.execute("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_constraint 
+                            WHERE conname = 'fk_notifications_owner_id' 
+                            AND conrelid = 'notifications'::regclass
+                        ) THEN
+                            ALTER TABLE notifications
+                            ADD CONSTRAINT fk_notifications_owner_id
+                            FOREIGN KEY (owner_id) REFERENCES users(id);
+                        END IF;
+                    END $$;
+                """)
+            else:
+                try:
+                    op.create_foreign_key('fk_notifications_owner_id', 'notifications', 'users', ['owner_id'], ['id'])
+                except Exception:
+                    pass  # May already exist
+            logger.info("✓ Added owner_id foreign key to notifications")
 
 
 def downgrade():
