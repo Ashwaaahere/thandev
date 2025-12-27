@@ -4,7 +4,7 @@ Metrics API router
 from typing import Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func, rollback
+from sqlalchemy import func
 from datetime import datetime, timezone
 
 from app.core.database import get_db
