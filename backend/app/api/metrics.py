@@ -371,9 +371,19 @@ async def get_dashboard_overview(
         total_projects = 0
     
     try:
-        total_findings = db.query(func.count(Finding.id)).select_from(
-            findings_query.subquery()
-        ).scalar() or 0
+        # Use direct count query to avoid loading all columns including raw_data
+        total_findings = (
+            db.query(func.count(Finding.id))
+            .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
+            .scalar() or 0
+        )
     except Exception as e:
         logger.error(f"Error counting total findings: {type(e).__name__}: {str(e)}", exc_info=True)
         db.rollback()
