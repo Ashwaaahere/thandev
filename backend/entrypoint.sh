@@ -25,7 +25,13 @@ fi
 # This is used by Fly.io release_command to run migrations
 if [ $# -gt 0 ]; then
   echo "Executing command: $@"
-  exec "$@"
+  # If the command contains &&, execute it as a shell command
+  # Otherwise, execute it directly
+  if echo "$*" | grep -q "&&"; then
+    exec /bin/bash -c "$*"
+  else
+    exec "$@"
+  fi
 fi
 
 # Default runtime behavior: start uvicorn ONLY
