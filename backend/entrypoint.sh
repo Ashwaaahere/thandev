@@ -21,8 +21,22 @@ else
   echo "Using SQLite database (no connection wait needed)"
 fi
 
-# Note: Migrations are handled by Fly.io release_command (see fly.toml)
-# This ensures migrations run once per deploy, not on every container restart
+# If command arguments are provided, execute them and exit
+# This allows: entrypoint.sh alembic upgrade head
+if [ $# -gt 0 ]; then
+  echo "Executing command: $@"
+  exec "$@"
+fi
+
+# Default behavior: run migrations then start uvicorn
+# Migrations run here to ensure they complete before app starts
+# (In addition to Fly.io release_command, this provides a safety net)
+echo "Running Alembic migrations..."
+if ! alembic upgrade head; then
+  echo "ERROR: Migration failed! Exiting without starting application."
+  exit 1
+fi
+echo "Migrations completed successfully."
 
 # Start the application
 echo "Starting application..."

@@ -10,9 +10,26 @@ from alembic import context
 # Add backend to Python path
 sys.path.append(str(pathlib.Path(__file__).resolve().parents[1]))
 
-# Import models and database
+# Import database Base first
 from app.core.database import Base
 from app.core.config import settings
+
+# Import ALL models to ensure they're registered with Base.metadata
+# This must happen before target_metadata = Base.metadata is set
+# Import explicitly to ensure all models are loaded
+from app.models.user import User  # noqa: F401
+from app.models.tenant import Tenant  # noqa: F401
+from app.models.project import Project  # noqa: F401
+from app.models.scan import ScanJob  # noqa: F401
+from app.models.finding import Finding, ToolResult  # noqa: F401
+from app.models.domain_verification import DomainVerification, DomainVerificationStatus  # noqa: F401
+from app.models.entitlement import Entitlement  # noqa: F401
+from app.models.performance_scan import PerformanceScan  # noqa: F401
+from app.models.notification import Notification  # noqa: F401
+from app.models.audit_log import AuditLog  # noqa: F401
+from app.models.allowed_domain import AllowedDomain  # noqa: F401
+
+# Also import via __init__ to catch any models we might have missed
 from app.models import *  # noqa: F401, F403
 
 # this is the Alembic Config object
