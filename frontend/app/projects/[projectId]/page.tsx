@@ -3,6 +3,9 @@ import { redirect } from 'next/navigation';
 import { authOptions } from '@/lib/auth';
 import ProjectOverviewClient from "@/components/Projects/ProjectOverviewClient";
 
+// Force dynamic rendering since we use getServerSession which requires headers
+export const dynamic = 'force-dynamic';
+
 export default async function ProjectOverviewPage({
   params,
 }: {
