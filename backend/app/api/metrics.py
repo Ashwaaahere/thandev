@@ -73,25 +73,33 @@ async def get_dashboard_overview(
     Requires X-Thandev-Tenant-Id or X-Thandev-User-Id header.
     All data is scoped to the current tenant and user.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="X-Thandev-User-Id header is required"
         )
     
-    # Base query for scans for this tenant and user
-    # Use outerjoin to handle cases where project_id might be NULL (from old schema)
-    # Then filter to only include scan_jobs with valid projects
-    scans_query = (
-        db.query(ScanJob)
-        .outerjoin(Project, ScanJob.project_id == Project.id)
-        .filter(
-            ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
-            Project.id.isnot(None),  # Ensure project exists
-            Project.tenant_id == tenant.id,
-            Project.owner_id == current_user.id
+    try:
+        # Base query for scans for this tenant and user
+        # Use outerjoin to handle cases where project_id might be NULL (from old schema)
+        # Then filter to only include scan_jobs with valid projects
+        scans_query = (
+            db.query(ScanJob)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
+                Project.id.isnot(None),  # Ensure project exists
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
         )
-    )
+    except Exception as e:
+        logger.error(f"Error creating scans_query: {type(e).__name__}: {str(e)}", exc_info=True)
+        # If project_id column doesn't exist, return empty results
+        scans_query = db.query(ScanJob).filter(False)  # Empty query
     
     # Base query for projects for this tenant and user
     projects_query = (
@@ -102,20 +110,25 @@ async def get_dashboard_overview(
         )
     )
     
-    # Base query for findings for this tenant and user
-    # Use outerjoin to handle cases where project_id might be NULL (from old schema)
-    # Then filter to only include findings from scan_jobs with valid projects
-    findings_query = (
-        db.query(Finding)
-        .join(ScanJob, Finding.scan_job_id == ScanJob.id)
-        .outerjoin(Project, ScanJob.project_id == Project.id)
-        .filter(
-            ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
-            Project.id.isnot(None),  # Ensure project exists
-            Project.tenant_id == tenant.id,
-            Project.owner_id == current_user.id
+    try:
+        # Base query for findings for this tenant and user
+        # Use outerjoin to handle cases where project_id might be NULL (from old schema)
+        # Then filter to only include findings from scan_jobs with valid projects
+        findings_query = (
+            db.query(Finding)
+            .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
+                Project.id.isnot(None),  # Ensure project exists
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
         )
-    )
+    except Exception as e:
+        logger.error(f"Error creating findings_query: {type(e).__name__}: {str(e)}", exc_info=True)
+        # If project_id column doesn't exist, return empty results
+        findings_query = db.query(Finding).filter(False)  # Empty query
     
     # Total scans (all ScanJob entries for this tenant)
     total_scans = scans_query.count()
@@ -157,13 +170,17 @@ async def get_dashboard_overview(
     # Recent scans (last 10, ordered by created_at DESC)
     # Use joinedload to avoid N+1 queries
     from sqlalchemy.orm import joinedload
-    recent_scan_jobs = (
-        scans_query
-        .options(joinedload(ScanJob.project))
-        .order_by(ScanJob.created_at.desc())
-        .limit(10)
-        .all()
-    )
+    try:
+        recent_scan_jobs = (
+            scans_query
+            .options(joinedload(ScanJob.project))
+            .order_by(ScanJob.created_at.desc())
+            .limit(10)
+            .all()
+        )
+    except Exception as e:
+        logger.error(f"Error fetching recent scans: {type(e).__name__}: {str(e)}", exc_info=True)
+        recent_scan_jobs = []
     
     # Map to RecentScanItem
     recent_scans = []
