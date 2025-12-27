@@ -60,8 +60,21 @@ def run_migrations_online() -> None:
                 connection=connection, target_metadata=target_metadata
             )
 
-            with context.begin_transaction():
+            # Use autocommit mode for PostgreSQL to avoid transaction abort issues
+            # when indexes/tables already exist
+            if connectable.dialect.name == 'postgresql':
+                # For PostgreSQL, use autocommit to allow individual operations to succeed/fail independently
+                connection = connectable.connect()
+                connection.execution_options(autocommit=True)
+                context.configure(
+                    connection=connection, target_metadata=target_metadata
+                )
                 context.run_migrations()
+                connection.close()
+            else:
+                # For SQLite and others, use transaction as before
+                with context.begin_transaction():
+                    context.run_migrations()
     except Exception as e:
         logger.error(f"Migration failed: {e}", exc_info=True)
         # Provide user-friendly error message

@@ -19,6 +19,7 @@ def upgrade():
     # Detect database type
     bind = op.get_bind()
     is_sqlite = bind.dialect.name == 'sqlite'
+    is_postgresql = bind.dialect.name == 'postgresql'
     
     # Helper function to check if column exists
     def column_exists(table_name, column_name):
@@ -34,12 +35,31 @@ def upgrade():
     
     # Helper function to create index if it doesn't exist
     def create_index_if_not_exists(index_name, table_name, columns):
-        try:
-            op.create_index(index_name, table_name, columns)
-        except Exception as e:
-            # Index might already exist, check the error message
-            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
-                raise
+        """Create index only if it doesn't already exist"""
+        if is_postgresql:
+            # For PostgreSQL, use raw SQL with IF NOT EXISTS to avoid transaction abort
+            columns_str = ', '.join(columns)
+            op.execute(
+                f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns_str})"
+            )
+        else:
+            # For SQLite and others, check first then create
+            try:
+                conn = bind.connect()
+                inspector = sa.inspect(conn)
+                indexes = inspector.get_indexes(table_name)
+                conn.close()
+                index_exists = any(idx['name'] == index_name for idx in indexes)
+                
+                if not index_exists:
+                    op.create_index(index_name, table_name, columns)
+            except Exception as e:
+                # If check failed, try to create anyway and catch if it exists
+                try:
+                    op.create_index(index_name, table_name, columns)
+                except Exception as e2:
+                    if 'already exists' not in str(e2).lower() and 'duplicate' not in str(e2).lower():
+                        raise
     
     # Add indexes to threat_item table (with existence check)
     create_index_if_not_exists('idx_threat_item_published_at', 'threat_item', ['published_at'])
@@ -72,8 +92,6 @@ def upgrade():
     
     # Create performance_scan_jobs table
     # Check if PostgreSQL to use JSONB, otherwise use Text
-    is_postgresql = bind.dialect.name == 'postgresql'
-    
     if is_postgresql:
         result_type = postgresql.JSONB
     else:
