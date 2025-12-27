@@ -78,16 +78,25 @@ def upgrade():
     # Add constraints to scan_jobs (SQLite doesn't support ALTER TABLE for constraints)
     if not is_sqlite:
         # PostgreSQL and other databases support ALTER TABLE
-        op.create_check_constraint(
-            'check_tier',
-            'scan_jobs',
-            "tier IN ('level0', 'level1', 'level2')"
-        )
-        op.create_check_constraint(
-            'check_status',
-            'scan_jobs',
-            "status IN ('pending', 'running', 'completed', 'error')"
-        )
+        # Check if constraints already exist before creating
+        try:
+            op.create_check_constraint(
+                'check_tier',
+                'scan_jobs',
+                "tier IN ('level0', 'level1', 'level2')"
+            )
+        except Exception as e:
+            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
+                raise
+        try:
+            op.create_check_constraint(
+                'check_status',
+                'scan_jobs',
+                "status IN ('pending', 'running', 'completed', 'error')"
+            )
+        except Exception as e:
+            if 'already exists' not in str(e).lower() and 'duplicate' not in str(e).lower():
+                raise
     # For SQLite, constraints are enforced at the application level
     
     # Create performance_scan_jobs table
@@ -98,27 +107,32 @@ def upgrade():
         result_type = sa.Text
     
     # Create table with constraints (SQLite supports constraints in CREATE TABLE)
-    table_args = []
-    if not is_sqlite:
-        # PostgreSQL supports check constraints
-        table_args.extend([
-            sa.CheckConstraint("status IN ('pending', 'running', 'completed', 'error')", name='check_perf_status'),
-            sa.CheckConstraint("device IN ('desktop', 'mobile')", name='check_device')
-        ])
+    # Check if table already exists before creating
+    inspector = sa.inspect(bind)
+    existing_tables = inspector.get_table_names()
     
-    op.create_table('performance_scan_jobs',
-        sa.Column('id', sa.String(36), primary_key=True),
-        sa.Column('user_id', sa.Text, nullable=False),
-        sa.Column('url', sa.Text, nullable=False),
-        sa.Column('device', sa.String(20), server_default='desktop'),
-        sa.Column('status', sa.String(20), server_default='pending'),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
-        sa.Column('started_at', sa.DateTime(timezone=True)),
-        sa.Column('finished_at', sa.DateTime(timezone=True)),
-        sa.Column('result', result_type),
-        sa.Column('error', sa.Text),
-        *table_args
-    )
+    if 'performance_scan_jobs' not in existing_tables:
+        table_args = []
+        if not is_sqlite:
+            # PostgreSQL supports check constraints
+            table_args.extend([
+                sa.CheckConstraint("status IN ('pending', 'running', 'completed', 'error')", name='check_perf_status'),
+                sa.CheckConstraint("device IN ('desktop', 'mobile')", name='check_device')
+            ])
+        
+        op.create_table('performance_scan_jobs',
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('user_id', sa.Text, nullable=False),
+            sa.Column('url', sa.Text, nullable=False),
+            sa.Column('device', sa.String(20), server_default='desktop'),
+            sa.Column('status', sa.String(20), server_default='pending'),
+            sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
+            sa.Column('started_at', sa.DateTime(timezone=True)),
+            sa.Column('finished_at', sa.DateTime(timezone=True)),
+            sa.Column('result', result_type),
+            sa.Column('error', sa.Text),
+            *table_args
+        )
     
     # Add indexes to performance_scan_jobs (with existence check)
     create_index_if_not_exists('idx_perf_scan_jobs_user_status', 'performance_scan_jobs', ['user_id', 'status'])
