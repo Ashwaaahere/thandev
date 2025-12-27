@@ -57,6 +57,11 @@ if (isDevelopment) {
 // Build providers array
 const providers: Provider[] = []
 
+// Check if we're in build context (Next.js build phase)
+const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build' || 
+                     process.env.NEXT_PHASE === 'phase-development-build' ||
+                     process.env.VERCEL === '1' && !process.env.VERCEL_ENV
+
 // Add GitHub provider if credentials are available
 if (githubClientId && githubClientSecret) {
   // Log the actual values being used (mask secret)
@@ -76,13 +81,16 @@ if (githubClientId && githubClientSecret) {
       },
     })
   )
-} else if (isDevelopment) {
-  // In development, use a credentials provider as fallback
-  console.warn(
-    '⚠️  GitHub OAuth credentials not found. Using development-only credentials provider.\n' +
-    '   To enable GitHub OAuth, set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in .env.local\n' +
-    '   For now, you can sign in with any username/password in development mode.'
-  )
+} else if (isDevelopment || isBuildTime) {
+  // In development or build time, use a credentials provider as fallback
+  // This allows the build to complete even without GitHub credentials
+  if (isDevelopment && !isBuildTime) {
+    console.warn(
+      '⚠️  GitHub OAuth credentials not found. Using development-only credentials provider.\n' +
+      '   To enable GitHub OAuth, set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in .env.local\n' +
+      '   For now, you can sign in with any username/password in development mode.'
+    )
+  }
   providers.push(
     CredentialsProvider({
       name: 'Development',
@@ -91,8 +99,8 @@ if (githubClientId && githubClientSecret) {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        // In development, accept any credentials
-        if (isDevelopment && credentials) {
+        // In development or build time, accept any credentials (for build to succeed)
+        if ((isDevelopment || isBuildTime) && credentials) {
           return {
             id: 'dev-user',
             name: credentials.username || 'Development User',
@@ -104,10 +112,11 @@ if (githubClientId && githubClientSecret) {
     })
   )
 } else {
-  // In production, throw error if credentials are missing
+  // In production runtime, throw error if credentials are missing
+  // This will only trigger at runtime, not during build
   throw new Error(
     'Missing GitHub OAuth credentials. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET ' +
-    '(or GITHUB_ID and GITHUB_SECRET) environment variables.'
+    '(or GITHUB_ID and GITHUB_SECRET) environment variables in Vercel project settings.'
   )
 }
 
