@@ -107,16 +107,12 @@ def run_migrations_online() -> None:
                 f"Failed to connect to database: {error_msg}. "
                 f"Please check your DATABASE_URL setting and ensure the database is running."
             ) from e
-        elif "table" in error_msg.lower() or "column" in error_msg.lower():
-            raise RuntimeError(
-                f"Database schema error: {error_msg}. "
-                f"This may indicate a migration conflict. Try running 'alembic downgrade -1' first."
-            ) from e
         else:
-            raise RuntimeError(
-                f"Migration error: {error_msg}. "
-                f"Check the logs above for the original exception details."
-            ) from e
+            # For other errors (table/column), re-raise the original exception
+            # This allows migrations to handle missing tables/columns themselves
+            # (e.g., migration 0013 creates notifications without FKs if tenants/users don't exist)
+            # Don't wrap it in RuntimeError - let the original exception propagate
+            raise
 
 
 if context.is_offline_mode():
