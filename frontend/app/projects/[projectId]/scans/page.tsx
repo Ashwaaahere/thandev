@@ -30,6 +30,7 @@ interface Project {
   id: string;
   name: string;
   target_url: string;
+  root_domain?: string | null;
   description?: string;
 }
 
@@ -71,6 +72,19 @@ interface Scan {
   findings: Finding[];
 }
 
+type DomainVerificationStatus = {
+  project_id: string;
+  domain: string;
+  status: 'pending' | 'verified' | 'failed' | 'expired';
+  token: string;
+  record_name: string;
+  record_value: string;
+  last_checked_at?: string | null;
+  verified_at?: string | null;
+  expires_at?: string | null;
+  last_error?: string | null;
+};
+
 // Plan types
 type TenantPlanUsage = {
   projects_count: number;
@@ -109,6 +123,9 @@ export default function ProjectScansPage() {
   const [creatingScan, setCreatingScan] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [planInfo, setPlanInfo] = useState<TenantPlanInfo | null>(null);
+  const [dvStatus, setDvStatus] = useState<DomainVerificationStatus | null>(null);
+  const [dvLoading, setDvLoading] = useState<boolean>(false);
+  const [dvError, setDvError] = useState<string | null>(null);
   // Track PDF download state per scan: { scanId: { full: boolean, executive: boolean } }
   const [downloadingPdfs, setDownloadingPdfs] = useState<Record<string, { full: boolean; executive: boolean }>>({});
   // Track cancelling state per scan
@@ -172,6 +189,35 @@ export default function ProjectScansPage() {
   useEffect(() => {
     if (projectId && session) {
       fetchScans();
+    }
+  }, [projectId, session]);
+
+  // Fetch domain verification status
+  const fetchDomainVerification = async () => {
+    if (!session) return;
+    setDvLoading(true);
+    setDvError(null);
+    try {
+      const data = await thandevFetchJSON<DomainVerificationStatus>(
+        `/api/projects/${projectId}/domain-verification`,
+        session
+      );
+      setDvStatus(data);
+    } catch (err) {
+      console.error('Error fetching domain verification status:', err);
+      if (err instanceof Error) {
+        setDvError(err.message);
+      } else {
+        setDvError('Failed to load domain verification status');
+      }
+    } finally {
+      setDvLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (projectId && session) {
+      fetchDomainVerification();
     }
   }, [projectId, session]);
 
@@ -284,6 +330,10 @@ export default function ProjectScansPage() {
         errorMessage = 'Unexpected error while fetching data';
       }
       setError(errorMessage);
+      if (errorMessage.toLowerCase().includes('domain not verified')) {
+        // Refresh DV status to show latest
+        fetchDomainVerification();
+      }
     } finally {
       setCreatingScan(null);
     }
@@ -347,6 +397,77 @@ export default function ProjectScansPage() {
       hour: '2-digit',
       minute: '2-digit',
     });
+  };
+
+  const renderDomainVerificationBanner = () => {
+    const status = dvStatus?.status || 'pending';
+    const isVerified = status === 'verified';
+    if (dvLoading) {
+      return (
+        <div className="rounded-xl border border-slate-700 bg-slate-900/70 p-4 text-sm text-slate-200">
+          Checking domain verification...
+        </div>
+      );
+    }
+    if (isVerified) return null;
+
+    return (
+      <div className="rounded-xl border border-amber-600/50 bg-amber-900/30 p-4 text-sm text-amber-100 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="font-semibold">Domain verification required</div>
+          <div className="text-xs uppercase px-2 py-1 rounded bg-amber-800/60 border border-amber-500/60">
+            {status}
+          </div>
+        </div>
+        <p className="text-amber-100/90">
+          Add the DNS TXT record below, then click &quot;Check verification&quot;. Scans are blocked until verified.
+        </p>
+        <div className="rounded-lg border border-slate-700 bg-slate-950/70 p-3 text-slate-100 space-y-1">
+          <div className="text-xs text-slate-400">Record name</div>
+          <div className="font-mono text-sm break-all">{dvStatus?.record_name || '...'}</div>
+          <div className="text-xs text-slate-400 pt-2">Record value</div>
+          <div className="font-mono text-sm break-all">{dvStatus?.record_value || '...'}</div>
+        </div>
+        {dvStatus?.last_error && (
+          <div className="text-xs text-red-200">Last error: {dvStatus.last_error}</div>
+        )}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchDomainVerification}
+            className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-800 text-slate-100 border border-slate-600 hover:border-slate-400 transition"
+          >
+            Check verification
+          </button>
+          <button
+            onClick={async () => {
+              if (!session) return;
+              setDvLoading(true);
+              setDvError(null);
+              try {
+                await thandevFetchJSON<DomainVerificationStatus>(
+                  `/api/projects/${projectId}/domain-verification/request`,
+                  session,
+                  {
+                    method: 'POST',
+                    body: JSON.stringify({ force_rotate: true }),
+                  }
+                );
+                await fetchDomainVerification();
+              } catch (err) {
+                console.error('Error rotating token:', err);
+                setDvError(err instanceof Error ? err.message : 'Failed to rotate token');
+              } finally {
+                setDvLoading(false);
+              }
+            }}
+            className="px-3 py-2 text-sm font-medium rounded-lg bg-slate-900 text-slate-100 border border-slate-700 hover:border-slate-500 transition"
+          >
+            Regenerate token
+          </button>
+          {dvError && <span className="text-xs text-red-200">{dvError}</span>}
+        </div>
+      </div>
+    );
   };
 
   // Get status badge color (dark theme)
@@ -440,6 +561,8 @@ export default function ProjectScansPage() {
     );
   }
 
+  const domainBlocked = !!dvStatus && dvStatus.status !== 'verified';
+
   return (
     <div className="flex h-screen overflow-hidden">
       <DashboardSidebar 
@@ -463,6 +586,9 @@ export default function ProjectScansPage() {
         >
           ← Back to Project Overview
         </Link>
+
+        {/* Domain verification banner */}
+        {renderDomainVerificationBanner()}
         
         {/* Project Header Card */}
         {project && (
@@ -471,6 +597,9 @@ export default function ProjectScansPage() {
               <div>
                 <h1 className="text-2xl font-bold" style={{ color: 'var(--fg)' }}>{project.name}</h1>
                 <p className="mt-1 font-mono text-sm" style={{ color: 'var(--muted)' }}>{project.target_url}</p>
+                {project.root_domain && (
+                  <p className="text-xs text-slate-500 mt-1">Root domain: {project.root_domain}</p>
+                )}
               </div>
             </div>
           </div>
@@ -501,46 +630,86 @@ export default function ProjectScansPage() {
               const canRunPro = allowedLevels.includes("pro");
               const canRunAdvanced = allowedLevels.includes("advanced");
               
-              // Basic is always allowed, pro/advanced need plan check
-              const isDisabled = creatingScan !== null || !planInfo || 
+              // Basic is always allowed, pro/advanced need plan check; domain must be verified
+              const isDisabled = domainBlocked || creatingScan !== null || !planInfo || 
                 (level === 'pro' && !canRunPro) || 
                 (level === 'advanced' && !canRunAdvanced);
               
               const tooltipText = 
+                domainBlocked ? "Verify domain to run scans" :
                 !planInfo ? "Loading plan info..." :
                 level === 'pro' && !canRunPro ? "Upgrade plan to unlock Pro scans" :
                 level === 'advanced' && !canRunAdvanced ? "Upgrade plan to unlock Advanced scans" :
                 undefined;
+              
+              // Level descriptions
+              const levelDescriptions = {
+                basic: {
+                  title: "Basic",
+                  subtitle: "Fast, limited tools",
+                  description: "Quick scan with essential tools (httpx, nuclei). Ideal for quick checks and basic vulnerability detection. Typically completes in 3-8 minutes.",
+                  tools: ["httpx", "nuclei"]
+                },
+                pro: {
+                  title: "Pro",
+                  subtitle: "More tools, deeper checks",
+                  description: "Comprehensive scan with additional tools (ffuf, nmap, sslscan, dalfox). Includes directory discovery, port scanning, and XSS testing. Typically completes in 10-25 minutes.",
+                  tools: ["httpx", "nuclei", "ffuf", "nmap", "sslscan", "dalfox"]
+                },
+                advanced: {
+                  title: "Advanced",
+                  subtitle: "Full suite, slower, for power users",
+                  description: "Complete security scan with all available tools including SQL injection testing (sqlmap). Most thorough but takes longer. Typically completes in 20-45 minutes.",
+                  tools: ["httpx", "nuclei", "ffuf", "nmap", "sslscan", "dalfox", "sqlmap"]
+                }
+              };
+              
+              const levelInfo = levelDescriptions[level];
 
               return (
-                <button
-                  key={level}
-                  onClick={() => createScan(level)}
-                  disabled={isDisabled}
-                  title={tooltipText}
-                  className={`flex-1 px-4 py-3 rounded-lg font-medium transition-colors ${
-                    isDisabled
-                      ? 'opacity-50 cursor-not-allowed'
-                      : 'hover:opacity-90'
-                  }`}
-                  style={isDisabled ? {
-                    background: 'var(--surface-2)',
-                    color: 'var(--muted)',
-                    border: '1px solid var(--border)'
-                  } : {
-                    background: 'var(--brand)',
-                    color: 'white'
-                  }}
-                >
-                  {creatingScan === level ? (
-                    <span className="flex items-center justify-center gap-2">
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      Starting...
-                    </span>
-                  ) : (
-                    `Run ${level.charAt(0).toUpperCase() + level.slice(1)} Scan`
-                  )}
-                </button>
+                <div key={level} className="relative group flex-1">
+                  <button
+                    onClick={() => createScan(level)}
+                    disabled={isDisabled}
+                    title={tooltipText || levelInfo.description}
+                    className={`w-full px-4 py-3 rounded-lg font-medium transition-colors text-left ${
+                      isDisabled
+                        ? 'opacity-50 cursor-not-allowed'
+                        : 'hover:opacity-90'
+                    }`}
+                    style={isDisabled ? {
+                      background: 'var(--surface-2)',
+                      color: 'var(--muted)',
+                      border: '1px solid var(--border)'
+                    } : {
+                      background: 'var(--brand)',
+                      color: 'white'
+                    }}
+                  >
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold">{levelInfo.title}</span>
+                        {creatingScan === level && (
+                          <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        )}
+                      </div>
+                      <span className="text-xs opacity-90">{levelInfo.subtitle}</span>
+                    </div>
+                  </button>
+                  {/* Tooltip on hover */}
+                  <div className="absolute left-0 top-full mt-2 z-20 hidden group-hover:block w-80 p-3 rounded-lg border shadow-xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                    <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>{levelInfo.title} Scan</p>
+                    <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>{levelInfo.description}</p>
+                    <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Tools used:</p>
+                    <div className="flex flex-wrap gap-1">
+                      {levelInfo.tools.map((tool) => (
+                        <span key={tool} className="text-xs px-1.5 py-0.5 rounded bg-[var(--surface-2)] border" style={{ color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                          {tool}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -635,12 +804,12 @@ export default function ProjectScansPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
-                  {scans.map((scan) => {
+                  {scans.map((scan, index) => {
                     const riskScore = scan.summary?.risk_score;
                     const findingsCount = scan.summary?.findings_count ?? 0;
                     
                     return (
-                      <tr key={scan.id} className="hover:opacity-80 transition-opacity" style={{ background: 'var(--surface)' }}>
+                      <tr key={`${scan.id}-${index}-${scan.created_at}`} className="hover:opacity-80 transition-opacity" style={{ background: 'var(--surface)' }}>
                         <td className="px-6 py-4 whitespace-nowrap">
                           <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(scan.status)}`}>
                             {scan.status.charAt(0).toUpperCase() + scan.status.slice(1)}

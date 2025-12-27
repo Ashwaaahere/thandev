@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerSession } from 'next-auth';
+import { authOptions } from '@/lib/auth';
+import { getAuthHeaders } from '@/lib/thandevApi';
 
 // Force dynamic rendering for API routes
 export const dynamic = 'force-dynamic';
@@ -6,6 +9,9 @@ export const revalidate = 0;
 
 export async function POST(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    const authHeaders = getAuthHeaders(session);
+
     const { url, device = 'desktop' } = await request.json();
 
     if (!url) {
@@ -38,6 +44,7 @@ export async function POST(request: NextRequest) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
       },
       body: JSON.stringify({
         url,
@@ -104,6 +111,9 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const session = await getServerSession(authOptions);
+    const authHeaders = getAuthHeaders(session);
+
     const { searchParams } = new URL(request.url);
     const jobId = searchParams.get('jobId');
 
@@ -121,6 +131,7 @@ export async function GET(request: NextRequest) {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
+        ...authHeaders,
       },
     });
 

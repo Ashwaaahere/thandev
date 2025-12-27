@@ -67,11 +67,12 @@ class LocalSubprocessBackend(ExecutionBackend):
         )
         
         try:
-            # Create job directory
+            # Create job directory - use backend's data/jobs directory
+            repo_root = Path(__file__).parent.parent.parent.parent
             if scan_job_id:
-                job_dir = Path(f"data/jobs/{scan_job_id}")
+                job_dir = repo_root / "backend" / "data" / "jobs" / scan_job_id
             else:
-                job_dir = Path(f"data/jobs/{session_id}")
+                job_dir = repo_root / "backend" / "data" / "jobs" / session_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
             # Execute using ToolExecutor

@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Scan API
 """
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, Field, HttpUrl, model_validator, ConfigDict
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from app.models.scan import ScanLevel, ScanStatus, AIStatus
@@ -18,7 +18,7 @@ class ScanCreate(BaseModel):
 
 
 class FindingResponse(BaseModel):
-    """Schema for finding response"""
+    """Schema for finding response (used in scan detail page)"""
     id: str
     title: str
     description: Optional[str]
@@ -32,9 +32,31 @@ class FindingResponse(BaseModel):
     recommendation: Optional[str]
     tool_name: Optional[str]
     created_at: datetime
+    # Enhanced fields for better UX
+    vuln_type: Optional[str] = None
+    http_method: Optional[str] = None
+    parameter: Optional[str] = None
+    remediation_summary: Optional[str] = None
+    remediation_steps: Optional[str] = None
+    default_remediation_steps: Optional[str] = None
+    impact_summary: Optional[str] = None
+    evidence: Optional[str] = None
+    # AI metadata (optional, for display purposes)
+    ai_source: Optional[str] = None  # Source identifier (e.g., "brain_v1", "fallback")
+    ai_model: Optional[str] = None  # AI model used (e.g., "gpt-4o-mini")
+    ai_confidence: Optional[float] = None  # Confidence score (0.0-1.0)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ToolStatus(BaseModel):
+    """Schema for per-tool status in scan response"""
+    tool_name: str
+    status: str  # "pending" | "running" | "completed" | "failed" | "timed_out"
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    execution_time: Optional[float] = None
+    error_message: Optional[str] = None
 
 
 class ScanResponse(BaseModel):
@@ -52,17 +74,38 @@ class ScanResponse(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     findings: List[FindingResponse] = []
+    tool_statuses: List[ToolStatus] = []  # Per-tool execution statuses for progress indicator
+    progress_pct: Optional[int] = None  # Overall scan progress percentage (0-100)
+    total_tools: Optional[int] = None  # Total number of tools in the scan
+    completed_tools: Optional[int] = None  # Number of completed/failed/skipped/timed_out tools
+    # Status reconciliation metadata
+    status_source: Optional[str] = Field(None, description="Source of status: 'brain' or 'db'")
+    status_reason: Optional[str] = Field(None, description="Reason for status (e.g., 'stalled', 'brain_unreachable')")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScanSummary(BaseModel):
-    """Schema for scan summary statistics"""
-    total_findings: int = 0
-    findings_by_severity: Dict[str, int] = Field(default_factory=dict)
+    """Schema for scan summary statistics
+    
+    Canonical keys: findings_count, severity_breakdown
+    Deprecated aliases: total_findings, findings_by_severity (for backward compatibility)
+    """
+    findings_count: int = 0  # canonical
+    total_findings: Optional[int] = None  # deprecated, kept for backward compatibility
+    severity_breakdown: Dict[str, int] = Field(default_factory=dict)  # canonical
+    findings_by_severity: Optional[Dict[str, int]] = None  # deprecated, kept for backward compatibility
     tools_used: List[str] = Field(default_factory=list)
     scan_duration_seconds: Optional[float] = None
+    
+    @model_validator(mode='after')
+    def populate_deprecated_aliases(self):
+        """Auto-populate deprecated keys from canonical if not set"""
+        if self.total_findings is None:
+            self.total_findings = self.findings_count
+        if self.findings_by_severity is None:
+            self.findings_by_severity = self.severity_breakdown.copy() if self.severity_breakdown else {}
+        return self
 
 
 class ScanListResponse(BaseModel):
@@ -84,8 +127,7 @@ class ScanJobListItem(BaseModel):
     risk_score: Optional[float] = None
     findings_count: Optional[int] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScanJobListResponse(BaseModel):
@@ -117,7 +159,8 @@ class QuickScanResponse(BaseModel):
 
 class ToolExecutionResult(BaseModel):
     """Schema for tool execution result"""
-    tool_name: str
+    tool_name: str  # Canonical lowercase name (e.g., "dalfox")
+    tool_name_display: Optional[str] = None  # Title Case for UI (e.g., "Dalfox")
     exit_code: Optional[int]
     started_at: datetime
     completed_at: Optional[datetime]
@@ -125,9 +168,19 @@ class ToolExecutionResult(BaseModel):
     execution_time: Optional[float]  # Seconds
     error_message: Optional[str] = None
     timed_out: bool = False  # Whether the tool execution timed out
+    # New tool run tracking fields
+    status: Optional[str] = None  # ToolExecutionStatus enum value
+    stdout_preview: Optional[str] = None  # First 1000 chars of stdout
+    stderr_preview: Optional[str] = None  # First 1000 chars of stderr
+    parsed_findings_count: int = 0  # Number of findings parsed from output (coalesce NULL to 0 for legacy tool runs)
+    created_findings_count: int = 0  # Number of findings actually created in DB (coalesce NULL to 0 for legacy tool runs)
+    duration_ms: Optional[int] = None  # Duration in milliseconds
+    skip_reason: Optional[str] = None  # e.g., no_injection_points, rate_limited, blocked
+    raw_stdout: Optional[str] = None
+    raw_stderr: Optional[str] = None
+    # Note: output_path is backend-only, not exposed to frontend for security
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ScanToolsResponse(BaseModel):

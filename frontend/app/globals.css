@@ -116,6 +116,35 @@ a:hover { color: var(--brand-700); }
 .btn-ghost-neon{ box-shadow: inset 0 0 0 1px var(--border), 0 0 0 rgba(125,211,252,0); }
 .btn-ghost-neon:hover{ box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--brand) 40%, var(--border) 60%), 0 0 20px rgba(125,211,252,.25); }
 
+/* Select dropdown styling for better contrast */
+select {
+  color: var(--fg) !important;
+  background-color: var(--surface) !important;
+}
+
+/* Light mode: use white background with dark text */
+select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  padding: 8px 12px !important;
+  font-weight: 500 !important;
+}
+
+/* Dark mode: use darker background with light text for better contrast */
+.dark select option {
+  background-color: #1a1f2e !important;
+  color: #e5e7eb !important;
+  padding: 8px 12px !important;
+  font-weight: 500 !important;
+}
+
+select option:checked,
+select option:focus,
+select option:hover {
+  background-color: var(--brand) !important;
+  color: white !important;
+}
+
 /* Holographic gradient title */
 .title-future{
   background: linear-gradient(92deg, #60a5fa 0%, #a78bfa 35%, #22d3ee 70%, #60a5fa 100%);
@@ -138,6 +167,21 @@ a:hover { color: var(--brand-700); }
   content:""; position:absolute; inset:0; pointer-events:none; z-index:0;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
   background-size: 180px 180px; mix-blend-mode: soft-light; opacity:.25;
+}
+
+/* Ensure hero content is visible even if animations don't run */
+/* Fallback: show hero content after a short delay if framer-motion hasn't animated it */
+#product > div[class*="relative z-10"] > div[style*="opacity:0"] {
+  animation: fadeInHero 0.8s ease-out 0.3s forwards;
+}
+#product .hero-surface[style*="opacity:0"] {
+  animation: fadeInHero 0.8s ease-out 0.5s forwards;
+}
+@keyframes fadeInHero {
+  to {
+    opacity: 1 !important;
+    transform: translateY(0) scale(1) !important;
+  }
 }
 
 /* Exact pointer-follow glow */

@@ -90,7 +90,7 @@ class RemoteToolServiceBackend(ExecutionBackend):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(3600.0)) as client:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(300.0)) as client:
                 response = await client.post(
                     service_url,
                     json=payload,

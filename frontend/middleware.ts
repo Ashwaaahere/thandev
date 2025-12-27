@@ -1,48 +1,80 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { getToken } from 'next-auth/jwt'
 
-export function middleware(request: NextRequest) {
+const PROTECTED_PATHS = [
+  '/dashboard',
+  '/projects',
+  '/scans',
+  '/reports',
+  '/notifications',
+  '/performance',
+  '/admin',
+  '/', // root dashboard
+]
+
+const SENSITIVE_PATHS = [
+  '/.env',
+  '/.env.local',
+  '/.env.production',
+  '/.env.development',
+  '/package.json',
+  '/package-lock.json',
+  '/yarn.lock',
+  '/.git',
+  '/.gitignore',
+  '/README.md',
+  '/Dockerfile',
+  '/docker-compose.yml',
+  '/.dockerignore',
+]
+
+export async function middleware(req: NextRequest) {
+  const { pathname } = req.nextUrl
+
+  // Block access to sensitive files/paths early
+  if (pathname.match(/\.(env|log|config)$/) || SENSITIVE_PATHS.some((p) => pathname.startsWith(p))) {
+    return new NextResponse('Not Found', { status: 404 })
+  }
+
+  const isProtected = PROTECTED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
+  const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/')
+  const isAuthOrBeta = pathname.startsWith('/auth') || pathname.startsWith('/private-beta')
+
+  if (isProtected && !isAuthOrBeta) {
+    const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
+
+    if (!token) {
+      const signInUrl = new URL('/auth', req.url)
+      return NextResponse.redirect(signInUrl)
+    }
+
+    const isAdmin = Boolean((token as any).isAdmin)
+    const isApproved = Boolean((token as any).isApproved)
+
+    if (isAdminRoute && !isAdmin) {
+      const betaUrl = new URL('/private-beta', req.url)
+      return NextResponse.redirect(betaUrl)
+    }
+
+    if (!isAdmin && !isApproved) {
+      const betaUrl = new URL('/private-beta', req.url)
+      return NextResponse.redirect(betaUrl)
+    }
+  }
+
   const response = NextResponse.next()
 
-  // Security headers that can be set in middleware
+  // Security headers
   response.headers.set('X-DNS-Prefetch-Control', 'off')
   response.headers.set('X-Download-Options', 'noopen')
   response.headers.set('X-Permitted-Cross-Domain-Policies', 'none')
-  
-  // Remove server information
   response.headers.delete('X-Powered-By')
-  
-  // Add security headers for specific paths
-  if (request.nextUrl.pathname.startsWith('/api/')) {
+
+  if (pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate')
     response.headers.set('Pragma', 'no-cache')
     response.headers.set('Expires', '0')
-  }
-
-  // Block access to sensitive files
-  if (request.nextUrl.pathname.match(/\.(env|log|config)$/)) {
-    return new NextResponse('Not Found', { status: 404 })
-  }
-
-  // Block access to common sensitive paths
-  const sensitivePaths = [
-    '/.env',
-    '/.env.local',
-    '/.env.production',
-    '/.env.development',
-    '/package.json',
-    '/package-lock.json',
-    '/yarn.lock',
-    '/.git',
-    '/.gitignore',
-    '/README.md',
-    '/Dockerfile',
-    '/docker-compose.yml',
-    '/.dockerignore'
-  ]
-
-  if (sensitivePaths.some(path => request.nextUrl.pathname.startsWith(path))) {
-    return new NextResponse('Not Found', { status: 404 })
   }
 
   return response
@@ -50,14 +82,8 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - public folder
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    // Match all routes except static assets, auth, favicon, and images.
+    '/((?!_next/static|_next/image|favicon.ico|api/auth|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 

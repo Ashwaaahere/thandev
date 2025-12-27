@@ -5,8 +5,12 @@ from app.models.tenant import Tenant
 from app.models.project import Project
 from app.models.scan import ScanJob
 from app.models.finding import Finding, ToolResult
+from app.models.domain_verification import DomainVerification, DomainVerificationStatus
+from app.models.entitlement import Entitlement
 from app.models.performance_scan import PerformanceScan
 from app.models.notification import Notification
+from app.models.audit_log import AuditLog
+from app.models.allowed_domain import AllowedDomain
 
 __all__ = [
     "User",
@@ -15,8 +19,13 @@ __all__ = [
     "ScanJob",
     "Finding",
     "ToolResult",
+    "DomainVerification",
+    "DomainVerificationStatus",
+    "Entitlement",
     "PerformanceScan",
     "Notification",
+    "AuditLog",
+    "AllowedDomain",
 ]
 
 

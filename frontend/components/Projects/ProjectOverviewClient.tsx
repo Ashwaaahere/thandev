@@ -310,41 +310,48 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
         </div>
 
         {/* Security engines row */}
-        {overview.stats.latest_scan_tools && overview.stats.latest_scan_tools.length > 0 && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-400 mb-0">Security engines</p>
-              <div className="flex items-center gap-2">
-                {overview.stats.latest_scan_tools.map((tool) => {
-                  const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
-                  const isSuccess = tool.exit_code === 0;
-                  const hasError = tool.exit_code !== null && tool.exit_code !== 0;
-                  const isUnknown = tool.exit_code === null;
-                  
-                  // Color based on exit code: green (0), yellow (null/unknown), red (non-zero)
-                  let badgeClass = 'px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-opacity hover:opacity-80';
-                  if (isSuccess) {
-                    badgeClass += ' bg-emerald-900/40 text-emerald-200 border-emerald-500/50';
-                  } else if (hasError) {
-                    badgeClass += ' bg-red-900/40 text-red-200 border-red-500/50';
-                  } else {
-                    badgeClass += ' bg-amber-900/40 text-amber-200 border-amber-500/50';
-                  }
-                  
-                  return (
-                    <Link
-                      key={tool.tool_name}
-                      href={`/dashboard/vulnerabilities?projectId=${projectId}&tool=${tool.tool_name}`}
-                      className={badgeClass}
-                    >
-                      {toolName}
-                    </Link>
-                  );
-                })}
+        {overview.stats.latest_scan_tools && overview.stats.latest_scan_tools.length > 0 && (() => {
+          // Deduplicate tools by tool_name, keeping the first occurrence
+          const uniqueTools = overview.stats.latest_scan_tools.filter((tool, index, self) =>
+            index === self.findIndex((t) => t.tool_name === tool.tool_name)
+          );
+          
+          return (
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-400 mb-0">Security engines</p>
+                <div className="flex items-center gap-2">
+                  {uniqueTools.map((tool) => {
+                    const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
+                    const isSuccess = tool.exit_code === 0;
+                    const hasError = tool.exit_code !== null && tool.exit_code !== 0;
+                    const isUnknown = tool.exit_code === null;
+                    
+                    // Color based on exit code: green (0), yellow (null/unknown), red (non-zero)
+                    let badgeClass = 'px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-opacity hover:opacity-80';
+                    if (isSuccess) {
+                      badgeClass += ' bg-emerald-900/40 text-emerald-200 border-emerald-500/50';
+                    } else if (hasError) {
+                      badgeClass += ' bg-red-900/40 text-red-200 border-red-500/50';
+                    } else {
+                      badgeClass += ' bg-amber-900/40 text-amber-200 border-amber-500/50';
+                    }
+                    
+                    return (
+                      <Link
+                        key={tool.tool_name}
+                        href={`/dashboard/vulnerabilities?projectId=${projectId}&tool=${tool.tool_name}`}
+                        className={badgeClass}
+                      >
+                        {toolName}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Two-column main content */}
         <div className="grid gap-6 md:grid-cols-3">

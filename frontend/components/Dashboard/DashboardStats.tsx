@@ -138,10 +138,15 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
     let cancelled = false;
 
     async function loadMetrics() {
-      if (!session) return;
+      if (!session) {
+        setIsLoading(false);
+        setError('Session not available. Please refresh the page.');
+        return;
+      }
       
       setIsLoading(true);
       setError(null);
+      
       try {
         const data = await thandevFetchJSON<DashboardMetrics>(
           '/api/metrics/overview',
@@ -201,7 +206,7 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
     return (
       <div className="col-span-full rounded-xl border p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
-          Could not load data. Please try again.
+          Could not load data: {error}. Please try again.
         </p>
       </div>
     );

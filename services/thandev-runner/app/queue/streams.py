@@ -96,6 +96,7 @@ async def consume_step_requests(
     consumer_name: str,
     count: int = 10,
     block_ms: int = 1000,
+    check_pending: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     Consume step requests from the stream using a consumer group.
@@ -105,6 +106,7 @@ async def consume_step_requests(
         consumer_name: Consumer name (unique per worker)
         count: Maximum number of messages to read
         block_ms: Block for this many milliseconds if no messages
+        check_pending: If True, check for PENDING messages first (on startup)
         
     Returns:
         List of messages with format: [{"id": "...", "data": {...}}, ...]
@@ -124,37 +126,122 @@ async def consume_step_requests(
             # Group already exists, ignore
             pass
         
-        # Read messages using asyncio.to_thread for blocking Redis call
-        messages = await asyncio.to_thread(
-            redis_client.xreadgroup,
-            consumer_group,
-            consumer_name,
-            {STREAM_STEP_REQUESTS: ">"},  # Read new messages
-            count=count,
-            block=block_ms,
-        )
-        
-        # Format: [(stream_name, [(message_id, {data})])]
         result = []
-        for stream_name, stream_messages in messages:
-            for message_id, data in stream_messages:
-                # Decode message_id if it's bytes
-                if isinstance(message_id, bytes):
-                    message_id = message_id.decode('utf-8')
+        
+        # First, try to read PENDING messages for this consumer (if check_pending is True)
+        # This handles messages that were delivered but never ACKed (e.g., from a previous crash)
+        # Note: Pending message handling is optional - the main fix is checking scan status before processing
+        if check_pending:
+            try:
+                # Get summary first to check if there are any pending messages
+                # xpending(key, group) returns: {'pending': count, 'min': '...', 'max': '...', 'consumers': [...]}
+                pending_summary = redis_client.xpending(STREAM_STEP_REQUESTS, consumer_group)
                 
-                # Decode data values if they're bytes (shouldn't happen with decode_responses=True, but be safe)
-                decoded_data = {}
-                for key, value in data.items():
-                    if isinstance(key, bytes):
-                        key = key.decode('utf-8')
-                    if isinstance(value, bytes):
-                        value = value.decode('utf-8')
-                    decoded_data[key] = value
-                
-                result.append({
-                    "id": message_id,
-                    "data": decoded_data,
-                })
+                if pending_summary and isinstance(pending_summary, dict) and pending_summary.get("pending", 0) > 0:
+                    # Try to get pending messages for this consumer
+                    # Note: Different redis-py versions may have different signatures
+                    # We'll try the most common pattern
+                    try:
+                        # Try with keyword arguments (redis-py >= 4.0)
+                        pending_info = redis_client.xpending(
+                            STREAM_STEP_REQUESTS,
+                            consumer_group,
+                            min="-",
+                            max="+",
+                            count=count,
+                            consumername=consumer_name
+                        )
+                    except TypeError:
+                        # Fallback: try without consumername filter (older redis-py or different signature)
+                        try:
+                            pending_info = redis_client.xpending(
+                                STREAM_STEP_REQUESTS,
+                                consumer_group,
+                                min="-",
+                                max="+",
+                                count=count
+                            )
+                            # Filter for this consumer manually
+                            if pending_info:
+                                pending_info = [
+                                    p for p in pending_info 
+                                    if isinstance(p, dict) and p.get("consumer") == consumer_name
+                                ]
+                        except TypeError:
+                            # If that also fails, skip pending message handling
+                            logger.debug("Skipping pending message check - unsupported xpending signature")
+                            pending_info = []
+                    
+                    if pending_info and isinstance(pending_info, list):
+                        # Claim pending messages that are older than 60 seconds
+                        min_idle_time = 60000  # 60 seconds in milliseconds
+                        message_ids = [p.get("message_id") for p in pending_info if isinstance(p, dict) and p.get("message_id")]
+                        
+                        if message_ids:
+                            claimed = await asyncio.to_thread(
+                                redis_client.xclaim,
+                                STREAM_STEP_REQUESTS,
+                                consumer_group,
+                                consumer_name,
+                                min_idle_time,
+                                message_ids,
+                            )
+                            
+                            if claimed:
+                                logger.info(f"Claimed {len(claimed)} pending message(s) for consumer {consumer_name}")
+                                # Process claimed messages
+                                for message_id, data in claimed:
+                                    if isinstance(message_id, bytes):
+                                        message_id = message_id.decode('utf-8')
+                                    
+                                    decoded_data = {}
+                                    for key, value in data.items():
+                                        if isinstance(key, bytes):
+                                            key = key.decode('utf-8')
+                                        if isinstance(value, bytes):
+                                            value = value.decode('utf-8')
+                                        decoded_data[key] = value
+                                    
+                                    result.append({
+                                        "id": message_id,
+                                        "data": decoded_data,
+                                    })
+            except Exception as e:
+                # Catch all errors and continue - pending message handling is optional
+                logger.debug(f"Error checking pending messages (skipping): {e}")
+                # Continue to read new messages even if pending check fails
+        
+        # Read new messages (only if we don't have enough pending messages)
+        if len(result) < count:
+            messages = await asyncio.to_thread(
+                redis_client.xreadgroup,
+                consumer_group,
+                consumer_name,
+                {STREAM_STEP_REQUESTS: ">"},  # Read new messages
+                count=count - len(result),  # Read remaining slots
+                block=block_ms if len(result) == 0 else 0,  # Only block if no messages at all
+            )
+            
+            # Format: [(stream_name, [(message_id, {data})])]
+            for stream_name, stream_messages in messages:
+                for message_id, data in stream_messages:
+                    # Decode message_id if it's bytes
+                    if isinstance(message_id, bytes):
+                        message_id = message_id.decode('utf-8')
+                    
+                    # Decode data values if they're bytes (shouldn't happen with decode_responses=True, but be safe)
+                    decoded_data = {}
+                    for key, value in data.items():
+                        if isinstance(key, bytes):
+                            key = key.decode('utf-8')
+                        if isinstance(value, bytes):
+                            value = value.decode('utf-8')
+                        decoded_data[key] = value
+                    
+                    result.append({
+                        "id": message_id,
+                        "data": decoded_data,
+                    })
         
         if result:
             logger.info(f"Consumed {len(result)} step request(s) from stream")
@@ -212,4 +299,3 @@ async def publish_step_result(step_result: StepResult) -> bool:
     except RedisError as e:
         logger.error(f"Failed to publish step result: {e}", exc_info=True)
         return False
-

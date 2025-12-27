@@ -31,7 +31,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 600,
+            "max_timeout_sec": 300,
             "max_templates": 1000
           }
         },
@@ -56,7 +56,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 900,
+            "max_timeout_sec": 300,
             "max_templates": 2000
           }
         },
@@ -81,7 +81,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 1800,
+            "max_timeout_sec": 300,
             "max_templates": 5000
           }
         },
@@ -137,7 +137,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 600
+            "max_timeout_sec": 300
           }
         },
         {
@@ -163,7 +163,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 1800
+            "max_timeout_sec": 300
           }
         }
       ]
@@ -214,7 +214,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 60
+            "max_timeout_sec": 300
           }
         },
         {
@@ -240,7 +240,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 120
+            "max_timeout_sec": 300
           }
         },
         {
@@ -270,7 +270,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 180
+            "max_timeout_sec": 300
           }
         }
       ]
@@ -301,7 +301,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 900
+            "max_timeout_sec": 300
           }
         },
         {
@@ -324,7 +324,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 1800
+            "max_timeout_sec": 300
           }
         }
       ]
@@ -354,7 +354,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 900
+            "max_timeout_sec": 300
           }
         },
         {
@@ -376,7 +376,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 600
+            "max_timeout_sec": 300
           }
         }
       ]
@@ -388,9 +388,166 @@
       "allowed_target_types": ["http", "https"],
       "modes": [
         {
+          "mode_id": "sqli_get_basic",
+          "name": "SQLi GET Scan",
+          "description": "Test SQL injection in URL query parameters (GET requests)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              },
+              "param_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific parameter names to test (optional, tests all if not provided)"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_post_data",
+          "name": "SQLi POST Data Scan",
+          "description": "Test SQL injection in POST request body with explicit data",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "string",
+                "description": "POST data string (e.g., 'uname=test&pass=test')"
+              },
+              "param_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Parameter names to test (optional, tests all if not provided)"
+              },
+              "cookie": {
+                "type": "string",
+                "description": "Cookie string (optional)"
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              }
+            },
+            "required": ["data"],
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_forms_login",
+          "name": "SQLi Forms Login Scan",
+          "description": "Test SQL injection in login forms (automatically detects and tests form parameters)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              },
+              "use_raw_request": {
+                "type": "boolean",
+                "default": true,
+                "description": "Use raw request file (-r) for better reliability (recommended)"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_raw_request",
+          "name": "SQLi Raw Request Scan",
+          "description": "Test SQL injection using a raw HTTP request file (most reliable for login forms)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "raw_request_ref": {
+                "type": "string",
+                "description": "Path to raw HTTP request file or inline raw request text"
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              }
+            },
+            "required": ["raw_request_ref"],
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
           "mode_id": "sqli_light",
           "name": "Light SQLi Scan",
-          "description": "Quick SQL injection detection",
+          "description": "Quick SQL injection detection (legacy mode, uses --forms)",
           "params_schema": {
             "type": "object",
             "properties": {
@@ -410,7 +567,7 @@
             "additionalProperties": false
           },
           "constraints": {
-            "max_timeout_sec": 900
+            "max_timeout_sec": 300
           }
         }
       ]

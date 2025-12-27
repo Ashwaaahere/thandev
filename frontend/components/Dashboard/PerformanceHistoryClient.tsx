@@ -188,7 +188,7 @@ export default function PerformanceHistoryClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session?.user} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />
@@ -211,6 +211,11 @@ export default function PerformanceHistoryClient() {
 
   // Unauthenticated state (will redirect)
   if (sessionStatus === 'unauthenticated') {
+    router.push('/auth');
+    return null;
+  }
+
+  if (!session) {
     return null;
   }
 
@@ -223,7 +228,7 @@ export default function PerformanceHistoryClient() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <DashboardHeader 
-          user={session?.user} 
+          user={session.user} 
           onMenuClick={() => setSidebarOpen(true)}
           showLogo={sidebarOpen}
         />

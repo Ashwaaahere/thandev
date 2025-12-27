@@ -1,7 +1,7 @@
 """
 Tool catalog schemas
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Dict, Any
 
 
@@ -13,8 +13,7 @@ class ModeDefinition(BaseModel):
     params_schema: Dict[str, Any] = Field(..., description="JSON Schema for mode parameters")
     constraints: Dict[str, Any] = Field(default_factory=dict, description="Mode constraints")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class ToolDefinition(BaseModel):
@@ -25,8 +24,7 @@ class ToolDefinition(BaseModel):
     allowed_target_types: List[str] = Field(..., description="Target types this tool can scan")
     modes: List[ModeDefinition] = Field(..., description="Available modes for this tool")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class ToolCatalog(BaseModel):
@@ -34,8 +32,7 @@ class ToolCatalog(BaseModel):
     tools: List[ToolDefinition] = Field(..., description="List of available tools")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Catalog metadata")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 

@@ -228,6 +228,7 @@ async def stop_session(
     session_id: str,
     status: SessionStatus,
     stop_reason_code: Optional[StopReasonCode] = None,
+    error_message: Optional[str] = None,
 ) -> bool:
     """
     Stop a session and update its status.
@@ -238,6 +239,7 @@ async def stop_session(
         session_id: Session ID
         status: Final status (COMPLETED, FAILED, or STOPPED)
         stop_reason_code: Reason for stopping
+        error_message: Error message if session failed
         
     Returns:
         True if stopped successfully, False otherwise
@@ -248,6 +250,8 @@ async def stop_session(
     }
     if stop_reason_code:
         updates["stop_reason_code"] = stop_reason_code.value
+    if error_message:
+        updates["error_message"] = error_message
     
     return await update_session(org_id, project_id, session_id, updates)
 

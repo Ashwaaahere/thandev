@@ -27,6 +27,10 @@ from app.models.scan import ScanJob
 from app.models.finding import Finding
 from app.models.tenant import Tenant
 from app.models.project import Project
+from app.core.constants import CANON_FINDINGS_COUNT, CANON_SEV_BREAKDOWN, DEPRECATED_FINDINGS_BY_SEVERITY
+import logging
+
+logger = logging.getLogger(__name__)
 
 ReportMode = Literal["full", "executive"]
 
@@ -302,6 +306,14 @@ def _build_status_pill(status: str) -> Table:
     return pill_table
 
 
+def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict]:
+    """Compute findings count and severity breakdown from actual findings."""
+    findings_count = len(findings)
+    severity_counts = Counter(_severity_label(getattr(f, "severity", "info")) for f in findings)
+    breakdown = {sev: severity_counts.get(sev, 0) for sev in ["critical", "high", "medium", "low", "info"]}
+    return findings_count, breakdown
+
+
 def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> List:
     """Build professional cover page with metadata."""
     story = []
@@ -341,7 +353,7 @@ def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> L
     # Metadata table (narrower, card-like)
     summary = getattr(scan, "summary", None)
     risk_score = _safe_summary_value(summary, "risk_score", 0)
-    findings_count = _safe_summary_value(summary, "findings_count", len(findings))
+    findings_count, severity_breakdown = _compute_findings_metrics(findings)
     
     created_at = getattr(scan, "created_at", None)
     created_at_str = created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if created_at else "N/A"
@@ -415,21 +427,15 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
     story = []
     
     summary = getattr(scan, "summary", None)
-    findings_count = _safe_summary_value(summary, "findings_count", len(findings))
+    findings_count, severity_breakdown = _compute_findings_metrics(findings)
     risk_score = _safe_summary_value(summary, "risk_score", 0)
     
     # Section 1: Risk at a glance
     story.append(Paragraph("Risk at a Glance", styles["section_title"]))
     
-    # Calculate max severity
-    findings_by_severity = _safe_summary_value(summary, "findings_by_severity", {})
-    if not findings_by_severity and findings:
-        severity_counts = Counter(_severity_label(getattr(f, "severity", "info")) for f in findings)
-        findings_by_severity = dict(severity_counts)
-    
     max_severity = "INFO"
     for sev in ["critical", "high", "medium", "low", "info"]:
-        if findings_by_severity.get(sev, 0) > 0:
+        if severity_breakdown.get(sev, 0) > 0:
             max_severity = sev.upper()
             break
     
@@ -508,9 +514,9 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
                 "Continue routine monitoring and periodic assessments."
             )
         else:
-            critical_count = findings_by_severity.get("critical", 0)
-            high_count = findings_by_severity.get("high", 0)
-            medium_count = findings_by_severity.get("medium", 0)
+            critical_count = severity_breakdown.get("critical", 0)
+            high_count = severity_breakdown.get("high", 0)
+            medium_count = severity_breakdown.get("medium", 0)
             
             exec_summary = (
                 f"This security assessment was conducted on {target_str} using {scan_level} scan level on {date_str}. "
@@ -666,7 +672,7 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
     severity_counts_row = []
     
     for sev in ["critical", "high", "medium", "low", "info"]:
-        count = findings_by_severity.get(sev, 0)
+        count = severity_breakdown.get(sev, 0)
         severity_headers.append(sev.capitalize())
         severity_counts_row.append(str(count))
     
@@ -707,9 +713,9 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
     if mode == "executive" and findings_count > 0:
         story.append(Paragraph("30-Day Remediation Plan", styles["subsection_title"]))
         
-        critical_count = findings_by_severity.get("critical", 0)
-        high_count = findings_by_severity.get("high", 0)
-        medium_count = findings_by_severity.get("medium", 0)
+        critical_count = severity_breakdown.get("critical", 0)
+        high_count = severity_breakdown.get("high", 0)
+        medium_count = severity_breakdown.get("medium", 0)
         
         # Immediate (24h)
         story.append(Paragraph("<b>Immediate (24 hours):</b>", styles["body"]))
@@ -776,7 +782,7 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
             
             remediation_points = []
             
-            if findings_by_severity.get("critical", 0) > 0 or findings_by_severity.get("high", 0) > 0:
+            if severity_breakdown.get("critical", 0) > 0 or severity_breakdown.get("high", 0) > 0:
                 remediation_points.append("Prioritize remediation of High and Medium findings within 7–14 days.")
             
             if nmap_findings:

@@ -14,17 +14,24 @@ from fastapi.openapi.utils import get_openapi
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import projects, scans, tenants, metrics, findings, performance, notifications
+from app.api import projects, scans, tenants, users, metrics, findings, performance, notifications, admin, access
 from app.api import findings_batch
+from app.api import auth_bootstrap
 
 # Load environment variables
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO if not settings.DEBUG else logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Use JSON logging in production, human-readable in development
+USE_JSON_LOGGING = os.getenv("USE_JSON_LOGGING", "false").lower() == "true"
+if USE_JSON_LOGGING:
+    from app.core.logging_config import setup_structured_logging
+    setup_structured_logging(use_json=True)
+else:
+    logging.basicConfig(
+        level=logging.INFO if not settings.DEBUG else logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
 logger = logging.getLogger(__name__)
 
 
@@ -38,9 +45,30 @@ async def lifespan(app: FastAPI):
     logger.info(f"Redis: {settings.REDIS_URL.split('@')[-1] if '@' in settings.REDIS_URL else 'configured'}")
     
     # Create database tables (in production, use Alembic migrations)
-    if settings.ENVIRONMENT == "development":
-        logger.info("Creating database tables...")
-        Base.metadata.create_all(bind=engine)
+    # Only auto-create tables in development with SQLite
+    # For Postgres, use Alembic migrations
+    if settings.ENVIRONMENT == "development" and "sqlite" in settings.DATABASE_URL.lower():
+        logger.info("Creating database tables (SQLite development mode)...")
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            logger.warning(f"Could not create tables automatically: {e}. Use Alembic migrations instead.")
+    elif settings.ENVIRONMENT == "development" and "postgresql" in settings.DATABASE_URL.lower():
+        logger.info("Using Postgres in development - ensure migrations are run with: alembic upgrade head")
+    
+    # Recover stale scans from system downtime
+    if settings.SCAN_RECOVERY_ENABLED:
+        try:
+            from app.services.scan_recovery import recover_scans_on_startup
+            recover_scans_on_startup(
+                recovery_mode=settings.SCAN_RECOVERY_MODE,
+                max_stale_age_hours=settings.SCAN_RECOVERY_MAX_STALE_AGE_HOURS
+            )
+        except Exception as e:
+            logger.error(f"Scan recovery failed during startup: {e}", exc_info=True)
+            # Don't fail startup if recovery fails - log and continue
+    else:
+        logger.info("Scan recovery is disabled (SCAN_RECOVERY_ENABLED=false)")
     
     yield
     
@@ -135,34 +163,89 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Health check endpoint
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint - returns service status"""
+    return {
+        "status": "ok",
+        "service": "thandev-backend",
+        "version": settings.VERSION,
+    }
+
+
+# Readiness check endpoint
+@app.get("/ready")
+async def ready():
+    """
+    Readiness check endpoint - verifies critical dependencies are available.
+    Returns 200 if ready, 500 if not ready.
+    """
+    checks = {}
+    all_ready = True
+    
+    # Check database
     try:
         from app.core.database import SessionLocal
         from sqlalchemy import text
         db = SessionLocal()
         db.execute(text("SELECT 1"))
         db.close()
-        db_status = "healthy"
+        checks["database"] = "ready"
     except Exception as e:
-        logger.error(f"Database health check failed: {e}")
-        db_status = "unhealthy"
+        logger.error(f"Database readiness check failed: {e}")
+        checks["database"] = f"not_ready: {str(e)}"
+        all_ready = False
     
-    return {
-        "status": "ok" if db_status == "healthy" else "degraded",
-        "database": db_status,
-        "version": settings.VERSION,
-    }
+    # Check Redis
+    try:
+        import redis
+        redis_client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+        redis_client.ping()
+        checks["redis"] = "ready"
+    except Exception as e:
+        logger.error(f"Redis readiness check failed: {e}")
+        checks["redis"] = f"not_ready: {str(e)}"
+        all_ready = False
+    
+    # Check Qdrant (if brain service is enabled and uses Qdrant)
+    # Note: This is optional - brain service may use pgvector instead
+    if settings.BRAIN_SERVICE_ENABLED:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{settings.BRAIN_SERVICE_URL}/health")
+                if response.status_code == 200:
+                    checks["brain_service"] = "ready"
+                else:
+                    checks["brain_service"] = f"not_ready: HTTP {response.status_code}"
+                    all_ready = False
+        except Exception as e:
+            logger.warning(f"Brain service readiness check failed (may be optional): {e}")
+            checks["brain_service"] = f"not_ready: {str(e)}"
+            # Don't fail readiness if brain service is optional
+    
+    status_code = 200 if all_ready else 500
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_ready else "not_ready",
+            "checks": checks,
+            "version": settings.VERSION,
+        }
+    )
 
 
 # Include API routers
 app.include_router(projects.router, prefix=settings.API_V1_PREFIX)
 app.include_router(scans.router, prefix=settings.API_V1_PREFIX)
 app.include_router(tenants.router, prefix=settings.API_V1_PREFIX)
+app.include_router(users.router, prefix=settings.API_V1_PREFIX)
 app.include_router(metrics.router, prefix=settings.API_V1_PREFIX)
 app.include_router(findings.router, prefix=settings.API_V1_PREFIX)
 app.include_router(findings_batch.router, prefix=settings.API_V1_PREFIX)
 app.include_router(performance.router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications.router, prefix=settings.API_V1_PREFIX)
+app.include_router(auth_bootstrap.router, prefix=settings.API_V1_PREFIX)
+app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
+app.include_router(access.router, prefix=settings.API_V1_PREFIX)
 
 
 # Custom OpenAPI schema

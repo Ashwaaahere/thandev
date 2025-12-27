@@ -2,18 +2,21 @@
 Tenants API router
 Temporary admin endpoints for managing tenant plans
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+import uuid
+import os
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from app.core.database import get_db
-from app.core.tenant_utils import require_tenant
+from app.core.tenant_utils import require_tenant, validate_external_id
+from app.core.config import settings
 from app.core.plans import get_plan_limits, PlanName
-from app.models.tenant import Tenant
+from app.models.tenant import Tenant, PlanTier
 from app.models.project import Project
 from app.models.scan import ScanJob, ScanStatus
-from app.schemas.tenant import TenantPlanInfo, TenantPlanUsage, PlanLimits
+from app.schemas.tenant import TenantPlanInfo, TenantPlanUsage, PlanLimits, TenantCreate, TenantResponse
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -102,6 +105,78 @@ async def get_current_tenant_info(
     )
 
 
+@router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
+def create_tenant(
+    payload: TenantCreate,
+    db: Session = Depends(get_db),
+    x_thandev_admin_token: Optional[str] = Header(None, alias="X-Thandev-Admin-Token"),
+):
+    """
+    Create a new tenant.
+    
+    For local/dev/test: No authentication required.
+    For production: Requires X-Thandev-Admin-Token header (set via THANDEV_ADMIN_TOKEN env var).
+    
+    Args:
+        payload: Tenant creation data (id optional, will be generated if not provided)
+        x_thandev_admin_token: Admin token for production (optional in dev/test)
+        
+    Returns:
+        Created tenant information
+    """
+    env_lower = settings.ENVIRONMENT.strip().lower()
+    is_production = env_lower == "production"
+    
+    # In production, require admin token
+    if is_production:
+        admin_token = os.getenv("THANDEV_ADMIN_TOKEN", "")
+        if not x_thandev_admin_token or x_thandev_admin_token != admin_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Admin token required for tenant creation in production"
+            )
+    
+    # Validate or generate tenant ID
+    if payload.id:
+        tenant_id = validate_external_id(payload.id, "tenant_id")
+    else:
+        tenant_id = str(uuid.uuid4())
+    
+    # Check if tenant already exists
+    existing = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tenant with id '{tenant_id}' already exists"
+        )
+    
+    # Validate plan
+    plan_mapping = {
+        "free": PlanTier.FREE,
+        "basic": PlanTier.BASIC,
+        "pro": PlanTier.PRO,
+        "enterprise": PlanTier.ENTERPRISE,
+    }
+    plan_tier = plan_mapping.get(payload.plan.lower())
+    if not plan_tier:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid plan: {payload.plan}. Must be one of: free, basic, pro, enterprise"
+        )
+    
+    # Create tenant
+    tenant = Tenant(
+        id=tenant_id,
+        name=payload.name,
+        plan=plan_tier,
+    )
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    
+    return TenantResponse.model_validate(tenant)
+
+
 @router.post("/{tenant_id}/change_plan")
 async def change_plan(
     tenant_id: str,
@@ -123,8 +198,6 @@ async def change_plan(
     Returns:
         Updated tenant information with new plan
     """
-    from app.models.tenant import PlanTier
-    
     tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
     if not tenant:
         raise HTTPException(

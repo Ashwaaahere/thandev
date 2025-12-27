@@ -120,12 +120,78 @@ async def global_exception_handler(request: Request, exc: Exception):
 # Health check endpoint
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
+    """Health check endpoint - returns service status"""
     return {
         "status": "ok",
         "service": "thandev-brain",
         "version": "1.0.0",
     }
+
+
+# Readiness check endpoint
+@app.get("/ready")
+async def ready():
+    """
+    Readiness check endpoint - verifies critical dependencies are available.
+    Returns 200 if ready, 500 if not ready.
+    """
+    from fastapi.responses import JSONResponse
+    checks = {}
+    all_ready = True
+    
+    # Check RAG store
+    try:
+        from app.rag.store import get_rag_store
+        rag_store = get_rag_store()
+        
+        if settings.RAG_STORE_TYPE == "qdrant":
+            # Check Qdrant connection
+            try:
+                # Try to get collections to verify connection
+                if hasattr(rag_store, '_client') and rag_store._client:
+                    collections = rag_store._client.get_collections()
+                    checks["qdrant"] = "ready"
+                else:
+                    # Client not initialized, try to initialize
+                    await rag_store.initialize()
+                    if hasattr(rag_store, '_client') and rag_store._client:
+                        checks["qdrant"] = "ready"
+                    else:
+                        checks["qdrant"] = "not_ready: client not initialized"
+                        all_ready = False
+            except Exception as e:
+                logger.error(f"Qdrant readiness check failed: {e}")
+                checks["qdrant"] = f"not_ready: {str(e)}"
+                all_ready = False
+        elif settings.RAG_STORE_TYPE == "pgvector":
+            # Check PostgreSQL connection (for pgvector)
+            try:
+                from sqlalchemy import create_engine, text
+                engine = create_engine(settings.DATABASE_URL)
+                with engine.connect() as conn:
+                    conn.execute(text("SELECT 1"))
+                checks["postgresql"] = "ready"
+            except Exception as e:
+                logger.error(f"PostgreSQL readiness check failed: {e}")
+                checks["postgresql"] = f"not_ready: {str(e)}"
+                all_ready = False
+        else:
+            checks["rag_store"] = f"not_ready: unknown store type {settings.RAG_STORE_TYPE}"
+            all_ready = False
+    except Exception as e:
+        logger.error(f"RAG store readiness check failed: {e}")
+        checks["rag_store"] = f"not_ready: {str(e)}"
+        all_ready = False
+    
+    status_code = 200 if all_ready else 500
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "ready" if all_ready else "not_ready",
+            "checks": checks,
+            "version": "1.0.0",
+        }
+    )
 
 
 # Include API routers

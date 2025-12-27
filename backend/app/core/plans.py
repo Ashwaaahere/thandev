@@ -13,12 +13,13 @@ class PlanName(str, Enum):
     TEAM = "team"
 
 
-class PlanLimits(TypedDict):
+class PlanLimits(TypedDict, total=False):
     """Plan limits structure"""
     max_projects: int
     max_scans_per_month: int
     max_concurrent_scans: int
     allowed_scan_levels: List[str]
+    max_scans_per_hour: int  # Optional: per-user rate limit (defaults to 10 if not specified)
 
 
 # Central plan configuration

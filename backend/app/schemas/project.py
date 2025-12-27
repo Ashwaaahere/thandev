@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Project API
 """
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, HttpUrl, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -19,6 +19,7 @@ class ProjectResponse(BaseModel):
     id: str
     name: str
     target_url: str
+    root_domain: Optional[str] = None
     repo_url: Optional[str]
     description: Optional[str]
     owner_id: str
@@ -26,8 +27,7 @@ class ProjectResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectWithStats(BaseModel):
@@ -35,6 +35,7 @@ class ProjectWithStats(BaseModel):
     id: str
     name: str
     target_url: Optional[str] = None
+    root_domain: Optional[str] = None
     description: Optional[str] = None
     created_at: datetime
     last_scan_at: Optional[datetime] = None
@@ -43,8 +44,7 @@ class ProjectWithStats(BaseModel):
     total_scans: int = 0
     open_findings: int = 0
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectListResponse(BaseModel):
@@ -82,6 +82,7 @@ class ProjectOverviewResponse(BaseModel):
     id: str
     name: str
     target_url: str
+    root_domain: Optional[str] = None
     created_at: datetime
     stats: ProjectOverviewStats
 

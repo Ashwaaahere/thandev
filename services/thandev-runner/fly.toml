@@ -1,0 +1,27 @@
+# Fly.io configuration for thandev-runner
+app = "thandev-runner"
+primary_region = "iad"
+
+[build]
+
+[env]
+  CONSUMER_GROUP = "runner-workers"
+  CONSUMER_NAME = "runner-1"
+  EXECUTION_ADAPTER = "local"
+  MAX_CONCURRENT_STEPS = "5"
+  MAX_INFLIGHT_PER_SESSION = "2"
+
+# Runner is a background worker, not an HTTP service
+[processes]
+  app = "python -m app.tasks"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+
+# Persistent volume for tool execution data
+[[mounts]]
+  source = "runner-data"
+  destination = "/app/data"
+

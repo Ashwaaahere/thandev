@@ -1,7 +1,7 @@
 """
 Report prompt schemas
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Dict, Any, List, Optional
 
 
@@ -12,8 +12,7 @@ class ReportJsonSchema(BaseModel):
     required: List[str] = Field(default_factory=list, description="Required fields")
     additionalProperties: bool = Field(default=False, description="Reject unknown properties")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class BuildReportPromptRequest(BaseModel):
@@ -24,8 +23,7 @@ class BuildReportPromptRequest(BaseModel):
     org_id: Optional[str] = Field(None, description="Organization ID")
     project_id: Optional[str] = Field(None, description="Project ID")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class BuildReportPromptResponse(BaseModel):
@@ -36,8 +34,7 @@ class BuildReportPromptResponse(BaseModel):
     artifact_index: Dict[str, Any] = Field(default_factory=dict, description="Artifact index")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 

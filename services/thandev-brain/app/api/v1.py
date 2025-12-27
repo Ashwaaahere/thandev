@@ -17,6 +17,8 @@ from app.models import (
     StopSessionResponse,
     SessionStatus,
     StopReasonCode,
+    EnrichFindingsRequest,
+    EnrichFindingsResponse,
 )
 from app.catalog import load_catalog
 from app.api.rag import router as rag_router
@@ -216,6 +218,13 @@ async def get_session(
                 detail=f"Session {session_id} not found"
             )
         
+        # Extract error message if session failed
+        error_message = None
+        if session_state.status == SessionStatus.FAILED:
+            # Try to get error_message from session state
+            session_dict = session_state.model_dump() if hasattr(session_state, 'model_dump') else {}
+            error_message = session_dict.get("error_message") or getattr(session_state, "error_message", None)
+        
         return GetSessionResponse(
             session_id=session_state.session_id,
             status=session_state.status,
@@ -224,6 +233,7 @@ async def get_session(
             total_runtime_sec=session_state.total_runtime_sec,
             created_at=session_state.created_at,
             last_updated=session_state.last_updated,
+            error_message=error_message,
         )
     except HTTPException:
         raise
@@ -291,5 +301,56 @@ async def stop_session(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to stop session: {str(e)}"
+        )
+
+
+@router.post("/enrich-findings", response_model=EnrichFindingsResponse)
+async def enrich_findings(request: EnrichFindingsRequest) -> EnrichFindingsResponse:
+    """
+    Enrich findings with AI-generated impact summaries and remediation guidance.
+    
+    The brain uses RAG + OpenAI to:
+    1. Query relevant evidence from RAG store (similar findings, CVE templates, tech fingerprint)
+    2. Generate structured impact summaries and remediation steps using OpenAI
+    3. Return enriched findings with AI-generated content
+    
+    This endpoint does NOT modify the core backend database. The core backend
+    should call this endpoint and then store the returned enrichment data.
+    
+    Returns:
+        EnrichFindingsResponse with enriched findings
+    """
+    try:
+        from app.finding_enrichment.enricher import enrich_findings_batch
+        
+        logger.info(f"Enriching {len(request.findings)} findings")
+        
+        enriched_items = await enrich_findings_batch(
+            findings=request.findings,
+            org_id=request.org_id,
+            project_id=request.project_id,
+            target_url=request.target_url,
+        )
+        
+        return EnrichFindingsResponse(
+            items=enriched_items,
+            metadata={
+                "count": len(enriched_items),
+                "org_id": request.org_id,
+                "project_id": request.project_id,
+                "target_url": request.target_url,
+            }
+        )
+    except ValueError as e:
+        logger.warning(f"Invalid enrichment request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"Failed to enrich findings: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enrich findings: {str(e)}"
         )
 

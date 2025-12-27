@@ -141,7 +141,7 @@ export default function PerformanceScannerClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session?.user} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />
@@ -164,6 +164,11 @@ export default function PerformanceScannerClient() {
 
   // Unauthenticated state (will redirect)
   if (sessionStatus === 'unauthenticated') {
+    router.push('/auth');
+    return null;
+  }
+
+  if (!session) {
     return null;
   }
 
@@ -176,7 +181,7 @@ export default function PerformanceScannerClient() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <DashboardHeader 
-          user={session?.user} 
+          user={session.user} 
           onMenuClick={() => setSidebarOpen(true)}
           showLogo={sidebarOpen}
         />

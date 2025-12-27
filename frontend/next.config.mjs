@@ -142,11 +142,11 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https: blob:",
-              "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 https://thandev-backend.fly.dev https://api.github.com https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
+              "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://127.0.0.1:7242 https://thandev-backend.fly.dev https://api.github.com https://github.com https://github.com/login https://github.com/login/oauth https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
               "frame-src 'none'",
               "object-src 'none'",
               "base-uri 'self'",
-              "form-action 'self'",
+              "form-action 'self' https://github.com",
               "frame-ancestors 'none'",
               "upgrade-insecure-requests"
             ].join('; '),

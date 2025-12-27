@@ -1,8 +1,9 @@
 """
 Pydantic schemas for Tenant API
 """
-from pydantic import BaseModel
-from typing import Dict, Any, List
+from pydantic import BaseModel, ConfigDict
+from typing import Dict, Any, List, Optional
+from datetime import datetime
 
 
 class TenantPlanUsage(BaseModel):
@@ -30,6 +31,23 @@ class TenantPlanInfo(BaseModel):
     plan: str  # "free" | "individual" | "team"
     limits: PlanLimits
     usage: TenantPlanUsage
+
+
+class TenantCreate(BaseModel):
+    """Schema for creating a tenant"""
+    id: Optional[str] = None  # Optional: if not provided, will be generated as UUID
+    name: str
+    plan: str = "pro"  # Default to "pro" (maps to "team" plan)
+
+
+class TenantResponse(BaseModel):
+    """Schema for tenant response"""
+    id: str
+    name: str
+    plan: str
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
 
 
 

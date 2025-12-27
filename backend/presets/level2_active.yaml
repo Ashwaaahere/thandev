@@ -10,18 +10,18 @@ tools:
   - name: "nuclei"
     templates: ["info", "technologies", "misconfig", "exposures", "cves", "vulnerabilities"]
     severity: "medium"
-    timeout: 900
+    timeout: 300
     description: "Comprehensive vulnerability scanning including CVE checks"
     
   - name: "sslscan"
     fallback: "sslyze"
     fallback_final: "openssl s_client"
-    timeout: 180
+    timeout: 300
     description: "TLS/certificate checks"
     
   - name: "nmap"
     args: ["-sC", "-sV", "-Pn"]
-    timeout: 600
+    timeout: 300
     description: "Comprehensive port scan with NSE scripts"
     
   - name: "subfinder"
@@ -30,13 +30,13 @@ tools:
     description: "Passive subdomain enumeration"
     
   - name: "crt.sh"
-    timeout: 120
+    timeout: 300
     description: "Certificate transparency lookups"
     
   - name: "ffuf"
     fallback: "gobuster"
     wordlist: "medium"
-    timeout: 600
+    timeout: 300
     description: "Directory discovery with expanded wordlist"
     
   - name: "nikto"

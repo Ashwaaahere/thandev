@@ -840,6 +840,7 @@ export default function ThandevLanding() {
             animate={{ y: 0, opacity: 1 }}
             transition={{ duration: .6, ease: [0.16,1,0.3,1] }}
             whileHover={{ y: -2 }}
+            style={{ opacity: 1 }} // Fallback: ensure visible even if animation doesn't run
           >
             <h1 className="text-4xl md:text-6xl font-semibold tracking-tight title-future">
               Real-time cybersecurity intelligence.<br />
@@ -859,6 +860,7 @@ export default function ThandevLanding() {
             viewport={{ once: true, amount: .4 }}
             transition={{ duration: .6, ease: [0.16,1,0.3,1] }}
             whileHover={{ y: -4 }}
+            style={{ opacity: 1 }} // Fallback: ensure visible even if animation doesn't run
           >
             {/* floating micro-orbs */}
             <div aria-hidden className="pointer-events-none absolute -left-6 -top-6 h-16 w-16 rounded-full bg-cyan-400/25 blur-2xl" />

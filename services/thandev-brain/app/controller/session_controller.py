@@ -192,23 +192,87 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                 
                 # Wait for results
                 logger.info(f"Waiting for {len(step_ids)} step results for session {session_id}")
-                results = await read_step_results(session_id, step_ids, timeout_sec=600)
+                try:
+                    results = await read_step_results(session_id, step_ids, timeout_sec=600)
+                except Exception as e:
+                    logger.error(f"Failed to read step results for session {session_id}: {e}", exc_info=True)
+                    # If we can't read results, mark steps as failed
+                    results = {}
+                    for step_id in step_ids:
+                        from app.queue.streams import StepResult
+                        results[step_id] = StepResult(
+                            session_id=session_id,
+                            step_id=step_id,
+                            status="failed",
+                            execution_time_sec=0.0,
+                            error=f"Failed to read step results: {str(e)}",
+                        )
                 
-                # Update session state
-                await update_session_from_results(
-                    org_id,
-                    project_id,
-                    session_id,
-                    results,
-                )
+                # Check if we got any results
+                if not results:
+                    error_msg = (
+                        f"No step results received for session {session_id} after waiting. "
+                        f"Runner service may not be processing requests."
+                    )
+                    logger.error(error_msg)
+                    # Mark session as failed due to runner unavailability
+                    await stop_session(
+                        org_id,
+                        project_id,
+                        session_id,
+                        SessionStatus.FAILED,
+                        StopReasonCode.ERROR,
+                        error_message=error_msg,
+                    )
+                    break
+                
+                # Check if all steps failed (runner might be down)
+                all_failed = all(r.status == "failed" for r in results.values())
+                if all_failed and len(results) == len(step_ids):
+                    # Check if errors indicate runner is down
+                    runner_errors = [
+                        r.error for r in results.values() 
+                        if r.error and ("runner" in r.error.lower() or "timeout" in r.error.lower() or "connection" in r.error.lower())
+                    ]
+                    if runner_errors:
+                        logger.error(
+                            f"All steps failed for session {session_id}, runner service appears unavailable. "
+                            f"Errors: {runner_errors[:3]}"
+                        )
+                        # Don't stop immediately - might be temporary, but log the issue
+                
+                # Update session state (this may stop the session if too many failures)
+                session_stopped = False
+                try:
+                    await update_session_from_results(
+                        org_id,
+                        project_id,
+                        session_id,
+                        results,
+                    )
+                    # Reload session to check if it was stopped
+                    updated_session = await get_session(org_id, project_id, session_id)
+                    if updated_session and updated_session.status != SessionStatus.RUNNING:
+                        session_stopped = True
+                        logger.info(f"Session {session_id} was stopped during update (status: {updated_session.status})")
+                except Exception as e:
+                    logger.error(f"Failed to update session from results: {e}", exc_info=True)
+                    # Continue anyway - don't break the loop
+                
+                if session_stopped:
+                    break
                 
                 # Ingest summaries to RAG
-                await ingest_step_summaries(
-                    org_id,
-                    project_id,
-                    session_state.scan_job_id,
-                    results,
-                )
+                try:
+                    await ingest_step_summaries(
+                        org_id,
+                        project_id,
+                        session_state.scan_job_id,
+                        results,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to ingest step summaries: {e}", exc_info=True)
+                    # Don't break - ingestion failure shouldn't stop the scan
                 
             finally:
                 await release_session_lock(session_id)
@@ -217,7 +281,8 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
             await asyncio.sleep(1)
     
     except Exception as e:
-        logger.error(f"Session loop error for {session_id}: {e}", exc_info=True)
+        error_msg = f"Session loop error for {session_id}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
         try:
             await stop_session(
                 org_id if 'org_id' in locals() else None,
@@ -225,6 +290,7 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                 session_id,
                 SessionStatus.FAILED,
                 StopReasonCode.ERROR,
+                error_message=error_msg,
             )
         except:
             pass
@@ -379,7 +445,22 @@ async def update_session_from_results(
     # Consecutive failures: count failed steps in this batch, accumulate if non‑zero, reset on full success
     failures = sum(1 for r in results.values() if r.status != "success")
     if failures > 0:
-        updates["consecutive_failures"] = session_state.consecutive_failures + failures
+        new_consecutive_failures = session_state.consecutive_failures + failures
+        updates["consecutive_failures"] = new_consecutive_failures
+        # If too many consecutive failures, stop the session
+        if new_consecutive_failures >= settings.SESSION_MAX_CONSECUTIVE_FAILURES:
+            error_msg = f"Session stopped due to {new_consecutive_failures} consecutive step failures. Runner service may be unavailable."
+            logger.error(f"Session {session_id}: {error_msg}")
+            await stop_session(
+                org_id,
+                project_id,
+                session_id,
+                SessionStatus.FAILED,
+                StopReasonCode.ERROR,
+                error_message=error_msg,
+            )
+            # Return early to signal that session was stopped
+            return
     else:
         updates["consecutive_failures"] = 0
 

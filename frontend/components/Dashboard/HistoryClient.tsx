@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
+import type { Session } from 'next-auth';
 import ScanHistoryContent from './ScanHistoryContent';
 import PerformanceHistoryContent from './PerformanceHistoryContent';
 import DashboardHeader from './DashboardHeader';
@@ -24,7 +25,7 @@ export default function HistoryClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session ? session.user : undefined} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />
@@ -46,7 +47,11 @@ export default function HistoryClient() {
   }
 
   if (sessionStatus === 'unauthenticated') {
-    router.push('/auth/signin');
+    router.push('/auth');
+    return null;
+  }
+
+  if (!session) {
     return null;
   }
 
@@ -59,7 +64,7 @@ export default function HistoryClient() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <DashboardHeader 
-          user={session ? session.user : undefined} 
+          user={session.user} 
           onMenuClick={() => setSidebarOpen(true)}
           showLogo={sidebarOpen}
         />
@@ -112,7 +117,7 @@ export default function HistoryClient() {
             {/* Tab Content */}
             <div>
               {activeTab === 'security' ? (
-                <ScanHistoryContent user={session ? session.user : undefined} session={session} />
+                <ScanHistoryContent user={session.user} session={session} />
               ) : (
                 <PerformanceHistoryContent />
               )}

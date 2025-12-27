@@ -20,6 +20,18 @@ def upgrade():
     bind = op.get_bind()
     is_sqlite = bind.dialect.name == 'sqlite'
     
+    # Helper function to check if column exists
+    def column_exists(table_name, column_name):
+        """Check if a column exists in a table"""
+        try:
+            conn = bind.connect()
+            inspector = sa.inspect(conn)
+            columns = [col['name'] for col in inspector.get_columns(table_name)]
+            conn.close()
+            return column_name in columns
+        except Exception:
+            return False
+    
     # Helper function to create index if it doesn't exist
     def create_index_if_not_exists(index_name, table_name, columns):
         try:
@@ -37,7 +49,10 @@ def upgrade():
     create_index_if_not_exists('idx_threat_item_source', 'threat_item', ['source'])
     
     # Add indexes to scan_jobs table (with existence check)
-    create_index_if_not_exists('idx_scan_jobs_user_status', 'scan_jobs', ['user_id', 'status'])
+    # Only create user_id index if the column exists (for backward compatibility with old schema)
+    if column_exists('scan_jobs', 'user_id'):
+        create_index_if_not_exists('idx_scan_jobs_user_status', 'scan_jobs', ['user_id', 'status'])
+    # Always create created_at index (this column should exist)
     create_index_if_not_exists('idx_scan_jobs_created_at', 'scan_jobs', ['created_at'])
     
     # Add constraints to scan_jobs (SQLite doesn't support ALTER TABLE for constraints)

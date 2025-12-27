@@ -59,7 +59,7 @@ class SecurityScanner:
                 "-silent", "-json", "-o", nuclei_output_file
             ]
             
-            nuclei_result = subprocess.run(nuclei_cmd, capture_output=True, text=True, timeout=1800)
+            nuclei_result = subprocess.run(nuclei_cmd, capture_output=True, text=True, timeout=300)
             if nuclei_result.returncode != 0:
                 logger.warning(f"Nuclei scan had issues: {nuclei_result.stderr}")
             
@@ -71,7 +71,7 @@ class SecurityScanner:
                 hostname, "-oX", nmap_output_file
             ]
             
-            nmap_result = subprocess.run(nmap_cmd, capture_output=True, text=True, timeout=600)
+            nmap_result = subprocess.run(nmap_cmd, capture_output=True, text=True, timeout=300)
             if nmap_result.returncode != 0:
                 logger.warning(f"Nmap scan had issues: {nmap_result.stderr}")
             
@@ -444,7 +444,7 @@ class SecurityScanner:
                 hostname
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode == 0:
                 self.process_nmap_results(result.stdout)
@@ -533,7 +533,7 @@ class SecurityScanner:
                 "-silent"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode == 0:
                 self.process_nuclei_results(result.stdout)
@@ -763,7 +763,7 @@ class SecurityScanner:
                 "-silent"
             ]
             
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode == 0:
                 for line in result.stdout.strip().split('\n'):
@@ -1369,7 +1369,7 @@ class SecurityScanner:
                     "-json",
                     "-o", "/tmp/ffuf_results.json"
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode == 0:
                     with open("/tmp/ffuf_results.json", 'r') as f:
                         data = json.load(f)
@@ -1395,7 +1395,7 @@ class SecurityScanner:
                     "-w", wordlist_path,
                     "-o", "/tmp/gobuster_results.txt"
                 ]
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                 if result.returncode == 0:
                     with open("/tmp/gobuster_results.txt", 'r') as f:
                         for line in f:
@@ -1420,7 +1420,7 @@ class SecurityScanner:
             logger.info(f"Running nmap scan on {hostname}")
             
             cmd = ["nmap"] + args + ["-oX", "/tmp/nmap_results.xml", hostname]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
             
             if result.returncode == 0:
                 self.process_nmap_results(result.stdout)

@@ -14,22 +14,16 @@ export default function AuthPage() {
       setIsLoading(true);
       setError(null);
       
-      const result = await signIn('github', { 
+      // For OAuth providers, we need to allow redirect
+      // NextAuth will handle the redirect to GitHub and back
+      await signIn('github', { 
         callbackUrl: '/dashboard',
-        redirect: false 
+        redirect: true 
       });
-      
-      if (result?.ok) {
-        router.push('/dashboard');
-      } else {
-        setError('Authentication failed. Please try again.');
-        console.error('GitHub sign in failed:', result?.error);
-      }
     } catch (error) {
+      setIsLoading(false);
       setError('An unexpected error occurred. Please try again.');
       console.error('GitHub sign in error:', error);
-    } finally {
-      setIsLoading(false);
     }
   };
 

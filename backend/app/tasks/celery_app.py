@@ -48,7 +48,7 @@ def run_scan_task(self, scan_job_id: str, target_url: str, scan_level: str, user
     from app.models.scan import ScanJob, ScanStatus
     from app.services.scan_orchestrator import run_scan_for_job
     from app.services.queue_manager import get_queue_manager, TooManyScansForUser
-    from datetime import datetime
+    from datetime import datetime, timezone
     import logging
     
     logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ def run_scan_task(self, scan_job_id: str, target_url: str, scan_level: str, user
             with queue_manager.user_scan_slot(user_id, max_per_user=max_per_user):
                 # Update status to running
                 scan_job.status = ScanStatus.RUNNING
-                scan_job.started_at = datetime.utcnow()
+                scan_job.started_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(scan_job)
                 
@@ -127,7 +127,7 @@ def run_scan_task(self, scan_job_id: str, target_url: str, scan_level: str, user
             try:
                 scan_job.status = ScanStatus.FAILED
                 scan_job.error_message = str(e)
-                scan_job.completed_at = datetime.utcnow()
+                scan_job.completed_at = datetime.now(timezone.utc)
                 db.commit()
             except Exception as db_error:
                 logger.error(f"Failed to update scan job status: {db_error}")

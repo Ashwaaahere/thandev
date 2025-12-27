@@ -193,9 +193,10 @@ class SessionState(BaseModel):
     no_new_findings_iterations: int = Field(default=0, ge=0, description="Iterations with no new findings")
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Session creation time")
     last_updated: datetime = Field(default_factory=datetime.utcnow, description="Last update time")
+    error_message: Optional[str] = Field(None, description="Error message if session failed")
     
     class Config:
-        extra = "forbid"
+        extra = "allow"  # Allow extra fields like error_message from Redis
 
 
 class StartSessionResponse(BaseModel):
@@ -217,6 +218,7 @@ class GetSessionResponse(BaseModel):
     total_runtime_sec: float = Field(..., description="Total runtime")
     created_at: datetime = Field(..., description="Creation time")
     last_updated: datetime = Field(..., description="Last update time")
+    error_message: Optional[str] = Field(None, description="Error message if session failed")
     
     class Config:
         extra = "forbid"
@@ -227,6 +229,61 @@ class StopSessionResponse(BaseModel):
     session_id: str = Field(..., description="Session identifier")
     status: SessionStatus = Field(..., description="Final status")
     message: str = Field(..., description="Status message")
+    
+    class Config:
+        extra = "forbid"
+
+
+# Finding Enrichment Models
+
+class BrainFindingInput(BaseModel):
+    """Input model for finding enrichment"""
+    id: str = Field(..., description="Finding ID")
+    title: str = Field(..., description="Finding title")
+    description: Optional[str] = Field(None, description="Finding description")
+    severity: Optional[str] = Field(None, description="Finding severity (critical, high, medium, low, info)")
+    tool_name: Optional[str] = Field(None, description="Tool that found this issue")
+    vuln_type: Optional[str] = Field(None, description="Vulnerability type (xss, sqli, etc.)")
+    url: Optional[str] = Field(None, description="URL where finding was detected")
+    parameter: Optional[str] = Field(None, description="Parameter name if applicable")
+    target_url: Optional[str] = Field(None, description="Target URL being scanned")
+    project_id: Optional[str] = Field(None, description="Project ID")
+    org_id: Optional[str] = Field(None, description="Organization ID")
+    raw_data: Optional[Dict[str, Any]] = Field(None, description="Raw finding data as dict (not string)")
+    
+    class Config:
+        extra = "forbid"
+
+
+class EnrichedFindingItem(BaseModel):
+    """Enriched finding data from AI"""
+    finding_id: str = Field(..., description="Finding ID")
+    impact_summary: Optional[str] = Field(None, description="AI-generated impact summary")
+    remediation_summary: Optional[str] = Field(None, description="AI-generated remediation summary")
+    remediation_steps: Optional[List[str]] = Field(None, description="AI-generated remediation steps")
+    ai_source: Optional[str] = Field(None, description="Source identifier (e.g., 'brain_v1')")
+    ai_model: Optional[str] = Field(None, description="AI model used (e.g., 'gpt-4o-mini')")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score (0.0-1.0)")
+    
+    class Config:
+        extra = "forbid"
+
+
+class EnrichFindingsRequest(BaseModel):
+    """Request to enrich findings with AI"""
+    findings: List[BrainFindingInput] = Field(..., description="List of findings to enrich")
+    org_id: Optional[str] = Field(None, description="Organization ID for RAG filtering")
+    project_id: Optional[str] = Field(None, description="Project ID for RAG filtering")
+    target_url: Optional[str] = Field(None, description="Target URL for RAG filtering")
+    
+    class Config:
+        extra = "forbid"
+
+
+class EnrichFindingsResponse(BaseModel):
+    """Response containing enriched findings"""
+    items: List[EnrichedFindingItem] = Field(..., description="List of enriched findings")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     
     class Config:
         extra = "forbid"

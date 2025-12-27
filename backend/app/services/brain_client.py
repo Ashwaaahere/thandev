@@ -33,7 +33,7 @@ class BrainClient:
             base_url: Base URL of brain service. If None, uses settings.BRAIN_SERVICE_URL.
         """
         self.base_url = (base_url or settings.BRAIN_SERVICE_URL).rstrip("/")
-        self.timeout = 60.0  # Increased timeout for session start (should be fast, but allow buffer)
+        self.timeout = settings.BRAIN_SERVICE_TIMEOUT
     
     async def create_plan(
         self,
@@ -244,7 +244,7 @@ class BrainClient:
         session_id: str,
         org_id: Optional[str] = None,
         project_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Get brain session status.
         
@@ -254,10 +254,10 @@ class BrainClient:
             project_id: Project ID (optional, for filtering)
             
         Returns:
-            Dict with session status
+            Dict with session status, or None if session not found (404)
             
         Raises:
-            httpx.HTTPError: If request fails
+            httpx.HTTPError: If request fails (except 404)
         """
         endpoint = f"{self.base_url}/v1/sessions/{session_id}"
         
@@ -275,12 +275,90 @@ class BrainClient:
                     endpoint,
                     params=params,
                 )
+                
+                # Handle 404 gracefully - session not found is a valid state
+                if response.status_code == 404:
+                    logger.debug(f"Brain session {session_id} not found (404) - may have expired or never existed")
+                    return None
+                
                 response.raise_for_status()
                 
                 data = response.json()
                 return data
                 
         except httpx.HTTPStatusError as e:
+            # Only log non-404 errors as errors
+            if e.response.status_code != 404:
+                logger.error(f"Brain service returned error: {e.response.status_code} - {e.response.text}")
+            raise
+        except httpx.RequestError as e:
+            logger.error(f"Failed to connect to brain service: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error calling brain service: {e}", exc_info=True)
+            raise
+    
+    async def stop_session(
+        self,
+        session_id: str,
+        org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Stop a brain session gracefully.
+        
+        Args:
+            session_id: Session ID to stop
+            org_id: Organization ID (optional, for filtering)
+            project_id: Project ID (optional, for filtering)
+            
+        Returns:
+            Dict with stop response (session_id, status, message)
+            
+        Raises:
+            httpx.HTTPError: If request fails
+        """
+        endpoint = f"{self.base_url}/v1/sessions/{session_id}/stop"
+        
+        params = {}
+        if org_id:
+            params["org_id"] = org_id
+        if project_id:
+            params["project_id"] = project_id
+        
+        logger.info(f"Stopping brain session: {endpoint}")
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    endpoint,
+                    params=params,
+                )
+                
+                # Handle 404 gracefully - session may have already been stopped or expired
+                if response.status_code == 404:
+                    logger.debug(f"Brain session {session_id} not found (404) - may have already been stopped")
+                    return {
+                        "session_id": session_id,
+                        "status": "stopped",
+                        "message": "Session not found (may have already been stopped)",
+                    }
+                
+                response.raise_for_status()
+                
+                data = response.json()
+                logger.info(f"Brain session {session_id} stopped: {data.get('status')}")
+                return data
+                
+        except httpx.HTTPStatusError as e:
+            # Log error but don't fail if session is already stopped
+            if e.response.status_code == 404:
+                logger.debug(f"Brain session {session_id} not found (404) - may have already been stopped")
+                return {
+                    "session_id": session_id,
+                    "status": "stopped",
+                    "message": "Session not found (may have already been stopped)",
+                }
             logger.error(f"Brain service returned error: {e.response.status_code} - {e.response.text}")
             raise
         except httpx.RequestError as e:
@@ -354,6 +432,91 @@ class BrainClient:
         except Exception as e:
             logger.error(f"Unexpected error calling brain service: {e}", exc_info=True)
             raise
+    
+    async def enrich_findings(
+        self,
+        findings: List[Dict[str, Any]],
+        org_id: Optional[str] = None,
+        project_id: Optional[str] = None,
+        target_url: Optional[str] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Call brain /v1/enrich-findings to get AI-generated impact summaries and remediation guidance.
+        
+        Args:
+            findings: List of finding dicts with keys: id, title, description, severity, tool_name,
+                     vuln_type, url, parameter, target_url, project_id, org_id, raw_data (dict)
+            org_id: Organization ID (optional, for RAG filtering)
+            project_id: Project ID (optional, for RAG filtering)
+            target_url: Target URL (optional, for RAG filtering)
+            
+        Returns:
+            Dict mapping finding_id -> enriched data dict with keys:
+                - impact_summary: str
+                - remediation_summary: str
+                - remediation_steps: List[str]
+                - ai_source: str (e.g., "brain_v1")
+                - ai_model: str (e.g., "gpt-4o-mini")
+                - confidence: float (0.0-1.0)
+            
+            Returns empty dict {} if brain is disabled, unreachable, or returns error.
+            Does NOT raise exceptions - caller should handle empty dict as fallback signal.
+        """
+        if not settings.BRAIN_SERVICE_ENABLED:
+            logger.debug("Brain service is disabled, skipping enrichment")
+            return {}
+        
+        endpoint = f"{self.base_url}/v1/enrich-findings"
+        
+        payload = {
+            "findings": findings,
+        }
+        if org_id:
+            payload["org_id"] = org_id
+        if project_id:
+            payload["project_id"] = project_id
+        if target_url:
+            payload["target_url"] = target_url
+        
+        logger.info(f"Enriching {len(findings)} findings via brain service: {endpoint}")
+        
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(
+                    endpoint,
+                    json=payload,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                # Convert response.items list to dict keyed by finding_id
+                enriched_dict = {}
+                for item in data.get("items", []):
+                    finding_id = item.get("finding_id")
+                    if finding_id:
+                        enriched_dict[finding_id] = {
+                            "impact_summary": item.get("impact_summary"),
+                            "remediation_summary": item.get("remediation_summary"),
+                            "remediation_steps": item.get("remediation_steps", []),
+                            "ai_source": item.get("ai_source"),
+                            "ai_model": item.get("ai_model"),
+                            "confidence": item.get("confidence"),
+                        }
+                
+                logger.info(f"Successfully enriched {len(enriched_dict)} findings")
+                return enriched_dict
+                
+        except httpx.HTTPStatusError as e:
+            logger.warning(f"Brain service returned error: {e.response.status_code} - {e.response.text}")
+            return {}  # Return empty dict, don't raise
+        except httpx.RequestError as e:
+            logger.warning(f"Failed to connect to brain service for enrichment: {e}")
+            return {}  # Return empty dict, don't raise
+        except Exception as e:
+            logger.warning(f"Unexpected error calling brain enrichment: {e}", exc_info=True)
+            return {}  # Return empty dict, don't raise
 
 
 # Singleton instance

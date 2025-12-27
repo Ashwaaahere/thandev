@@ -1,92 +1,60 @@
-# Quick Start - Thandev Brain Service
+# Quick Start Guide
 
-## ✅ All Issues Fixed!
+## Important: Run Commands from Repo Root
 
-### Syntax Errors Fixed
-- ✅ Fixed `await` outside async function in `scan_orchestrator.py`
-- ✅ Changed to `loop.run_until_complete()` for brain client calls
-- ✅ All Python files pass syntax check
-
-## Start Services
-
-### 1. Start Qdrant (if not running)
+All `make` commands must be run from the **repo root directory** (`/home/ashwath/thandev`), not from subdirectories.
 
 ```bash
-# Check if already running
-curl http://localhost:6333/health
+# ✅ Correct: From repo root
+cd /home/ashwath/thandev
+make doctor
+make dev
 
-# If not running, start it
-docker run -d -p 6333:6333 qdrant/qdrant:latest
-
-# If port is in use, use different port:
-docker run -d -p 6334:6333 --name qdrant qdrant/qdrant:latest
-# Then update .env: QDRANT_URL=http://localhost:6334
+# ❌ Wrong: From subdirectory
+cd services/backend
+make doctor  # This will fail!
 ```
 
-### 2. Start Brain Service (with venv)
+## Quick Start Commands
 
 ```bash
-cd services/thandev-brain
+# 1. Navigate to repo root
+cd /home/ashwath/thandev
 
-# Activate your venv
-source venv/bin/activate  # or .venv/bin/activate
+# 2. Check system health
+make doctor
 
-# Install dependencies (if not done)
-pip install -r requirements.txt
+# 3. Start development environment (includes migrations)
+make dev
 
-# Create .env file (if not exists)
-cat > .env << EOF
-ENVIRONMENT=development
-RAG_STORE_TYPE=qdrant
-QDRANT_URL=http://localhost:6333
-EMBEDDING_PROVIDER=openai
-OPENAI_API_KEY=5V2HVXAboHT2JhRcXq2aKGowsrIotWU3jiGf7w8VuEB-vpaHivtoHI9U-95OCxlwrQUCUkWF7nT3BlbkFJn9zXC9oFMtsd8N_z3GuntRh-pUIyxhXhSIYOt-aIGixyTXnhKmhTqf1_zJkwnbV3S5AbGY0LIA
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
-EOF
+# 4. In another terminal, bootstrap dev environment
+cd /home/ashwath/thandev
+make bootstrap
 
-# Start service
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+# 5. Run tests
+cd /home/ashwath/thandev
+make test
 ```
 
-### 3. Configure Core Backend
+## Available Make Targets
 
-Add to `backend/.env`:
-```env
-BRAIN_SERVICE_URL=http://localhost:8001
-BRAIN_SERVICE_ENABLED=true
-OPENAI_API_KEY=5V2HVXAboHT2JhRcXq2aKGowsrIotWU3jiGf7w8VuEB-vpaHivtoHI9U-95OCxlwrQUCUkWF7nT3BlbkFJn9zXC9oFMtsd8N_z3GuntRh-pUIyxhXhSIYOt-aIGixyTXnhKmhTqf1_zJkwnbV3S5AbGY0LIA
-```
+Run `make help` or `make` from the repo root to see all available targets:
 
-### 4. Test Everything
+- `make infra-up` - Start Postgres and Redis
+- `make backend` - Start backend API
+- `make runner` - Start runner service
+- `make brain` - Start brain service (optional)
+- `make dev` - Start full dev environment (infra + backend + runner)
+- `make migrate` - Run database migrations
+- `make test` - Run backend tests
+- `make bootstrap` - Bootstrap dev environment
+- `make doctor` - System health check
+
+## Troubleshooting
+
+If you get "No rule to make target", ensure you're in the repo root:
 
 ```bash
-# Test brain service
-curl http://localhost:8001/health
-curl http://localhost:8001/v1/catalog
-
-# Test core backend
-curl http://localhost:8000/health
-
-# Test planning
-curl -X POST http://localhost:8001/v1/plan-scan \
-  -H "Content-Type: application/json" \
-  -d '{"target_url": "https://example.com", "scan_level": "pro"}'
+pwd  # Should show: /home/ashwath/thandev
+ls Makefile  # Should show the Makefile
 ```
-
-## Verification
-
-All syntax errors are fixed! The code should now:
-- ✅ Import without syntax errors
-- ✅ Use `loop.run_until_complete()` instead of `await` in sync functions
-- ✅ Work with brain service integration
-
-## Next Steps
-
-1. Start all services
-2. Test a scan creation via API
-3. Verify brain service is called for planning
-4. Check report generation uses brain prompt package
-
-
-
-

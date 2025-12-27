@@ -10,6 +10,7 @@ from sqlalchemy import or_, func
 
 from app.core.database import get_db
 from app.core.tenant_utils import require_tenant, get_current_user
+from app.core.dependencies import require_approved_user
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.project import Project
@@ -23,7 +24,11 @@ from app.schemas.performance import (
     QuickPerformanceScanResponse,
 )
 
-router = APIRouter(prefix="/performance", tags=["performance"])
+router = APIRouter(
+    prefix="/performance",
+    tags=["performance"],
+    dependencies=[Depends(require_approved_user)],
+)
 logger = logging.getLogger(__name__)
 
 

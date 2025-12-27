@@ -15,12 +15,16 @@ from datetime import datetime
 _home_dir = os.path.expanduser("~")
 _go_bin = os.path.join(_home_dir, "go", "bin")
 _local_tools = os.path.join(_home_dir, ".local", "thandev-tools", "bin")
+# Base directory: project root (backend/app/services/tools.py -> project root)
+# parents[0] = backend/app/services, parents[1] = backend/app, parents[2] = backend, parents[3] = project root
+_BASE_DIR = Path(__file__).resolve().parents[3]
+_backend_venv_bin = str(_BASE_DIR / "backend" / "venv" / "bin")
 _current_path = os.environ.get("PATH", "")
-if _go_bin not in _current_path or _local_tools not in _current_path:
-    _new_path = f"{_local_tools}:{_go_bin}:{_current_path}"
+if _go_bin not in _current_path or _local_tools not in _current_path or _backend_venv_bin not in _current_path:
+    _new_path = f"{_backend_venv_bin}:{_local_tools}:{_go_bin}:{_current_path}"
     os.environ["PATH"] = _new_path
     logger = logging.getLogger(__name__)
-    logger.debug(f"Updated PATH to include tool directories: {_go_bin}, {_local_tools}")
+    logger.debug(f"Updated PATH to include tool directories: {_backend_venv_bin}, {_go_bin}, {_local_tools}")
 
 # Base directory: project root (backend/app/services/tools.py -> project root)
 # parents[0] = backend/app/services, parents[1] = backend/app, parents[2] = backend, parents[3] = project root
@@ -73,8 +77,83 @@ def run_nuclei_basic(job: "ScanJob") -> None:
     logger.info(f"  Placeholder: Would run Nuclei on target URL from project")
 
 
+def _normalize_dalfox_output(output_text: str) -> str:
+    """
+    Normalize dalfox output to prevent placeholder outputs from creating fake findings.
+    
+    Converts:
+    - "" -> "[]"
+    - "{}" -> "[]"
+    - "[{}]" -> "[]"
+    - List of empty dicts -> "[]"
+    
+    Args:
+        output_text: Raw dalfox stdout output
+        
+    Returns:
+        Normalized JSON string (always a valid JSON array)
+    """
+    if not output_text or not output_text.strip():
+        return "[]"
+    
+    output_stripped = output_text.strip()
+    
+    # Handle common placeholder patterns (exact matches)
+    # Note: Also check normalized version (remove all whitespace) for cases like "[\n{}\n]"
+    normalized_for_check = "".join(output_stripped.split())
+    if normalized_for_check in ["{}", "[{}]", "[]"] or output_stripped in ["{}", "[{}]", "[]"]:
+        return "[]"
+    
+    # Try parsing as JSON to check for empty objects
+    # This handles cases like "[\n{}\n]" where newlines are inside brackets
+    try:
+        parsed = json.loads(output_stripped)
+        
+        # If it's a list, filter out empty dicts
+        if isinstance(parsed, list):
+            # Filter out empty dicts (dicts with no keys or all None/empty values)
+            filtered = []
+            for item in parsed:
+                if isinstance(item, dict):
+                    # Check if dict has any non-empty values
+                    if item and any(v for v in item.values() if v is not None and str(v).strip()):
+                        filtered.append(item)
+                    # Empty dict {} is skipped
+                else:
+                    # Non-dict items are kept (shouldn't happen in Dalfox output, but be safe)
+                    filtered.append(item)
+            
+            if not filtered:
+                # All items were empty dicts or empty
+                return "[]"
+            # Return filtered list as JSON
+            return json.dumps(filtered)
+        
+        # If it's a single empty dict, return []
+        if isinstance(parsed, dict) and not parsed:
+            return "[]"
+        
+        # Valid output, return as-is (re-serialize to ensure clean formatting)
+        return json.dumps(parsed) if not isinstance(parsed, str) else output_stripped
+        
+    except json.JSONDecodeError:
+        # Not valid JSON, return as-is (might be error message or other text)
+        return output_stripped
+
+
 class ToolExecutor:
     """Executes security scanning tools"""
+    
+    # Map tool_id to binary name (some tools have different binary names)
+    TOOL_BINARY_MAP = {
+        "nuclei": "nuclei",
+        "nmap": "nmap",
+        "sslscan": "sslscan",
+        "httpx": "httpx",
+        "ffuf": "ffuf",
+        "dalfox": "dalfox",
+        "sqlmap": "sqlmap",  # sqlmap is in venv, checked separately
+    }
     
     def __init__(self, catalog_path: Optional[Path] = None):
         """
@@ -100,6 +179,102 @@ class ToolExecutor:
         self.catalog_path = catalog_path
         self._catalog = self._load_catalog()
         self._tool_mode_map = self._build_tool_mode_map()
+    
+    def check_tool_dependencies(self, tool_ids: List[str]) -> Tuple[bool, List[str]]:
+        """
+        Check if all required tool binaries are available.
+        
+        Uses the same binary detection logic as individual tool methods to ensure consistency.
+        Checks common installation locations (e.g., ~/go/bin for Go tools) in addition to PATH.
+        
+        Args:
+            tool_ids: List of tool_id strings to check (e.g., ["nuclei", "nmap", "httpx"])
+            
+        Returns:
+            Tuple of (all_available: bool, missing_tools: List[str])
+            - all_available: True if all tools are available, False otherwise
+            - missing_tools: List of tool_ids that are missing
+        """
+        missing_tools = []
+        
+        for tool_id in tool_ids:
+            if tool_id not in self.TOOL_BINARY_MAP:
+                logger.warning(f"Unknown tool_id '{tool_id}' in dependency check, skipping")
+                continue
+            
+            binary_name = self.TOOL_BINARY_MAP[tool_id]
+            found = False
+            
+            # Special handling for sqlmap (it's in venv)
+            if tool_id == "sqlmap":
+                sqlmap_path = os.path.join(_backend_venv_bin, "sqlmap")
+                if os.path.exists(sqlmap_path) and os.access(sqlmap_path, os.X_OK):
+                    found = True
+                    logger.debug(f"sqlmap found at {sqlmap_path}")
+                else:
+                    logger.error(f"sqlmap not found at {sqlmap_path}")
+            else:
+                # Check common locations (same as individual tool methods)
+                possible_paths = []
+                
+                # Go tools (nuclei, httpx, ffuf, dalfox) are typically in ~/go/bin
+                if tool_id in ["nuclei", "httpx", "ffuf", "dalfox"]:
+                    possible_paths.extend([
+                        os.path.expanduser("~/go/bin/" + binary_name),
+                        os.path.expanduser("~/.local/thandev-tools/bin/" + binary_name),
+                        "/usr/local/bin/" + binary_name,
+                    ])
+                
+                # Standard system tools (nmap, sslscan) are typically in standard locations
+                if tool_id in ["nmap", "sslscan"]:
+                    possible_paths.extend([
+                        "/usr/bin/" + binary_name,
+                        "/usr/local/bin/" + binary_name,
+                    ])
+                
+                # Always check PATH last
+                import shutil
+                path_binary = shutil.which(binary_name)
+                if path_binary:
+                    possible_paths.append(path_binary)
+                
+                # Check each possible path
+                for binary_path in possible_paths:
+                    try:
+                        expanded_path = os.path.expanduser(binary_path) if binary_path.startswith("~") else binary_path
+                        
+                        # For absolute paths, check if file exists and is executable
+                        if os.path.isabs(expanded_path) or expanded_path.startswith("/"):
+                            if os.path.exists(expanded_path) and os.access(expanded_path, os.X_OK):
+                                found = True
+                                logger.debug(f"Tool '{tool_id}' (binary: {binary_name}) found at {expanded_path}")
+                                break
+                        else:
+                            # For commands in PATH, use 'which' to find them
+                            check_result = subprocess.run(
+                                ["which", binary_path],
+                                capture_output=True,
+                                timeout=2,
+                                text=True
+                            )
+                            if check_result.returncode == 0:
+                                found = True
+                                logger.debug(f"Tool '{tool_id}' (binary: {binary_name}) found in PATH at {check_result.stdout.strip()}")
+                                break
+                    except Exception as e:
+                        logger.debug(f"Tool dependency check failed for {binary_path}: {e}")
+                        continue
+            
+            if not found:
+                missing_tools.append(tool_id)
+                logger.error(f"Tool '{tool_id}' (binary: {binary_name}) not found in any expected location")
+        
+        all_available = len(missing_tools) == 0
+        if all_available:
+            logger.info(f"All required tools are available: {', '.join(tool_ids)}")
+        else:
+            logger.error(f"Missing tools: {', '.join(missing_tools)}")
+        return (all_available, missing_tools)
     
     def _load_catalog(self) -> Dict:
         """Load catalog from JSON file"""
@@ -308,7 +483,30 @@ class ToolExecutor:
                 internal["level"] = params["level"]
             if "risk" in params:
                 internal["risk"] = params["risk"]
-            if mode_id == "sqli_light":
+            if "timeout_sec" in params:
+                internal["timeout_seconds"] = params["timeout_sec"]
+            
+            # Map mode_id to execution mode
+            internal["mode_id"] = mode_id
+            
+            # Map mode-specific params
+            if mode_id == "sqli_post_data":
+                if "data" in params:
+                    internal["post_data"] = params["data"]
+                if "param_names" in params:
+                    internal["param_names"] = params["param_names"]
+                if "cookie" in params:
+                    internal["cookie"] = params["cookie"]
+            elif mode_id == "sqli_raw_request":
+                if "raw_request_ref" in params:
+                    internal["raw_request_ref"] = params["raw_request_ref"]
+            elif mode_id == "sqli_forms_login":
+                if "use_raw_request" in params:
+                    internal["use_raw_request"] = params["use_raw_request"]
+            elif mode_id == "sqli_get_basic":
+                if "param_names" in params:
+                    internal["param_names"] = params["param_names"]
+            elif mode_id == "sqli_light":
                 internal["profile"] = "sqli_light"
         
         elif tool_id == "dalfox":
@@ -527,12 +725,15 @@ class ToolExecutor:
         
         logger.info("Nuclei v3.4.10 command for scan %s: %s", scan_job_id, " ".join(cmd))
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=1800,  # 30 minutes
+                timeout=timeout_seconds,
             )
             
             # Calculate sizes
@@ -628,6 +829,7 @@ class ToolExecutor:
                 "output": result.stdout,
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
+                "success": True,  # Explicitly mark as successful
             }
         except subprocess.TimeoutExpired:
             return {
@@ -675,26 +877,54 @@ class ToolExecutor:
         
         cmd = ["nmap", "-oX", "-"] + scan_args + [hostname]
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=1800,
+                timeout=timeout_seconds,
             )
             
             return {
                 "tool_name": "nmap",
-                "output": result.stdout,
+                "output": result.stdout or "",
                 "exit_code": result.returncode,
                 "command": " ".join(cmd),
+                "success": result.returncode == 0,
             }
         except subprocess.TimeoutExpired:
+            logger.warning(f"nmap execution timed out after {timeout_seconds} seconds for {hostname}")
             return {
                 "tool_name": "nmap",
                 "output": "",
                 "exit_code": -1,
-                "error": "Tool execution timed out",
+                "error": f"Tool execution timed out after {timeout_seconds} seconds",
+                "command": " ".join(cmd),
+                "timed_out": True,
+                "success": False,
+            }
+        except FileNotFoundError:
+            logger.error("nmap binary not found in PATH")
+            return {
+                "tool_name": "nmap",
+                "output": "",
+                "exit_code": -1,
+                "error": "nmap binary not found. Please install nmap: sudo apt-get install nmap (or brew install nmap on macOS)",
+                "command": " ".join(cmd),
+                "success": False,
+            }
+        except Exception as e:
+            logger.error(f"nmap execution failed: {e}", exc_info=True)
+            return {
+                "tool_name": "nmap",
+                "output": "",
+                "exit_code": -1,
+                "error": f"nmap execution failed: {str(e)}",
+                "command": " ".join(cmd),
+                "success": False,
             }
     
     async def _run_sslscan(self, target_url: str, scan_level: str, **kwargs) -> Dict:
@@ -712,12 +942,15 @@ class ToolExecutor:
         
         cmd = ["sslscan", "--json", target]
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout_seconds,
             )
             
             return {
@@ -853,12 +1086,15 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minutes
+                timeout=timeout_seconds,
             )
             
             exit_code = result.returncode
@@ -1125,8 +1361,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -1325,7 +1561,7 @@ class ToolExecutor:
             }
         
         # Get timeout from config (default: 900 for Pro, 1800 for Advanced)
-        default_timeout = 900 if scan_level.lower() == "pro" else 1800
+        default_timeout = 300  # 5 minutes for all scan levels
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # Dalfox command flags:
@@ -1333,25 +1569,66 @@ class ToolExecutor:
         # --silence: suppress banner and non-essential output
         # --format json: output JSON format (one JSON object per line)
         # --mining-dict: use parameter mining dictionary
+        # --mining-dom: enable DOM-based parameter mining
         # --follow-redirects: follow HTTP redirects
         # --deep-domxss: enable deep DOM XSS analysis
         # --detailed-analysis: perform detailed parameter analysis
-        # Note: Removed --only-poc as it may limit findings
+        # --grep: filter results by grep patterns (common XSS indicators)
+        # --only-poc: only show findings with proof-of-concept (more reliable findings)
+        # --waf-evasion: use WAF evasion techniques
+        # --user-agent: set custom user agent to avoid blocking
+        
+        # Check if URL has query parameters - if not, Dalfox will use mining-dict to discover them
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(target_url)
+        has_query_params = bool(parse_qs(parsed_url.query))
+        
+        # Build comprehensive Dalfox command with all XSS testing options
         cmd = [
             dalfox_binary,
             "url", target_url,
             "--silence",
             "--format", "json",
-            "--mining-dict",
+            "--mining-dict",  # Dictionary-based parameter mining
+            "--mining-dom",  # DOM-based parameter mining for better discovery
             "--follow-redirects",
-            "--deep-domxss",
-            "--detailed-analysis",
+            "--deep-domxss",  # Deep DOM XSS analysis
+            "--detailed-analysis",  # Detailed parameter analysis
+            "--context-aware",  # Context-aware payload selection for better detection
+            # Note: --grep expects a file path, not a string, so we skip it
+            # Dalfox has built-in grepping that will detect XSS indicators
+            "--only-poc", "g,v",  # Only show findings with proof-of-concept (grep + verified)
+            "--waf-evasion",  # Use WAF evasion techniques
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid blocking
+            "--remote-payloads", "portswigger,payloadbox",  # Use comprehensive payload lists from PortSwigger and PayloadBox
+            "--worker", "50",  # Use 50 parallel workers for faster scanning
         ]
+        
+        # Add custom payload file if it exists
+        payload_file = BASE_DIR / "backend" / "payloads" / "xss-payloads.txt"
+        if payload_file.exists():
+            cmd.extend(["--custom-payload", str(payload_file)])
+            logger.debug(
+                "Using custom XSS payload file",
+                extra={"scan_job_id": scan_job_id, "payload_file": str(payload_file)}
+            )
+        
+        # If URL has no query parameters, add common parameter hints
+        # Dalfox will still discover parameters, but this helps with sites that need specific params
+        if not has_query_params:
+            logger.debug(
+                "Target URL has no query parameters, Dalfox will use parameter mining to discover them",
+                extra={"scan_job_id": scan_job_id, "target_url": target_url}
+            )
         
         logger.info("dalfox command for scan %s: %s (timeout: %d seconds)", 
                    scan_job_id, " ".join(cmd), timeout)
         
         try:
+            # #region agent log
+            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1436","message":"Dalfox command execution start","data":{"scan_job_id":scan_job_id,"cmd":" ".join(cmd),"timeout":timeout},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            # #endregion
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1362,10 +1639,23 @@ class ToolExecutor:
             exit_code = result.returncode
             stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
             stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
+            # #region agent log
+            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1443","message":"Dalfox command execution result","data":{"scan_job_id":scan_job_id,"exit_code":exit_code,"stdout_length":stdout_bytes,"stderr_length":stderr_bytes,"stdout_preview":result.stdout[:200] if result.stdout else "","stderr_preview":result.stderr[:200] if result.stderr else ""},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            # #endregion
             
             logger.info(
-                "dalfox completed for scan %s: exit_code=%s, stdout_bytes=%d, stderr_bytes=%d",
-                scan_job_id, exit_code, stdout_bytes, stderr_bytes
+                "Dalfox scan completed",
+                extra={
+                    "scan_job_id": scan_job_id,
+                    "exit_code": exit_code,
+                    "stdout_bytes": stdout_bytes,
+                    "stderr_bytes": stderr_bytes,
+                    "target_url": target_url,
+                    "has_query_params": has_query_params,
+                    "stdout_preview": result.stdout[:500] if result.stdout else None,
+                    "stderr_preview": result.stderr[:500] if result.stderr else None,
+                }
             )
             
             # Dalfox may exit with non-zero even when it finds XSS issues
@@ -1397,10 +1687,19 @@ class ToolExecutor:
                         scan_job_id, exit_code
                     )
             
+            # Normalize Dalfox output before returning (for all cases)
+            # This ensures empty placeholder outputs are converted to [] before file writing
+            normalized_output = _normalize_dalfox_output(result.stdout) if result.stdout else "[]"
+            
+            # #region agent log
+            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
+                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1565","message":"Dalfox output normalization in tools.py","data":{"scan_job_id":scan_job_id,"stdout_length":len(result.stdout) if result.stdout else 0,"stdout_preview":repr(result.stdout[:100]) if result.stdout else "","normalized_length":len(normalized_output),"normalized_preview":repr(normalized_output[:100])},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
+            # #endregion
+            
             if is_error:
                 return {
                     "tool_name": "dalfox",
-                    "output": result.stdout,  # Still return any partial output
+                    "output": normalized_output,  # Normalized output
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
@@ -1419,7 +1718,7 @@ class ToolExecutor:
             
             return {
                 "tool_name": "dalfox",
-                "output": result.stdout,
+                "output": normalized_output,
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
                 "timed_out": False,
@@ -1430,7 +1729,7 @@ class ToolExecutor:
             logger.warning("  Command: %s", " ".join(cmd))
             return {
                 "tool_name": "dalfox",
-                "output": "",
+                "output": "[]",  # Normalized empty output
                 "exit_code": None,  # None indicates timeout (not a normal exit code)
                 "error": f"Tool execution timed out after {timeout} seconds ({timeout // 60} minutes)",
                 "command": " ".join(cmd),
@@ -1464,32 +1763,37 @@ class ToolExecutor:
         """
         # Check if sqlmap is installed
         scan_job_id = kwargs.get("scan_job_id", "unknown")
-        logger.info(f"Checking sqlmap availability for scan {scan_job_id}")
+        mode_id = kwargs.get("mode_id", "sqli_light")
+        logger.info(f"Checking sqlmap availability for scan {scan_job_id}, mode={mode_id}")
         
-        try:
-            check_result = subprocess.run(
-                ["sqlmap", "--version"],
-                capture_output=True,
-                timeout=5,
-                text=True
-            )
-            if check_result.returncode != 0:
-                raise FileNotFoundError("sqlmap command failed")
-            logger.info(f"sqlmap binary found for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
-        except FileNotFoundError:
-            error_msg = "sqlmap binary not found in PATH. Please install sqlmap: pip install sqlmap or download from https://github.com/sqlmapproject/sqlmap"
+        # Try to find sqlmap in common locations
+        sqlmap_path = None
+        possible_paths = [
+            "sqlmap",  # In PATH
+            str(BASE_DIR / "backend" / "venv" / "bin" / "sqlmap"),  # Backend venv
+            str(Path.home() / ".local" / "bin" / "sqlmap"),  # User local bin
+            "/usr/local/bin/sqlmap",  # System local
+            "/usr/bin/sqlmap",  # System bin
+        ]
+        
+        for path in possible_paths:
+            try:
+                check_result = subprocess.run(
+                    [path, "--version"],
+                    capture_output=True,
+                    timeout=5,
+                    text=True
+                )
+                if check_result.returncode == 0:
+                    sqlmap_path = path
+                    logger.info(f"sqlmap binary found at {path} for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
+                    break
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+                continue
+        
+        if not sqlmap_path:
+            error_msg = "sqlmap binary not found. Please install sqlmap: pip install sqlmap or download from https://github.com/sqlmapproject/sqlmap"
             logger.error(f"sqlmap binary not found for scan {scan_job_id}")
-            return {
-                "tool_name": "sqlmap",
-                "output": "",
-                "exit_code": -1,
-                "error": error_msg,
-                "command": "sqlmap --version",
-                "timed_out": False,
-            }
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
-            error_msg = f"sqlmap binary check failed: {str(e)}"
-            logger.error(f"sqlmap binary check error for scan {scan_job_id}: {error_msg}")
             return {
                 "tool_name": "sqlmap",
                 "output": "",
@@ -1500,45 +1804,138 @@ class ToolExecutor:
             }
         
         # Get timeout from kwargs or default to 900 seconds (15 minutes)
-        timeout = kwargs.get("timeout_seconds", 900)
+        timeout = kwargs.get("timeout_seconds", 300)
         
         # Get output directory from kwargs (scan_job_dir)
+        # This should be the same job_dir used by other tools (backend/data/jobs/scan_job_id)
         scan_job_dir = kwargs.get("scan_job_dir")
         if not scan_job_dir:
-            # Fallback: create a temp directory
-            import tempfile
-            scan_job_dir = Path(tempfile.mkdtemp())
+            # Fallback: try to infer from scan_job_id or create temp directory
+            scan_job_id = kwargs.get("scan_job_id", "unknown")
+            # Use same canonical path as other tools: backend/data/jobs/scan_job_id
+            scan_job_dir = BASE_DIR / "backend" / "data" / "jobs" / scan_job_id
+            logger.warning(
+                f"SQLMap scan_job_dir not provided, using inferred path: {scan_job_dir} "
+                f"(scan_job_id: {scan_job_id})"
+            )
         else:
             scan_job_dir = Path(scan_job_dir)
         
-        # Create sqlmap output directory
+        # Ensure job directory exists (canonical path for all tools)
+        scan_job_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create sqlmap output directory (sqlmap creates subdirectory for its output)
         sqlmap_output_dir = scan_job_dir / "sqlmap"
         sqlmap_output_dir.mkdir(parents=True, exist_ok=True)
         
-        # sqlmap command flags (safe defaults for lab/owned targets):
-        # -u: target URL
-        # --batch: non-interactive mode (don't prompt for user input)
-        # --risk=1: risk level 1 (lowest, safe for testing)
-        # --level=1: level 1 (basic tests, safe)
-        # --timeout=10: request timeout in seconds
-        # --time-sec=5: time-based injection delay in seconds
-        # --random-agent: use random User-Agent
-        # -v 0: verbosity level 0 (minimal output)
-        # --output-dir: directory for output files
-        cmd = [
-            "sqlmap",
-            "-u", target_url,
-            "--batch",
-            "--risk=1",
-            "--level=1",
-            "--timeout=10",
-            "--time-sec=5",
-            "--random-agent",
-            "-v", "0",
-            "--output-dir", str(sqlmap_output_dir),
-        ]
+        logger.info(
+            f"SQLMap output directory for scan {scan_job_id}: {sqlmap_output_dir} "
+            f"(job_dir: {scan_job_dir})"
+        )
         
-        logger.info("sqlmap command for scan %s: %s", scan_job_id, " ".join(cmd))
+        # Get mode-specific parameters
+        level = kwargs.get("level", 2)
+        risk = kwargs.get("risk", 1)
+        timeout_sec = kwargs.get("timeout_seconds", 300)
+        request_timeout = min(60, timeout_sec // 5)  # Request timeout, max 60s
+        
+        # Build sqlmap command based on mode
+        cmd = [sqlmap_path, "--batch"]
+        
+        # Mode-specific command building
+        if mode_id == "sqli_raw_request":
+            # Use raw request file (-r)
+            raw_request_ref = kwargs.get("raw_request_ref")
+            if not raw_request_ref:
+                raise ValueError("sqli_raw_request mode requires raw_request_ref parameter")
+            
+            # Check if it's a file path or inline request
+            raw_request_path = Path(raw_request_ref)
+            if not raw_request_path.exists():
+                # Assume it's inline request text, save it to a file
+                raw_request_path = sqlmap_output_dir / "request.txt"
+                with open(raw_request_path, 'w', encoding='utf-8') as f:
+                    f.write(raw_request_ref)
+                logger.info(f"Saved inline raw request to {raw_request_path}")
+            
+            cmd.extend(["-r", str(raw_request_path)])
+            
+        elif mode_id == "sqli_forms_login":
+            # For login forms, prefer raw request method for reliability
+            use_raw_request = kwargs.get("use_raw_request", True)
+            
+            if use_raw_request:
+                # Build raw request from login form
+                from app.services.request_recorder import build_raw_request_for_login, save_raw_request
+                
+                logger.info(f"Building raw request for login form: {target_url}")
+                raw_request, cookie_string = build_raw_request_for_login(target_url)
+                
+                # Save raw request to file
+                raw_request_path = sqlmap_output_dir / "request.txt"
+                save_raw_request(raw_request, str(raw_request_path))
+                
+                cmd.extend(["-r", str(raw_request_path)])
+                
+                # Add cookie if captured
+                if cookie_string:
+                    cmd.extend(["--cookie", cookie_string])
+            else:
+                # Fallback to --forms (less reliable)
+                cmd.extend(["-u", target_url, "--forms", "--crawl=0"])
+                
+        elif mode_id == "sqli_post_data":
+            # Use --data for POST requests
+            post_data = kwargs.get("post_data")
+            if not post_data:
+                raise ValueError("sqli_post_data mode requires post_data parameter")
+            
+            cmd.extend(["-u", target_url, "--data", post_data])
+            
+            # Add cookie if provided
+            cookie = kwargs.get("cookie")
+            if cookie:
+                cmd.extend(["--cookie", cookie])
+            
+            # Test specific parameters if provided
+            param_names = kwargs.get("param_names")
+            if param_names:
+                cmd.extend(["-p", ",".join(param_names)])
+                
+        elif mode_id == "sqli_get_basic":
+            # Basic GET request with URL
+            cmd.extend(["-u", target_url])
+            
+            # Test specific parameters if provided
+            param_names = kwargs.get("param_names")
+            if param_names:
+                cmd.extend(["-p", ",".join(param_names)])
+                
+        else:
+            # Legacy mode: sqli_light (uses --forms)
+            cmd.extend(["-u", target_url, "--forms", "--crawl=1"])
+        
+        # Add common flags
+        cmd.extend([
+            "--risk", str(risk),
+            "--level", str(level),
+            "--timeout", str(request_timeout),
+            "--time-sec", "5",  # Time-based injection delay
+            "--random-agent",
+            "--technique", "BEUSTQ",  # Test all techniques
+            "--fresh-queries",
+            "--threads", "1",  # Single thread
+            "-v", "3",  # Verbosity level 3
+            "--output-dir", str(sqlmap_output_dir),
+        ])
+        
+        # Safe defaults - no destructive flags
+        # DO NOT add: --os-shell, --file-write, --sql-shell, etc.
+        
+        logger.info(
+            "sqlmap command for scan %s: %s (output_dir: %s)",
+            scan_job_id, " ".join(cmd), sqlmap_output_dir
+        )
         
         try:
             result = subprocess.run(
@@ -1553,8 +1950,15 @@ class ToolExecutor:
             exit_code = result.returncode
             
             logger.info(
-                "sqlmap scan %s completed: exit_code=%s, stdout=%d bytes, stderr=%d bytes",
-                scan_job_id, exit_code, stdout_bytes, stderr_bytes
+                "sqlmap scan %s completed: exit_code=%s, stdout=%d bytes, stderr=%d bytes, output_dir=%s",
+                scan_job_id, exit_code, stdout_bytes, stderr_bytes, sqlmap_output_dir
+            )
+            
+            # Check if output directory has artifacts
+            artifacts = list(sqlmap_output_dir.rglob("*")) if sqlmap_output_dir.exists() else []
+            logger.info(
+                "sqlmap scan %s: output_dir exists=%s, artifacts found=%d",
+                scan_job_id, sqlmap_output_dir.exists(), len(artifacts)
             )
             
             # sqlmap may exit with non-zero even when it finds SQLi issues
@@ -1562,9 +1966,51 @@ class ToolExecutor:
             is_error = False
             error_msg = None
             
-            # Check if sqlmap created any result files
+            # Check if sqlmap found SQL injection (look in stdout)
+            # sqlmap outputs detection results to stdout with patterns like:
+            # - "GET parameter 'X' is vulnerable"
+            # - "sqlmap identified the following injection point(s)"
+            has_results = False
+            
+            if result.stdout:
+                stdout_lower = result.stdout.lower()
+                # Check for key detection phrases
+                detection_phrases = [
+                    "is vulnerable",
+                    "injection point",
+                    "is '",
+                    "appears to be '",
+                    "injectable",
+                ]
+                for phrase in detection_phrases:
+                    if phrase in stdout_lower:
+                        has_results = True
+                        logger.info("sqlmap detected SQL injection in stdout for scan %s (phrase: %s)", scan_job_id, phrase)
+                        break
+                
+                # Also check for the detailed injection point section
+                if "sqlmap identified the following injection point" in stdout_lower:
+                    has_results = True
+                    logger.info("sqlmap found detailed injection points for scan %s", scan_job_id)
+            
+            # Also check log files in output directory
+            if not has_results:
+                log_files = list(sqlmap_output_dir.glob("*.log")) + list(sqlmap_output_dir.glob("*.txt"))
+                for log_file in log_files:
+                    try:
+                        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+                            log_content = f.read().lower()
+                            if any(phrase in log_content for phrase in ["is vulnerable", "injection point", "injectable"]):
+                                has_results = True
+                                logger.info("sqlmap detected SQL injection in log file %s for scan %s", log_file, scan_job_id)
+                                break
+                    except Exception as e:
+                        logger.debug("Failed to read log file %s: %s", log_file, e)
+            
+            # Also check for CSV files (in case --dump was used or sqlmap created them)
             result_files = list(sqlmap_output_dir.glob("*.csv")) + list(sqlmap_output_dir.glob("*.json"))
-            has_results = len(result_files) > 0
+            if result_files:
+                has_results = True
             
             if exit_code != 0:
                 if has_results or stdout_bytes > 0:
@@ -1601,14 +2047,18 @@ class ToolExecutor:
                     "output_dir": str(sqlmap_output_dir),
                 }
             
-            # Success case
-            if has_results or stdout_bytes > 0:
+            # Success case - log findings status
+            # Note: We don't claim "SQLi detected" here - that's determined by the ingestor
+            # We only log that the scan completed and produced output
+            if has_results:
                 logger.info(
-                    "sqlmap scan %s successful: found results (SQLi issues detected)",
+                    "sqlmap scan %s completed: stdout indicates potential SQLi (will be confirmed by ingestor)",
                     scan_job_id
                 )
+            elif stdout_bytes > 0:
+                logger.info("sqlmap scan %s completed: stdout produced but no clear SQLi markers", scan_job_id)
             else:
-                logger.info("sqlmap scan %s completed: no SQLi issues detected", scan_job_id)
+                logger.info("sqlmap scan %s completed: no output produced", scan_job_id)
             
             return {
                 "tool_name": "sqlmap",
@@ -1618,20 +2068,44 @@ class ToolExecutor:
                 "timed_out": False,
                 "output_dir": str(sqlmap_output_dir),
                 "stderr": result.stderr[:4000] if result.stderr else None,
+                "success": True,  # Always mark as success if we got here (even if no SQLi found)
             }
         except subprocess.TimeoutExpired as exc:
-            logger.warning("sqlmap scan %s timed out after %d seconds (%d minutes). Results may be partial.", 
+            logger.warning("sqlmap scan %s timed out after %d seconds (%d minutes). Checking for partial results...", 
                           scan_job_id, timeout, timeout // 60)
             logger.warning("  Command: %s", " ".join(cmd))
-            return {
-                "tool_name": "sqlmap",
-                "output": "",
-                "exit_code": None,  # None indicates timeout
-                "error": f"Tool execution timed out after {timeout} seconds ({timeout // 60} minutes)",
-                "command": " ".join(cmd),
-                "timed_out": True,
-                "output_dir": str(sqlmap_output_dir),
-            }
+            
+            # Check for partial results even on timeout
+            result_files = list(sqlmap_output_dir.glob("*.csv")) + list(sqlmap_output_dir.glob("*.json")) + list(sqlmap_output_dir.glob("*.txt"))
+            has_results = len(result_files) > 0
+            
+            # Try to read any output that was captured
+            partial_output = ""
+            if hasattr(exc, 'stdout') and exc.stdout:
+                partial_output = exc.stdout.decode('utf-8', errors='ignore') if isinstance(exc.stdout, bytes) else exc.stdout
+            
+            if has_results:
+                logger.info("sqlmap scan %s timed out but found partial results: %d files", scan_job_id, len(result_files))
+                return {
+                    "tool_name": "sqlmap",
+                    "output": partial_output,
+                    "exit_code": None,  # None indicates timeout
+                    "error": f"Tool execution timed out after {timeout} seconds, but partial results found",
+                    "command": " ".join(cmd),
+                    "timed_out": True,
+                    "output_dir": str(sqlmap_output_dir),
+                    "success": True,  # Mark as success if we have results
+                }
+            else:
+                return {
+                    "tool_name": "sqlmap",
+                    "output": partial_output,
+                    "exit_code": None,  # None indicates timeout
+                    "error": f"Tool execution timed out after {timeout} seconds ({timeout // 60} minutes)",
+                    "command": " ".join(cmd),
+                    "timed_out": True,
+                    "output_dir": str(sqlmap_output_dir),
+                }
         except Exception as e:
             logger.error(f"sqlmap execution error for scan {scan_job_id}: {e}", exc_info=True)
             logger.error(f"  Command: {' '.join(cmd)}")
@@ -1661,12 +2135,15 @@ class ToolExecutor:
         
         cmd = ["sslscan", "--json", target]
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout_seconds,
             )
             
             return {
@@ -1802,12 +2279,15 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minutes
+                timeout=timeout_seconds,
             )
             
             exit_code = result.returncode
@@ -2074,8 +2554,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -2218,12 +2698,15 @@ class ToolExecutor:
         
         cmd = ["sslscan", "--json", target]
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout_seconds,
             )
             
             return {
@@ -2359,12 +2842,15 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minutes
+                timeout=timeout_seconds,
             )
             
             exit_code = result.returncode
@@ -2631,8 +3117,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404
@@ -2775,12 +3261,15 @@ class ToolExecutor:
         
         cmd = ["sslscan", "--json", target]
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout_seconds,
             )
             
             return {
@@ -2916,12 +3405,15 @@ class ToolExecutor:
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
+        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=600,  # 10 minutes
+                timeout=timeout_seconds,
             )
             
             exit_code = result.returncode
@@ -3188,8 +3680,8 @@ class ToolExecutor:
             logger.warning(f"Failed to establish baseline for ffuf: {e}. Will filter by status code only.")
             baseline = None
         
-        # Get timeout from config (default: 15 minutes)
-        default_timeout = 900  # 15 minutes
+        # Get timeout from config (default: 5 minutes)
+        default_timeout = 300  # 5 minutes
         timeout = kwargs.get("timeout_seconds", default_timeout)
         
         # PR-4C: Add filters to exclude baseline and 404

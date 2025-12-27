@@ -156,3 +156,102 @@ __pycache__/
 *.pyo
 *.db-shm
 *.db-wal
+
+# Environment variables (allow .env.example)
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.production
+**/.env.development
+**/.env.test
+!**/.env.example
+
+# Job artifacts and tool outputs
+backend/data/jobs/**
+**/data/jobs/**
+**/jobs/**
+*.dump
+*.rdb
+dump.rdb
+
+# Generated documentation and PDFs
+docs/exports/**
+**/*.pdf
+!docs/THANDEV_*.pdf  # Keep only essential PDFs if needed, but prefer excluding all
+THANDEV_*.pdf
+**/THANDEV_*.pdf
+
+# Generated documentation scripts output
+generate_*.py
+generate_*.sh
+export_*.sh
+
+# Test outputs and results
+test_output.log
+TEST_RESULTS*.json
+TEST_RESULTS*.md
+test_*.log
+
+# Temporary summary files (move to docs/notes/ if needed)
+*_SUMMARY.md
+*_STATUS.md
+*_FIX.md
+*_COMPLETE.md
+*_SUCCESS.md
+*_ERROR.md
+*_RESULTS.md
+*_REPORT.md
+!docs/**/*.md  # Keep docs in docs/ directory
+!README.md
+!CHANGELOG.md
+
+# IDE and editor files
+.cursor/
+*.code-workspace
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build artifacts
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Coverage
+coverage/
+.nyc_output/
+htmlcov/
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+thandev.db
+backend/thandev.db
+services/*/thandev.db
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Wordlists and payloads (if large)
+backend/wordlists/*.txt
+backend/payloads/*.txt
+wordlists/*.txt
+
+# Virtual environments (already covered but be explicit)
+**/venv/
+**/.venv/
+**/ENV/
+**/env/
+
+# Node modules (already covered but be explicit)
+**/node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db

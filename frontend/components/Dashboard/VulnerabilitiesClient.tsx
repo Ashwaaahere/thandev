@@ -9,6 +9,7 @@ import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
 import { thandevFetchJSON } from '@/lib/thandevApi';
 import { formatCategory, getAllCategories, VULN_CATEGORY_LABELS } from '@/lib/vulnCategories';
+import FindingDetailsDrawer from './FindingDetailsDrawer';
 
 // Types matching backend response
 type FindingStatus = "open" | "acknowledged" | "resolved" | "suppressed";
@@ -30,14 +31,80 @@ type FindingListItem = {
   categories?: string[] | null;
   url?: string | null;
   path?: string | null;
-  first_seen: string;
-  last_seen: string;
+  // New fields for improved UX
+  vuln_type?: string | null;
+  http_method?: string | null;
+  parameter?: string | null;
+  evidence?: string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  not_seen_in_latest_scan?: boolean | null;
+  found_count?: number | null;
+  remediation_summary?: string | null;
+  remediation_steps?: string | null;
+  impact_summary?: string | null;
+  raw_data_preview?: Record<string, any> | null;
+  // Legacy fields (for backward compatibility)
+  first_seen?: string | null;
+  last_seen?: string | null;
 };
 
 type FindingListResponse = {
   items: FindingListItem[];
   total: number;
 };
+
+// Helper function to format finding title
+function formatFindingTitle(title: string | null | undefined): string {
+  if (!title) return 'Untitled finding';
+  
+  // Remove "Top X Parameters" prefix if present
+  const topParamsMatch = title.match(/^Top \d+ Parameters\s*-\s*(.+)$/i);
+  if (topParamsMatch) {
+    return topParamsMatch[1].trim();
+  }
+  
+  return title;
+}
+
+// Helper function to format URL for display
+function formatUrlForDisplay(url: string | null | undefined, maxLength: number = 80): string {
+  if (!url) return '';
+  
+  try {
+    const urlObj = new URL(url);
+    const baseUrl = `${urlObj.protocol}//${urlObj.host}${urlObj.pathname}`;
+    const params = urlObj.searchParams;
+    const paramCount = params.toString().split('&').filter(p => p).length;
+    
+    // If URL is short enough, show it fully
+    if (url.length <= maxLength) {
+      return url;
+    }
+    
+    // If base URL is already long, truncate it
+    if (baseUrl.length > maxLength - 20) {
+      return `${baseUrl.substring(0, maxLength - 20)}...${paramCount > 0 ? ` (+${paramCount} params)` : ''}`;
+    }
+    
+    // Show base URL + parameter count
+    return `${baseUrl}${paramCount > 0 ? ` (+${paramCount} parameter${paramCount > 1 ? 's' : ''})` : ''}`;
+  } catch {
+    // If URL parsing fails, just truncate
+    return url.length > maxLength ? `${url.substring(0, maxLength)}...` : url;
+  }
+}
+
+// Helper function to get URL parameters count
+function getUrlParamCount(url: string | null | undefined): number {
+  if (!url) return 0;
+  try {
+    const urlObj = new URL(url);
+    return urlObj.searchParams.toString().split('&').filter(p => p).length;
+  } catch {
+    return 0;
+  }
+}
 
 type ProjectWithStats = {
   id: string;
@@ -52,6 +119,10 @@ type ProjectListResponse = {
 
 interface VulnerabilitiesClientProps {
   initialProjectId?: string;
+  initialFindings?: FindingListItem[];
+  initialTotal?: number;
+  initialProjects?: ProjectWithStats[];
+  initialPage?: number;
 }
 
 // Status badge component
@@ -94,26 +165,36 @@ function StatusBadge({ status }: { status: FindingStatus | string | null | undef
   }
 }
 
-export default function VulnerabilitiesClient({ initialProjectId }: VulnerabilitiesClientProps) {
+export default function VulnerabilitiesClient({ 
+  initialProjectId,
+  initialFindings = [],
+  initialTotal = 0,
+  initialProjects = [],
+  initialPage = 0,
+}: VulnerabilitiesClientProps) {
   const { data: session, status: sessionStatus } = useSession();
   const searchParams = useSearchParams();
   const initialSearch = searchParams.get('search') ?? '';
   
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [findings, setFindings] = useState<FindingListItem[]>([]);
-  const [projects, setProjects] = useState<ProjectWithStats[]>([]);
-  const [total, setTotal] = useState(0);
+  const [findings, setFindings] = useState<FindingListItem[]>(initialFindings);
+  const [projects, setProjects] = useState<ProjectWithStats[]>(initialProjects);
+  const [total, setTotal] = useState(initialTotal);
   const [severity, setSeverity] = useState<string | null>(null);
+  const [selectedSeverities, setSelectedSeverities] = useState<Set<string>>(new Set()); // Multi-select severity
   const [selectedTool, setSelectedTool] = useState<'all' | 'nuclei' | 'nmap' | 'sslscan' | 'http_headers'>('all');
   const [selectedStatus, setSelectedStatus] = useState<'all' | FindingStatus>('all');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [search, setSearch] = useState(initialSearch);
   const [projectId, setProjectId] = useState<string | undefined>(initialProjectId);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false); // Start as false since we have initial data
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(initialPage);
   const [updatingStatus, setUpdatingStatus] = useState<string | null>(null);
   const [toolCounts, setToolCounts] = useState<Map<string, number>>(new Map());
+  const [selectedFinding, setSelectedFinding] = useState<FindingListItem | null>(null);
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [hasInitialData, setHasInitialData] = useState(initialFindings.length > 0);
   const limit = 20;
 
   // Sync URL params with state
@@ -140,8 +221,13 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  // Load projects for filter dropdown
+  // Load projects for filter dropdown - only if not provided from server
   useEffect(() => {
+    // If we already have projects from server, skip fetch
+    if (initialProjects.length > 0 && projects.length === initialProjects.length) {
+      return;
+    }
+
     let cancelled = false;
 
     async function loadProjects() {
@@ -162,10 +248,27 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
     return () => {
       cancelled = true;
     };
-  }, [sessionStatus, session]);
+  }, [sessionStatus, session, initialProjects.length, projects.length]);
 
   useEffect(() => {
     if (sessionStatus !== 'authenticated' || !session) return;
+    
+    // Check if we should use initial server data (only on first mount with no filters)
+    const hasActiveFilters = 
+      selectedSeverities.size > 0 || 
+      severity || 
+      selectedStatus !== 'all' || 
+      selectedTool !== 'all' || 
+      selectedCategory !== 'all' || 
+      projectId !== initialProjectId || 
+      search.trim() !== initialSearch ||
+      page !== initialPage;
+    
+    // If we have initial data and no filters changed, skip fetch on first mount
+    if (hasInitialData && !hasActiveFilters && page === initialPage) {
+      setHasInitialData(false); // Mark as used, so next filter change will fetch
+      return;
+    }
     
     let cancelled = false;
 
@@ -177,9 +280,14 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
         const params = new URLSearchParams();
         params.append('limit', limit.toString());
         params.append('offset', (page * limit).toString());
-        if (severity) {
+        
+        // Add selected severities (multi-select)
+        if (selectedSeverities.size > 0) {
+          params.append('severity', Array.from(selectedSeverities).join(','));
+        } else if (severity) {
           params.append('severity', severity);
         }
+        
         if (selectedTool !== 'all') {
           params.append('tool', selectedTool);
         }
@@ -195,6 +303,12 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
         if (selectedCategory !== 'all') {
           params.append('category', selectedCategory);
         }
+        
+        // Add scan_id from URL params if present
+        const urlScanId = searchParams.get('scan_id');
+        if (urlScanId) {
+          params.append('scan_id', urlScanId);
+        }
 
         const data = await thandevFetchJSON<FindingListResponse>(
           `/api/findings?${params.toString()}`,
@@ -209,7 +323,11 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
           // Only fetch counts when filters change (not on pagination)
           if (page === 0) {
             const allParams = new URLSearchParams();
-            if (severity) allParams.append('severity', severity);
+            if (selectedSeverities.size > 0) {
+              allParams.append('severity', Array.from(selectedSeverities).join(','));
+            } else if (severity) {
+              allParams.append('severity', severity);
+            }
             if (selectedStatus !== 'all') allParams.append('status', selectedStatus);
             if (search.trim()) allParams.append('search', search.trim());
             if (projectId) allParams.append('project_id', projectId);
@@ -257,7 +375,15 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [severity, selectedTool, selectedStatus, selectedCategory, search, projectId, page, sessionStatus, session]);
+  }, [selectedSeverities, severity, selectedTool, selectedStatus, selectedCategory, search, projectId, page, sessionStatus, session, hasInitialData, initialProjectId, initialSearch, initialPage, searchParams]);
+
+  // Handle status update from drawer
+  const handleStatusUpdateFromDrawer = (findingId: string, newStatus: FindingStatus) => {
+    // Update local state
+    setFindings(prev => prev.map(f => 
+      f.id === findingId ? { ...f, status: newStatus } : f
+    ));
+  };
 
   // Status update handler
   const updateStatus = async (findingId: string, newStatus: FindingStatus) => {
@@ -362,32 +488,52 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
 
             {/* Filters */}
             <div className="mb-6 p-6 rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-                {/* Severity Filter */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-4">
+                {/* Severity Filter - Multi-select checkboxes */}
                 <div>
                   <label className="block text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
                     Severity
                   </label>
-                  <select
-                    value={severity || ''}
-                    onChange={(e) => {
-                      setSeverity(e.target.value || null);
-                      setPage(0);
-                    }}
-                    className="w-full px-3 py-2 rounded-lg border text-sm"
-                    style={{
-                      borderColor: 'var(--border)',
-                      background: 'var(--surface-2)',
-                      color: 'var(--fg)'
-                    }}
-                  >
-                    <option value="">All severities</option>
-                    <option value="critical">Critical</option>
-                    <option value="high">High</option>
-                    <option value="medium">Medium</option>
-                    <option value="low">Low</option>
-                    <option value="info">Info</option>
-                  </select>
+                  <div className="flex flex-wrap gap-2">
+                    {['critical', 'high', 'medium', 'low', 'info'].map((sev) => (
+                      <label key={sev} className="flex items-center gap-1.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedSeverities.has(sev)}
+                          onChange={(e) => {
+                            const newSet = new Set(selectedSeverities);
+                            if (e.target.checked) {
+                              newSet.add(sev);
+                            } else {
+                              newSet.delete(sev);
+                            }
+                            setSelectedSeverities(newSet);
+                            setPage(0);
+                          }}
+                          className="w-4 h-4 rounded border"
+                          style={{
+                            borderColor: 'var(--border)',
+                            background: 'var(--surface-2)',
+                          }}
+                        />
+                        <span className="text-xs capitalize" style={{ color: 'var(--fg)' }}>
+                          {sev}
+                        </span>
+                      </label>
+                    ))}
+                    {selectedSeverities.size > 0 && (
+                      <button
+                        onClick={() => {
+                          setSelectedSeverities(new Set());
+                          setPage(0);
+                        }}
+                        className="text-xs underline"
+                        style={{ color: 'var(--muted)' }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {/* Status Filter */}
@@ -494,6 +640,7 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                     ))}
                   </select>
                 </div>
+
               </div>
 
               {/* Search Input */}
@@ -504,12 +651,12 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                 <div className="relative">
                   <input
                     type="text"
+                    placeholder="Search by title, CVE, CWE, URL, or path…"
                     value={search}
                     onChange={(e) => {
                       setSearch(e.target.value);
                       setPage(0);
                     }}
-                    placeholder="Search by title, CVE, CWE, URL, or path…"
                     className="w-full px-4 py-2 pl-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all"
                     style={{
                       borderColor: 'var(--border)',
@@ -526,10 +673,11 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
               </div>
 
               {/* Clear Filters Button */}
-              {(severity || selectedStatus !== 'all' || selectedTool !== 'all' || selectedCategory !== 'all' || projectId || search.trim()) && (
+              {(selectedSeverities.size > 0 || severity || selectedStatus !== 'all' || selectedTool !== 'all' || selectedCategory !== 'all' || projectId || search.trim()) && (
                 <div>
                   <button
                     onClick={() => {
+                      setSelectedSeverities(new Set());
                       setSeverity(null);
                       setSelectedStatus('all');
                       setSelectedTool('all');
@@ -641,21 +789,44 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                     </svg>
                   </div>
                   <h3 className="text-xl font-semibold mb-2" style={{ color: 'var(--fg)' }}>
-                    No vulnerabilities found yet
+                    {selectedSeverities.size > 0 || selectedStatus !== 'all' || selectedTool !== 'all' || selectedCategory !== 'all' || projectId || search.trim()
+                      ? 'No findings match your current filters'
+                      : 'No issues found in the latest scans for this project'}
                   </h3>
                   <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                    Run a scan from Projects to start generating security findings.
+                    {selectedSeverities.size > 0 || selectedStatus !== 'all' || selectedTool !== 'all' || selectedCategory !== 'all' || projectId || search.trim()
+                      ? 'Try adjusting your filters or search query to see more results.'
+                      : 'Run a scan from Projects to start generating security findings.'}
                   </p>
-                  <Link
-                    href="/projects"
-                    className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors hover:opacity-90"
-                    style={{ background: 'var(--brand)' }}
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                    </svg>
-                    View Projects
-                  </Link>
+                  {selectedSeverities.size > 0 || selectedStatus !== 'all' || selectedTool !== 'all' || selectedCategory !== 'all' || projectId || search.trim() ? (
+                    <button
+                      onClick={() => {
+                        setSelectedSeverities(new Set());
+                        setSeverity(null);
+                        setSelectedStatus('all');
+                        setSelectedTool('all');
+                        setSelectedCategory('all');
+                        setProjectId(undefined);
+                        setSearch('');
+                        setPage(0);
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:opacity-90"
+                      style={{ background: 'var(--brand)', color: 'white' }}
+                    >
+                      Clear filters
+                    </button>
+                  ) : (
+                    <Link
+                      href="/projects"
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors hover:opacity-90"
+                      style={{ background: 'var(--brand)' }}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                      </svg>
+                      View Projects
+                    </Link>
+                  )}
                 </div>
               ) : (
                 <>
@@ -683,9 +854,6 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                             Project
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                            Tool
-                          </th>
-                          <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
                             CVSS
                           </th>
                           <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
@@ -701,48 +869,218 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                       </thead>
                       <tbody className="divide-y" style={{ borderColor: 'var(--border)' }}>
                         {findings.map((finding) => (
-                          <tr key={finding.id} className="hover:bg-opacity-50 transition-colors" style={{ background: 'var(--surface)' }}>
+                          <tr 
+                            key={finding.id} 
+                            className="hover:bg-opacity-50 transition-colors cursor-pointer" 
+                            style={{ background: 'var(--surface)' }}
+                            onClick={() => {
+                              setSelectedFinding(finding);
+                              setIsDetailsOpen(true);
+                            }}
+                          >
                             <td className="px-6 py-4 whitespace-nowrap">
                               <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getSeverityColor(finding.severity)}`}>
                                 {finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1)}
                               </span>
                             </td>
-                            <td className="px-6 py-4">
-                              <div className="flex flex-col">
-                                <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                                  {finding.title}
-                                </span>
-                                {(finding.cve_id || finding.cwe_id) && (
-                                  <div className="flex gap-2 mt-1">
-                                    {finding.cve_id && (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                                        CVE: {finding.cve_id}
-                                      </span>
-                                    )}
-                                    {finding.cwe_id && (
-                                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                                        CWE: {finding.cwe_id}
+                            <td className="px-6 py-4 max-w-0">
+                              <div className="flex flex-col gap-3" style={{ maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+                                {/* Header: Severity + Status + Title */}
+                                <div className="flex items-start gap-2 flex-wrap">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <StatusBadge status={finding.status} />
+                                    {finding.not_seen_in_latest_scan !== null && (
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                        finding.not_seen_in_latest_scan 
+                                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                          : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                      }`}>
+                                        {finding.not_seen_in_latest_scan ? 'Not seen in latest scan' : 'Present in latest scan'}
                                       </span>
                                     )}
                                   </div>
-                                )}
-                                {finding.categories && finding.categories.length > 0 && (
-                                  <div className="mt-1 flex flex-wrap gap-1">
-                                    {finding.categories.map((cat) => (
-                                      <span
-                                        key={cat}
-                                        className="inline-flex items-center rounded-full border border-border/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                                        style={{
-                                          borderColor: 'var(--border)',
-                                          color: 'var(--muted)',
-                                          background: 'var(--surface-2)'
-                                        }}
-                                      >
-                                        {formatCategory(cat)}
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-sm font-semibold break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                        {formatFindingTitle(finding.title)}
                                       </span>
-                                    ))}
+                                      {finding.vuln_type && (
+                                        <span className="px-2 py-0.5 text-[10px] font-medium rounded border uppercase" style={{ 
+                                          background: 'var(--surface-2)', 
+                                          color: 'var(--muted)', 
+                                          borderColor: 'var(--border)' 
+                                        }}>
+                                          {finding.vuln_type}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
-                                )}
+                                </div>
+                                
+                                {/* 1. Where it was found - ALWAYS SHOW with tolerant logic */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                    Where it was found
+                                  </div>
+                                  {(() => {
+                                    // Tolerant logic: use defaults when missing
+                                    const method = finding.http_method || "GET";
+                                    const url = finding.url || finding.path || null;
+                                    const param = finding.parameter;
+                                    
+                                    if (!url) {
+                                      return (
+                                        <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                          Location information not available
+                                        </p>
+                                      );
+                                    }
+                                    
+                                    const formattedUrl = formatUrlForDisplay(url, 100);
+                                    const paramCount = getUrlParamCount(url);
+                                    
+                                    return (
+                                      <>
+                                        <div className="text-xs font-mono break-all" style={{ color: 'var(--fg)' }}>
+                                          <span className="font-semibold">{method}</span>{' '}
+                                          <span className="break-all">{formattedUrl}</span>
+                                        </div>
+                                        {param && (
+                                          <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                                            Parameter: <span className="font-mono font-medium break-all" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{param}</span>
+                                            {paramCount > 1 && (
+                                              <span className="ml-2 text-[10px]" style={{ color: 'var(--muted)' }}>
+                                                ({paramCount} total parameters)
+                                              </span>
+                                            )}
+                                          </div>
+                                        )}
+                                        {!param && paramCount > 0 && (
+                                          <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                                            {paramCount} parameter{paramCount > 1 ? 's' : ''} in URL
+                                          </div>
+                                        )}
+                                      </>
+                                    );
+                                  })()}
+                                </div>
+                                
+                                {/* 2. What we found - ALWAYS SHOW */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                    What we found
+                                  </div>
+                                  {finding.description ? (
+                                    <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                      {finding.description.length > 200 ? (
+                                        <>
+                                          {finding.description.substring(0, 200)}...
+                                          <span className="text-[10px] ml-1" style={{ color: 'var(--brand)' }}>Click for more</span>
+                                        </>
+                                      ) : (
+                                        finding.description
+                                      )}
+                                    </p>
+                                  ) : (
+                                    <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                      No description available
+                                    </p>
+                                  )}
+                                </div>
+                                
+                                {/* 3. Why it matters - ALWAYS SHOW with smart fallback */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                    Why it matters
+                                  </div>
+                                  {(() => {
+                                    // Prefer backend impact_summary
+                                    if (finding.impact_summary) {
+                                      return (
+                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          {finding.impact_summary}
+                                        </p>
+                                      );
+                                    }
+                                    
+                                    // Derive from vuln_type if available
+                                    const vulnType = finding.vuln_type?.toLowerCase() || '';
+                                    if (vulnType.includes('xss')) {
+                                      return (
+                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          An attacker could run JavaScript in the user's browser, steal sessions, or act as the logged-in user.
+                                        </p>
+                                      );
+                                    }
+                                    if (vulnType.includes('sqli') || vulnType.includes('sql')) {
+                                      return (
+                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          An attacker could read or modify data in your database and potentially gain full control of the application.
+                                        </p>
+                                      );
+                                    }
+                                    if (vulnType.includes('open') && vulnType.includes('port')) {
+                                      return (
+                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          Exposed services can be attacked or abused if they are misconfigured, outdated, or unnecessary.
+                                        </p>
+                                      );
+                                    }
+                                    
+                                    // Generic fallback
+                                    return (
+                                      <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                        This issue could pose a security risk to your application.
+                                      </p>
+                                    );
+                                  })()}
+                                </div>
+                                
+                                {/* 4. How to fix it - ALWAYS SHOW, prefer backend remediation */}
+                                <div className="space-y-1">
+                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                    How to fix it
+                                  </div>
+                                  {(() => {
+                                    // Prefer backend remediation fields
+                                    const hasRemediation = finding.remediation_summary || finding.remediation_steps || (finding as any).default_remediation_steps;
+                                    
+                                    if (hasRemediation) {
+                                      return (
+                                        <>
+                                          {finding.remediation_summary && (
+                                            <p className="text-xs mb-1" style={{ color: 'var(--fg)' }}>
+                                          {finding.remediation_summary}
+                                        </p>
+                                      )}
+                                      {(finding.remediation_steps || (finding as any).default_remediation_steps) && (
+                                        <ul className="text-xs list-disc list-inside space-y-0.5 break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          {(finding.remediation_steps || (finding as any).default_remediation_steps || '')
+                                            .split('\n')
+                                            .filter(s => s.trim())
+                                            .map((step, idx) => (
+                                              <li key={idx} className="break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{step.trim()}</li>
+                                            ))}
+                                        </ul>
+                                      )}
+                                        </>
+                                      );
+                                    }
+                                    
+                                    // Only show fallback if truly no remediation available
+                                    // Common vuln types should have remediation from backend
+                                    return (
+                                      <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                        Remediation guidance for this specific issue is not available yet. Review the technical details or consult your security team.
+                                      </p>
+                                    );
+                                  })()}
+                                </div>
+                                
+                                {/* Footer hint */}
+                                <div className="text-[10px] italic" style={{ color: 'var(--muted)' }}>
+                                  Click for more details
+                                </div>
                               </div>
                             </td>
                             <td className="px-6 py-4">
@@ -758,11 +1096,6 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                               </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <span className="text-sm" style={{ color: 'var(--fg)' }}>
-                                {finding.tool || 'N/A'}
-                              </span>
-                            </td>
-                            <td className="px-6 py-4 whitespace-nowrap">
                               <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
                                 {finding.cvss_score !== null && finding.cvss_score !== undefined
                                   ? finding.cvss_score.toFixed(1)
@@ -770,11 +1103,12 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
-                              <div className="flex items-center gap-2">
-                                <StatusBadge status={finding.status} />
-                                <select
+                              <select
                                   value={finding.status}
-                                  onChange={(e) => updateStatus(finding.id, e.target.value as FindingStatus)}
+                                  onChange={(e) => {
+                                    e.stopPropagation();
+                                    updateStatus(finding.id, e.target.value as FindingStatus);
+                                  }}
                                   disabled={updatingStatus === finding.id}
                                   className="text-xs rounded border px-1 py-0.5"
                                   style={{
@@ -782,17 +1116,17 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
                                     borderColor: 'var(--border)',
                                     color: 'var(--fg)'
                                   }}
+                                  onClick={(e) => e.stopPropagation()}
                                 >
                                   <option value="open">Open</option>
                                   <option value="acknowledged">Acknowledged</option>
                                   <option value="resolved">Resolved</option>
                                   <option value="suppressed">Suppressed</option>
                                 </select>
-                              </div>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap">
                               <span className="text-sm" style={{ color: 'var(--muted)' }}>
-                                {formatDate(finding.first_seen)}
+                                {finding.last_seen_at ? formatDate(finding.last_seen_at) : (finding.first_seen ? formatDate(finding.first_seen) : 'N/A')}
                               </span>
                             </td>
                             <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -842,6 +1176,17 @@ export default function VulnerabilitiesClient({ initialProjectId }: Vulnerabilit
           </div>
         </main>
       </div>
+      
+      {/* Finding Details Drawer */}
+      <FindingDetailsDrawer
+        finding={selectedFinding}
+        open={isDetailsOpen}
+        onClose={() => {
+          setIsDetailsOpen(false);
+          setSelectedFinding(null);
+        }}
+        onStatusUpdate={handleStatusUpdateFromDrawer}
+      />
     </div>
   );
 }

@@ -44,20 +44,43 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    with connectable.connect() as connection:
-        context.configure(
-            connection=connection, target_metadata=target_metadata
+    """Run migrations in 'online' mode with improved error handling."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
         )
 
-        with context.begin_transaction():
-            context.run_migrations()
+        with connectable.connect() as connection:
+            context.configure(
+                connection=connection, target_metadata=target_metadata
+            )
+
+            with context.begin_transaction():
+                context.run_migrations()
+    except Exception as e:
+        logger.error(f"Migration failed: {e}", exc_info=True)
+        # Provide user-friendly error message
+        error_msg = str(e)
+        if "connection" in error_msg.lower() or "connect" in error_msg.lower():
+            raise RuntimeError(
+                f"Failed to connect to database: {error_msg}. "
+                f"Please check your DATABASE_URL setting and ensure the database is running."
+            ) from e
+        elif "table" in error_msg.lower() or "column" in error_msg.lower():
+            raise RuntimeError(
+                f"Database schema error: {error_msg}. "
+                f"This may indicate a migration conflict. Try running 'alembic downgrade -1' first."
+            ) from e
+        else:
+            raise RuntimeError(
+                f"Migration error: {error_msg}. "
+                f"Check the logs for more details."
+            ) from e
 
 
 if context.is_offline_mode():

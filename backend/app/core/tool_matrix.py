@@ -40,26 +40,27 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
     ScanLevel.PRO: [
         {"key": "httpx", "enabled": True, "intensity": "medium"},
         {"key": "nuclei", "enabled": True, "profile": "pro_web"},
-        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-pro.txt", "timeout_seconds": 900},
+        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-pro.txt", "timeout_seconds": 300},
         {"key": "nmap", "enabled": True, "profile": "top_ports"},
         {"key": "sslscan", "enabled": True},
-        {"key": "dalfox", "enabled": True, "timeout_seconds": 900},
+        {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
     ],
     ScanLevel.ADVANCED: [
         {"key": "httpx", "enabled": True, "intensity": "high"},
         {"key": "nuclei", "enabled": True, "profile": "advanced_web"},
-        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-advanced.txt", "timeout_seconds": 1800},
+        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-advanced.txt", "timeout_seconds": 300},
         {"key": "nmap", "enabled": True, "profile": "full_ports_scripts"},
         {"key": "sslscan", "enabled": True},
-        {"key": "dalfox", "enabled": True, "timeout_seconds": 1800},
-        {"key": "sqlmap", "enabled": True, "timeout_seconds": 900, "profile": "sqli_light"},  # SQL Injection testing
-        # Future vulnerability-class tools – declared but disabled
-        {"key": "xss_experimental", "enabled": False, "timeout_seconds": 1800},  # Playwright-based XSS checks
-        {"key": "ssrf_oob", "enabled": False, "timeout_seconds": 1800},  # OOB SSRF interaction testing
-        {"key": "cmdi_oob", "enabled": False, "timeout_seconds": 1800},  # OOB Command Injection testing
-        # Other future tools
-        {"key": "subfinder", "enabled": False},
-        {"key": "gitleaks", "enabled": False},
+        {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
+        {"key": "sqlmap", "enabled": True, "timeout_seconds": 300, "profile": "sqli_light"},  # SQL Injection testing
+        # NOTE: Future/experimental tools removed from active matrix
+        # These tools are not yet fully wired or stable:
+        # - xss_experimental (Playwright-based XSS checks)
+        # - ssrf_oob (OOB SSRF interaction testing)
+        # - cmdi_oob (OOB Command Injection testing)
+        # - subfinder (subdomain enumeration)
+        # - gitleaks (secret scanning)
+        # - nikto, amass, gobuster, crt.sh, sslyze (referenced in presets but not in main tool matrix)
     ],
 }
 

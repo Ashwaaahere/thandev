@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "thandev-schemas"
+version = "0.1.0"
+description = "Shared schemas package for Thandev"
+requires-python = ">=3.8"
+dependencies = [
+    "pydantic>=2.0",
+]
+
+[tool.setuptools]
+packages = ["thandev_schemas"]

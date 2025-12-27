@@ -1,7 +1,7 @@
 """
 Scan planning schemas
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Dict, Any, List, Optional
 
 
@@ -21,8 +21,7 @@ class PlanScanRequest(BaseModel):
             raise ValueError(f"scan_level must be one of {valid_levels}")
         return v.lower()
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class PlanStep(BaseModel):
@@ -35,8 +34,7 @@ class PlanStep(BaseModel):
     reason: str = Field(..., description="Explanation for this step")
     estimated_duration_sec: int = Field(..., ge=0, description="Estimated duration in seconds")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class Timeline(BaseModel):
@@ -44,8 +42,7 @@ class Timeline(BaseModel):
     total_estimated_sec: int = Field(..., ge=0, description="Total estimated duration")
     phases: List[Dict[str, Any]] = Field(default_factory=list, description="Phase breakdown")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 class PlanScanResponse(BaseModel):
@@ -55,8 +52,7 @@ class PlanScanResponse(BaseModel):
     timeline: Timeline = Field(..., description="Timeline estimates")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     
-    class Config:
-        extra = "forbid"
+    model_config = ConfigDict(extra="forbid")
 
 
 

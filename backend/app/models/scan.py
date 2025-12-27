@@ -33,6 +33,7 @@ class ScanStatus(str, enum.Enum):
     COMPLETED_WITH_ERRORS = "completed_with_errors"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    STALLED = "stalled"  # Scan running too long without progress (brain unreachable or no updates)
 
 
 class AIStatus(str, enum.Enum):
@@ -82,7 +83,14 @@ class ScanJob(Base):
     
     # Relationships
     project = relationship("Project", back_populates="scan_jobs")
-    findings = relationship("Finding", back_populates="scan_job", cascade="all, delete-orphan")
+    # Specify primaryjoin explicitly because Finding has two FKs to scan_jobs (scan_job_id and last_seen_in_scan_id)
+    # This tells SQLAlchemy to use scan_job_id for the findings relationship
+    findings = relationship(
+        "Finding", 
+        back_populates="scan_job", 
+        cascade="all, delete-orphan",
+        primaryjoin="ScanJob.id == Finding.scan_job_id"
+    )
     tool_results = relationship("ToolResult", back_populates="scan_job", cascade="all, delete-orphan")
 
 

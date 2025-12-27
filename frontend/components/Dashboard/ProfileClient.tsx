@@ -1,18 +1,44 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
+import { useSession } from 'next-auth/react';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
+import { thandevFetchJSON } from '@/lib/thandevApi';
 
 interface ProfileClientProps {
   user: any;
 }
 
+interface TenantPlanInfo {
+  id: string;
+  name: string;
+  plan: string; // "free" | "individual" | "team"
+  limits: {
+    max_projects: number;
+    max_scans_per_month: number;
+    max_concurrent_scans: number;
+    allowed_scan_levels: string[];
+  };
+  usage: {
+    projects_count: number;
+    projects_max: number;
+    scans_this_month: number;
+    scans_monthly_max: number;
+    concurrent_scans: number;
+    concurrent_scans_max: number;
+  };
+}
+
 export default function ProfileClient({ user }: ProfileClientProps) {
+  const { data: session } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('profile');
   const [isEditing, setIsEditing] = useState(false);
+  const [planInfo, setPlanInfo] = useState<TenantPlanInfo | null>(null);
+  const [planLoading, setPlanLoading] = useState(true);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     name: user?.name || '',
     email: user?.email || '',
@@ -24,6 +50,27 @@ export default function ProfileClient({ user }: ProfileClientProps) {
     twitter: user?.twitter || '',
     linkedin: user?.linkedin || '',
   });
+
+  // Fetch subscription plan information
+  useEffect(() => {
+    async function loadPlanInfo() {
+      if (!session) return;
+      
+      try {
+        setPlanLoading(true);
+        setPlanError(null);
+        const data = await thandevFetchJSON<TenantPlanInfo>('/api/tenants/current', session);
+        setPlanInfo(data);
+      } catch (err) {
+        console.error('Failed to load plan information:', err);
+        setPlanError(err instanceof Error ? err.message : 'Failed to load plan information');
+      } finally {
+        setPlanLoading(false);
+      }
+    }
+    
+    loadPlanInfo();
+  }, [session]);
 
   const handleSave = () => {
     // In a real app, this would make an API call
@@ -177,6 +224,152 @@ export default function ProfileClient({ user }: ProfileClientProps) {
                 </button>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Subscription Plan Section */}
+        {activeTab === 'profile' && (
+          <div className="glass-card p-6 rounded-xl border" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+            <h3 className="text-xl font-bold mb-6" style={{ color: 'var(--fg)' }}>Subscription Plan</h3>
+            
+            {planLoading ? (
+              <div className="text-center py-8">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2" style={{ borderColor: 'var(--brand)' }}></div>
+                <p className="mt-4" style={{ color: 'var(--muted)' }}>Loading plan information...</p>
+              </div>
+            ) : planError ? (
+              <div className="text-center py-8">
+                <p style={{ color: 'var(--muted)' }}>{planError}</p>
+              </div>
+            ) : planInfo ? (
+              <div className="space-y-6">
+                {/* Current Plan Badge */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-lg font-semibold mb-1" style={{ color: 'var(--fg)' }}>
+                      {planInfo.plan.charAt(0).toUpperCase() + planInfo.plan.slice(1)} Plan
+                    </h4>
+                    <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                      {planInfo.name}
+                    </p>
+                  </div>
+                  <span
+                    className="px-4 py-2 rounded-lg font-medium text-sm"
+                    style={{
+                      background: planInfo.plan === 'free' ? 'var(--surface-2)' : 'var(--brand)',
+                      color: planInfo.plan === 'free' ? 'var(--fg)' : 'white'
+                    }}
+                  >
+                    {planInfo.plan === 'free' ? 'Free' : planInfo.plan === 'individual' ? 'Individual' : 'Team'}
+                  </span>
+                </div>
+
+                {/* Plan Limits & Usage */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Projects */}
+                  <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Projects</span>
+                      <span className="text-sm font-semibold" style={{ color: 'var(--brand)' }}>
+                        {planInfo.usage.projects_count} / {planInfo.usage.projects_max}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          background: 'var(--brand)',
+                          width: `${Math.min((planInfo.usage.projects_count / planInfo.usage.projects_max) * 100, 100)}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Monthly Scans */}
+                  <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Scans This Month</span>
+                      <span className="text-sm font-semibold" style={{ color: 'var(--brand)' }}>
+                        {planInfo.usage.scans_this_month} / {planInfo.usage.scans_monthly_max}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          background: 'var(--brand)',
+                          width: `${Math.min((planInfo.usage.scans_this_month / planInfo.usage.scans_monthly_max) * 100, 100)}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Concurrent Scans */}
+                  <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Concurrent Scans</span>
+                      <span className="text-sm font-semibold" style={{ color: 'var(--brand)' }}>
+                        {planInfo.usage.concurrent_scans} / {planInfo.usage.concurrent_scans_max}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                      <div
+                        className="h-full rounded-full transition-all"
+                        style={{
+                          background: 'var(--brand)',
+                          width: `${Math.min((planInfo.usage.concurrent_scans / planInfo.usage.concurrent_scans_max) * 100, 100)}%`
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Allowed Scan Levels */}
+                  <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                    <div className="mb-2">
+                      <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>Allowed Scan Levels</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {planInfo.limits.allowed_scan_levels.map((level) => (
+                        <span
+                          key={level}
+                          className="px-3 py-1 rounded-md text-xs font-medium"
+                          style={{
+                            background: 'var(--surface-2)',
+                            color: 'var(--fg)'
+                          }}
+                        >
+                          {level.charAt(0).toUpperCase() + level.slice(1)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Upgrade CTA (if on free plan) */}
+                {planInfo.plan === 'free' && (
+                  <div className="mt-6 p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h5 className="font-semibold mb-1" style={{ color: 'var(--fg)' }}>Upgrade for More Features</h5>
+                        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                          Get more projects, scans, and advanced scan levels
+                        </p>
+                      </div>
+                      <button
+                        className="px-4 py-2 rounded-lg font-medium text-white transition-all hover:shadow-lg"
+                        style={{ background: 'var(--brand)' }}
+                        onClick={() => {
+                          // TODO: Navigate to billing/upgrade page
+                          console.log('Upgrade clicked');
+                        }}
+                      >
+                        Upgrade Plan
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
         )}
 

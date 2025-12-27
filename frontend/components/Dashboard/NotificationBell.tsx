@@ -132,9 +132,9 @@ export default function NotificationBell() {
       </button>
 
       {isOpen && (
-        <div className="absolute right-0 mt-2 w-80 bg-[var(--surface)] border border-[var(--border)] rounded-lg shadow-lg z-50 max-h-96 overflow-y-auto">
-          <div className="p-4 border-b border-[var(--border)]">
-            <h3 className="font-semibold text-[var(--fg)]">Notifications</h3>
+        <div className="absolute right-0 mt-2 w-80 rounded-lg shadow-2xl z-50 max-h-96 overflow-y-auto backdrop-blur-md" style={{ backgroundColor: 'var(--surface)', opacity: 0.98, border: '1px solid var(--border)' }}>
+          <div className="p-4 border-b" style={{ borderColor: 'var(--border)' }}>
+            <h3 className="font-semibold" style={{ color: 'var(--fg)' }}>Notifications</h3>
           </div>
           {isLoading ? (
             <div className="p-4 text-center text-[var(--muted)]">Loading...</div>
@@ -160,15 +160,15 @@ export default function NotificationBell() {
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <p className="font-medium text-sm text-[var(--fg)]">
+                      <p className="font-medium text-sm" style={{ color: 'var(--fg)', opacity: 1 }}>
                         {notification.title}
                       </p>
                       {notification.message && (
-                        <p className="text-xs mt-1 line-clamp-1" style={{ color: 'var(--muted)' }}>
+                        <p className="text-xs mt-1 line-clamp-1" style={{ color: 'var(--fg)', opacity: 0.9 }}>
                           {notification.message}
                         </p>
                       )}
-                      <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+                      <p className="text-xs mt-1" style={{ color: 'var(--muted)', opacity: 0.8 }}>
                         {formatRelativeTime(notification.created_at)}
                       </p>
                     </div>

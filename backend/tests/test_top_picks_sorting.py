@@ -83,9 +83,10 @@ def test_top_risks_severity_sorting(mock_scan_job):
     assert len(report["top_risks"]) == 5  # Top 5
     
     # Verify sorting: critical > high > medium > low > info
+    # This test verifies the fix for the sorting bug where HIGH was incorrectly sorted before CRITICAL
     top_risks = report["top_risks"]
     
-    # First should be critical (highest CVSS)
+    # First should be critical (highest CVSS) - verifies critical comes before high
     assert top_risks[0]["severity"] == "critical"
     assert top_risks[0]["cvss_score"] == 9.8  # Higher CVSS comes first within same severity
     

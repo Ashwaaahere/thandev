@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Notification API
 """
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 from datetime import datetime
 import uuid
@@ -18,11 +18,12 @@ class NotificationBase(BaseModel):
     created_at: datetime
     read_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
-        json_encoders = {
+    model_config = ConfigDict(
+        from_attributes=True,
+        json_encoders={
             datetime: lambda v: v.isoformat() if v else None
         }
+    )
 
 
 class NotificationListItem(NotificationBase):

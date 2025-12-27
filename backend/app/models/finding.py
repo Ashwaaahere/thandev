@@ -1,7 +1,7 @@
 """
 Finding and ToolResult models
 """
-from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Enum as SQLEnum, Float, Integer
+from sqlalchemy import Column, String, DateTime, ForeignKey, Text, Enum as SQLEnum, Float, Integer, Boolean, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
@@ -35,6 +35,9 @@ class Finding(Base):
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     scan_job_id = Column(String(36), ForeignKey("scan_jobs.id"), nullable=False, index=True)
     
+    # Direct project link for easier querying (denormalized from scan_job.project_id)
+    project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)
+    
     # Finding details
     title = Column(String(500), nullable=False)
     description = Column(Text, nullable=True)
@@ -45,17 +48,48 @@ class Finding(Base):
     cwe_id = Column(String(50), nullable=True)
     cvss_score = Column(Float, nullable=True)
     
-    # Location information
+    # Identification / Linking
+    tool_name = Column(String(100), nullable=True, index=True)  # Kept for backwards compatibility
+    tool = Column(String(100), nullable=True, index=True)  # New normalized field (alias for tool_name)
+    tool_result_id = Column(String(36), ForeignKey("tool_results.id"), nullable=True, index=True)  # Link to specific tool run (v2)
+    template_id = Column(String(255), nullable=True, index=True)  # Template/rule identifier (e.g., nuclei template-id)
+    rule_id = Column(String(255), nullable=True)  # Alternative rule identifier
+    vuln_type = Column(String(100), nullable=True, index=True)  # Normalized vulnerability type (e.g., "xss", "sqli")
+    category = Column(String(100), nullable=True)  # Alternative category field
+    
+    # Location information (enhanced)
     url = Column(String(2048), nullable=True)
     path = Column(String(2048), nullable=True)
     line_number = Column(Integer, nullable=True)
+    http_method = Column(String(10), nullable=True)  # GET, POST, etc.
+    parameter = Column(String(255), nullable=True)  # Query/body parameter name
+    header_name = Column(String(255), nullable=True)  # Header name if applicable
+    cookie_name = Column(String(255), nullable=True)  # Cookie name if applicable
     
-    # Remediation
-    recommendation = Column(Text, nullable=True)
-    
-    # Metadata
-    tool_name = Column(String(100), nullable=True, index=True)
+    # Evidence
+    evidence = Column(Text, nullable=True)  # Short evidence snippet (payload, response snippet)
     raw_data = Column(Text, nullable=True)  # JSON string of raw finding data
+    
+    # Lifecycle fields
+    dedup_key = Column(String(64), nullable=True, index=True)  # Deterministic hash for deduplication
+    first_seen_at = Column(DateTime(timezone=True), nullable=True)  # When first detected
+    last_seen_at = Column(DateTime(timezone=True), nullable=True)  # When last detected
+    last_seen_in_scan_id = Column(String(36), ForeignKey("scan_jobs.id"), nullable=True)  # Most recent scan where seen
+    found_count = Column(Integer, nullable=False, default=1, server_default="1")  # Number of scans where appeared
+    not_seen_in_latest_scan = Column(Boolean, nullable=False, default=False, server_default="false")  # Flag: true if not seen in latest scan
+    
+    # Remediation (enhanced)
+    recommendation = Column(Text, nullable=True)  # Kept for backwards compatibility
+    remediation_summary = Column(Text, nullable=True)  # Short summary of what to fix
+    remediation_steps = Column(Text, nullable=True)  # JSON array or newline-separated steps
+    framework_hint = Column(String(100), nullable=True)  # Detected framework (django, express, laravel, etc.)
+    
+    # AI Enrichment fields (from thandev-brain)
+    impact_summary = Column(Text, nullable=True)  # AI-generated impact summary
+    ai_source = Column(String(50), nullable=True)  # Source identifier (e.g., "brain_v1", "fallback")
+    ai_model = Column(String(100), nullable=True)  # AI model used (e.g., "gpt-4o-mini")
+    ai_confidence = Column(Float, nullable=True)  # Confidence score (0.0-1.0)
+    ai_last_updated_at = Column(DateTime(timezone=True), nullable=True)  # When AI enrichment was last updated
     
     # Workflow status
     status = Column(
@@ -70,11 +104,23 @@ class Finding(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     
     # Relationships
-    scan_job = relationship("ScanJob", back_populates="findings")
+    scan_job = relationship("ScanJob", back_populates="findings", foreign_keys=[scan_job_id])
+    project = relationship("Project", foreign_keys=[project_id])
+    last_seen_in_scan = relationship("ScanJob", foreign_keys=[last_seen_in_scan_id])
+
+
+class ToolExecutionStatus(str, enum.Enum):
+    """Tool execution status enumeration"""
+    PENDING = "pending"  # Tool is planned but not yet started
+    RUNNING = "running"  # Tool is currently executing
+    COMPLETED = "completed"  # Tool finished successfully
+    FAILED = "failed"  # Tool failed (non-zero exit, error, etc.)
+    SKIPPED = "skipped"  # Tool was skipped (e.g., missing binary, target unreachable)
+    TIMED_OUT = "timed_out"  # Tool execution timed out
 
 
 class ToolResult(Base):
-    """ToolResult model for storing raw tool output"""
+    """ToolResult model for storing raw tool output and execution status"""
     
     __tablename__ = "tool_results"
     
@@ -85,18 +131,40 @@ class ToolResult(Base):
     tool_name = Column(String(100), nullable=False, index=True)
     tool_version = Column(String(50), nullable=True)
     
+    # Execution status (new field for lifecycle tracking)
+    status = Column(
+        SQLEnum(ToolExecutionStatus, name="tool_execution_status"),
+        nullable=True,  # Nullable for backward compatibility with existing records
+        default=None,
+    )
+    error_code = Column(String(50), nullable=True)  # Short error code: "timeout", "missing_binary", "target_unreachable", etc.
+    
     # Results
     output = Column(Text, nullable=True)  # Raw tool output
     exit_code = Column(Integer, nullable=True)
     execution_time = Column(Float, nullable=True)  # Seconds
-    timed_out = Column(Integer, nullable=False, default=0, server_default="0")  # Boolean: 0=False, 1=True
+    timed_out = Column(Integer, nullable=False, default=0, server_default="0")  # Boolean: 0=False, 1=True (kept for backward compatibility)
     
     # Metadata
     command = Column(Text, nullable=True)  # Command that was executed
-    error_message = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)  # User-safe error message
     
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    started_at = Column(DateTime(timezone=True), nullable=True)  # When tool execution started
+    completed_at = Column(DateTime(timezone=True), nullable=True)  # When tool execution completed
+    
+    # Tool run tracking fields
+    output_path = Column(String(512), nullable=True)  # Path to output file
+    stdout_preview = Column(Text, nullable=True)  # First 1000 chars of stdout
+    stderr_preview = Column(Text, nullable=True)  # First 1000 chars of stderr
+    parsed_findings_count = Column(Integer, nullable=False, default=0, server_default="0")  # Number of findings parsed from output
+    created_findings_count = Column(Integer, nullable=False, default=0, server_default="0")  # Number of findings actually created in DB
+    meta = Column(JSON, nullable=True)  # Tool args, version, command details (JSON)
+    duration_ms = Column(Integer, nullable=True)  # Duration in milliseconds (computed from execution_time)
+    skip_reason = Column(String(100), nullable=True)  # e.g., no_injection_points, rate_limited, blocked
+    raw_stdout = Column(Text, nullable=True)
+    raw_stderr = Column(Text, nullable=True)
     
     # Relationships
     scan_job = relationship("ScanJob", back_populates="tool_results")

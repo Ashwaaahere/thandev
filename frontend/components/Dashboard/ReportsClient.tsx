@@ -101,6 +101,7 @@ export default function ReportsClient() {
   const router = useRouter();
   
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [allScans, setAllScans] = useState<ScanItem[]>([]);
   const [scans, setScans] = useState<ScanItem[]>([]);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -108,7 +109,7 @@ export default function ReportsClient() {
   
   const [selectedProjectId, setSelectedProjectId] = useState<string>('all');
   const [selectedLevel, setSelectedLevel] = useState<string>('all');
-  const [selectedStatus, setSelectedStatus] = useState<string>('completed');
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [search, setSearch] = useState('');
   
   // PDF download state per scan: { scanId: { full: boolean, executive: boolean } }
@@ -136,26 +137,69 @@ export default function ReportsClient() {
     setError(null);
 
     try {
-      const params = new URLSearchParams();
-      params.set('limit', '50');
-      params.set('offset', '0');
+      // Fetch all scans with pagination (backend max limit is 100)
+      const allScansData: ScanItem[] = [];
+      let offset = 0;
+      const limit = 100; // Backend maximum
+      let hasMore = true;
 
-      // Optional filters
-      if (selectedStatus !== 'all') params.set('status', selectedStatus);
-      if (selectedLevel !== 'all') params.set('scan_level', selectedLevel);
-      if (selectedProjectId !== 'all') params.set('project_id', selectedProjectId);
-      if (search.trim()) params.set('search', search.trim());
+      while (hasMore) {
+        const params = new URLSearchParams();
+        params.set('limit', limit.toString());
+        params.set('offset', offset.toString());
 
-      const url = `/api/scans?${params.toString()}`;
-      const res = await thandevFetchJSON<ScansResponse>(url, session);
-      setScans(res.items ?? []);
+        const url = `/api/scans?${params.toString()}`;
+        const res = await thandevFetchJSON<ScansResponse>(url, session);
+        
+        if (res.items && res.items.length > 0) {
+          allScansData.push(...res.items);
+          offset += res.items.length;
+          // If we got fewer items than the limit, we've reached the end
+          hasMore = res.items.length === limit;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      setAllScans(allScansData);
     } catch (err: any) {
       console.error('Failed to load reports', err);
       setError(err?.message || 'Failed to load reports.');
     } finally {
       setLoading(false);
     }
-  }, [session, selectedStatus, selectedLevel, selectedProjectId, search]);
+  }, [session]);
+
+  // Apply filters client-side
+  useEffect(() => {
+    let filtered = [...allScans];
+
+    // Filter by project
+    if (selectedProjectId !== 'all') {
+      filtered = filtered.filter(scan => scan.project_id === selectedProjectId);
+    }
+
+    // Filter by level
+    if (selectedLevel !== 'all') {
+      filtered = filtered.filter(scan => scan.scan_level.toLowerCase() === selectedLevel.toLowerCase());
+    }
+
+    // Filter by status
+    if (selectedStatus !== 'all') {
+      filtered = filtered.filter(scan => scan.status.toLowerCase() === selectedStatus.toLowerCase());
+    }
+
+    // Filter by search (URL or scan ID)
+    if (search.trim()) {
+      const searchLower = search.trim().toLowerCase();
+      filtered = filtered.filter(scan => 
+        (scan.target_url?.toLowerCase().includes(searchLower)) ||
+        scan.id.toLowerCase().includes(searchLower)
+      );
+    }
+
+    setScans(filtered);
+  }, [allScans, selectedProjectId, selectedLevel, selectedStatus, search]);
 
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') {
@@ -225,7 +269,7 @@ export default function ReportsClient() {
   const clearFilters = () => {
     setSelectedProjectId('all');
     setSelectedLevel('all');
-    setSelectedStatus('completed');
+    setSelectedStatus('all');
     setSearch('');
   };
 
@@ -240,7 +284,7 @@ export default function ReportsClient() {
         />
         <div className="flex-1 flex flex-col overflow-hidden">
           <DashboardHeader 
-            user={session?.user} 
+            user={undefined} 
             onMenuClick={() => setSidebarOpen(true)}
             showLogo={sidebarOpen}
           />
@@ -263,6 +307,11 @@ export default function ReportsClient() {
 
   // Unauthenticated state (will redirect)
   if (sessionStatus === 'unauthenticated') {
+    router.push('/auth');
+    return null;
+  }
+
+  if (!session) {
     return null;
   }
 
@@ -275,7 +324,7 @@ export default function ReportsClient() {
       />
       <div className="flex-1 flex flex-col overflow-hidden">
         <DashboardHeader 
-          user={session?.user} 
+          user={session.user} 
           onMenuClick={() => setSidebarOpen(true)}
           showLogo={sidebarOpen}
         />

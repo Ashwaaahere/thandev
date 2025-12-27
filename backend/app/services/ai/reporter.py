@@ -3,6 +3,10 @@ AI Reporter service for generating scan reports
 """
 import logging
 from typing import Dict, List, TYPE_CHECKING
+from app.core.constants import (
+    CANON_FINDINGS_COUNT, CANON_SEV_BREAKDOWN, CANON_RISK_SCORE,
+    DEPRECATED_TOTAL_FINDINGS, DEPRECATED_FINDINGS_BY_SEVERITY
+)
 
 if TYPE_CHECKING:
     from app.models.scan import ScanJob
@@ -30,23 +34,28 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
     
     # Handle empty findings gracefully
     if not findings:
+        empty_severity = {sev: 0 for sev in ["critical", "high", "medium", "low", "info"]}
         return {
             "executive_summary": "No security findings detected in this scan. The target appears to be secure based on the scan configuration.",
             "top_risks": [],
             "remediation_overview": "No immediate remediation actions required.",
-            "risk_score": 0,
-            "findings_count": 0
+            CANON_RISK_SCORE: 0.0,  # float
+            CANON_FINDINGS_COUNT: 0,  # canonical
+            DEPRECATED_TOTAL_FINDINGS: 0,  # deprecated alias
+            CANON_SEV_BREAKDOWN: empty_severity.copy(),  # canonical, all keys present
+            DEPRECATED_FINDINGS_BY_SEVERITY: empty_severity.copy(),  # deprecated alias
         }
     
-    # PR-4D: Sort findings by severity (critical > high > medium > low > info)
-    # Use negative severity_order so lower values (critical=0) come first when sorted ascending
+    # Sort findings by severity (critical=0 < high=1 < medium=2 < low=3 < info=4), then by CVSS score descending, then by title and id for stability
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
     sorted_findings = sorted(
         findings,
         key=lambda f: (
-            -severity_order.get(f.severity.value, 99),  # Negate so critical (0) comes first
-            -(f.cvss_score or 0),  # Negate so higher CVSS comes first
-        )
+            severity_order.get(f.severity.value, 99),  # critical=0 first when ascending
+            -(f.cvss_score or 0),  # higher CVSS first
+            (getattr(f, "title", "") or ""),  # stable tie-breaker: title (safe guard)
+            str(getattr(f, "id", "")),  # final tie-breaker: id (safe guard, handles missing id)
+        ),
     )
     
     # Get top 5 risks
@@ -128,6 +137,15 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
     
     remediation_overview = "\n".join(remediation_steps)
     
+    # Build severity_breakdown with all 5 keys
+    severity_breakdown = {
+        "critical": counts.get("critical", 0),
+        "high": counts.get("high", 0),
+        "medium": counts.get("medium", 0),
+        "low": counts.get("low", 0),
+        "info": counts.get("info", 0),
+    }
+    
     # TODO: Integrate with actual LLM (OpenAI, Anthropic, etc.) for richer reports
     # For now, return structured data that can be enhanced later
     
@@ -135,15 +153,11 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
         "executive_summary": exec_summary,
         "top_risks": top_risks,
         "remediation_overview": remediation_overview,
-        "risk_score": risk_score,
-        "findings_count": len(findings),
-        "severity_breakdown": {
-            "critical": critical_count,
-            "high": high_count,
-            "medium": sum(1 for f in findings if f.severity.value == "medium"),
-            "low": sum(1 for f in findings if f.severity.value == "low"),
-            "info": sum(1 for f in findings if f.severity.value == "info"),
-        }
+        CANON_RISK_SCORE: float(risk_score),  # Ensure float
+        CANON_FINDINGS_COUNT: len(findings),  # canonical
+        DEPRECATED_TOTAL_FINDINGS: len(findings),  # deprecated alias
+        CANON_SEV_BREAKDOWN: severity_breakdown,  # canonical
+        DEPRECATED_FINDINGS_BY_SEVERITY: severity_breakdown.copy(),  # deprecated alias
     }
 
 

@@ -35,6 +35,20 @@ type Finding = {
   recommendation?: string | null;
   tool_name?: string | null;
   categories?: string[] | null;
+  // Lifecycle fields
+  vuln_type?: string | null;
+  http_method?: string | null;
+  parameter?: string | null;
+  first_seen_at?: string | null;
+  last_seen_at?: string | null;
+  found_count?: number | null;
+  not_seen_in_latest_scan?: boolean | null;
+  // Remediation fields
+  remediation_summary?: string | null;
+  remediation_steps?: string | null;
+  default_remediation_steps?: string | null;
+  // Impact field
+  impact_summary?: string | null;
 };
 
 type TopRisk = {
@@ -77,6 +91,15 @@ type AIPlan = {
   }[];
 };
 
+type ToolStatus = {
+  tool_name: string;
+  status: "pending" | "running" | "completed" | "failed" | "timed_out" | "skipped";
+  started_at?: string | null;
+  completed_at?: string | null;
+  execution_time?: number | null;
+  error_message?: string | null;
+};
+
 type ScanDetail = {
   id: string;
   project_id: string;
@@ -91,10 +114,15 @@ type ScanDetail = {
   started_at?: string | null;
   completed_at?: string | null;
   findings: Finding[];
+  tool_statuses?: ToolStatus[];
+  progress_pct?: number | null;
+  total_tools?: number | null;
+  completed_tools?: number | null;
 };
 
 type ToolExecution = {
   tool_name: string;
+  tool_name_display?: string | null;  // Display name for the tool (optional)
   exit_code: number | null;
   started_at: string;
   completed_at: string | null;
@@ -102,6 +130,16 @@ type ToolExecution = {
   execution_time: number | null;
   error_message: string | null;
   timed_out: boolean;
+  // New tool run tracking fields
+  status?: string | null;  // ToolExecutionStatus enum value
+  stdout_preview?: string | null;  // First 1000 chars of stdout
+  stderr_preview?: string | null;  // First 1000 chars of stderr
+  parsed_findings_count?: number;  // Number of findings parsed from output
+  created_findings_count?: number;  // Number of findings actually created in DB
+  duration_ms?: number | null;  // Duration in milliseconds
+  skip_reason?: string | null;
+  raw_stdout?: string | null;
+  raw_stderr?: string | null;
 };
 
 type ToolsResponse = {
@@ -119,6 +157,7 @@ export default function ScanReportPage() {
   const [scan, setScan] = useState<ScanDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [initialLoadFailed, setInitialLoadFailed] = useState(false);
   const [downloadingFull, setDownloadingFull] = useState(false);
   const [downloadingExecutive, setDownloadingExecutive] = useState(false);
   const [tools, setTools] = useState<ToolExecution[]>([]);
@@ -130,24 +169,96 @@ export default function ScanReportPage() {
   const [findingsLoading, setFindingsLoading] = useState(false);
   const [findingsError, setFindingsError] = useState<string | null>(null);
   const [findingsTotal, setFindingsTotal] = useState(0);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
+  const [selectedToolFilter, setSelectedToolFilter] = useState<string>('all');  // Filter findings by tool
+  const [expandedToolRows, setExpandedToolRows] = useState<Set<string>>(new Set());  // Track expanded tool rows
+  const [availableTools, setAvailableTools] = useState<string[]>([]);  // All tools that have findings
+  const [findingsPage, setFindingsPage] = useState(0);  // Current page (0-indexed)
+  const [findingsLimit] = useState(100);  // Findings per page (can be 100-200)
+  const [allFindings, setAllFindings] = useState<Finding[]>([]);  // All findings for executive summary
 
+  // Poll for scan status updates when scan is running/queued
   useEffect(() => {
-    async function load() {
-      if (!session) return;
-      
+    if (!session) return;
+    
+    let pollInterval: NodeJS.Timeout | null = null;
+    let consecutiveErrors = 0;
+    let errorTimeout: NodeJS.Timeout | null = null;
+    const MAX_CONSECUTIVE_ERRORS = 3; // Stop polling after 3 consecutive errors
+    
+    const loadScan = async () => {
       try {
-        setLoading(true);
-        setError(null);
+        // Clear any pending error timeout
+        if (errorTimeout) {
+          clearTimeout(errorTimeout);
+          errorTimeout = null;
+        }
+        
         const data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
+        
+        // Reset error counter on success and clear error
+        consecutiveErrors = 0;
+        setError(null);
+        
         setScan(data);
+        
+        // Stop polling if scan is completed or failed
+        if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+        }
       } catch (err) {
-        console.error('Error loading scan:', err);
-        setError(err instanceof Error ? err.message : 'Network error while loading scan');
-      } finally {
-        setLoading(false);
+        consecutiveErrors++;
+        const errorMessage = err instanceof Error ? err.message : 'Network error while loading scan';
+        console.error(`Error loading scan (attempt ${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}):`, err);
+        
+        // Only show error temporarily, don't stop polling unless too many consecutive errors
+        // This handles transient network issues gracefully
+        if (consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+          // Show error but continue polling - transient error
+          // Error will auto-clear on next successful poll
+          setError(`Connection issue (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}). Retrying...`);
+        } else {
+          // Too many consecutive errors - stop polling and show permanent error
+          setError(`${errorMessage} (Failed ${MAX_CONSECUTIVE_ERRORS} times. Please refresh the page.)`);
+          if (pollInterval) {
+            clearInterval(pollInterval);
+            pollInterval = null;
+          }
+        }
       }
-    }
-    load();
+    };
+    
+    // Initial load
+    setLoading(true);
+    setInitialLoadFailed(false);
+    loadScan().catch((err) => {
+      // Mark initial load as failed so we show full-page error
+      setInitialLoadFailed(true);
+      setError(err instanceof Error ? err.message : 'Failed to load scan');
+    }).finally(() => setLoading(false));
+    
+    // Set up polling if scan is running/queued
+    const checkAndPoll = async () => {
+      const currentScan = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session).catch(() => null);
+      
+      if (currentScan && (currentScan.status === 'running' || currentScan.status === 'queued' || currentScan.status === 'pending')) {
+        // Start polling every 3-5 seconds
+        pollInterval = setInterval(loadScan, 4000); // 4 seconds
+      }
+    };
+    
+    // Check after initial load
+    setTimeout(checkAndPoll, 1000);
+    
+    // Cleanup on unmount
+    return () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+      }
+    };
   }, [scanId, session]);
 
   // Load tools data
@@ -170,6 +281,58 @@ export default function ScanReportPage() {
     loadTools();
   }, [scanId, session]);
 
+  // Load all available tools for the scan (for filter dropdown)
+  useEffect(() => {
+    async function loadAvailableTools() {
+      if (!session || !scanId) return;
+      
+      try {
+        const data = await thandevFetchJSON<{ tools: string[]; count: number }>(
+          `/api/scans/${scanId}/findings/tools`,
+          session
+        );
+        setAvailableTools(data.tools || []);
+      } catch (err) {
+        console.error('Error loading available tools:', err);
+        // Fallback: extract from current findings if API fails
+        if (findings.length > 0) {
+          setAvailableTools(Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort());
+        }
+      }
+    }
+    loadAvailableTools();
+  }, [scanId, session, findings]);
+  
+  // Also update availableTools when findings change (fallback if API hasn't loaded)
+  useEffect(() => {
+    if (availableTools.length === 0 && findings.length > 0) {
+      const toolsFromFindings = Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort();
+      if (toolsFromFindings.length > 0) {
+        setAvailableTools(toolsFromFindings);
+      }
+    }
+  }, [findings]);
+
+  // Load top 100 findings for executive summary (ordered by severity)
+  useEffect(() => {
+    async function loadTopFindings() {
+      if (!session || !scanId || !scan || scan.status !== 'completed') return;
+      
+      try {
+        // Fetch top 100 findings ordered by severity (backend handles ordering)
+        const data = await thandevFetchJSON<{ items: Finding[]; total: number; skip: number; limit: number }>(
+          `/api/scans/${scanId}/findings?limit=100&skip=0`,
+          session
+        );
+        setAllFindings(data.items || []);
+      } catch (err) {
+        console.error('Error loading top findings for summary:', err);
+        // If fetch fails, allFindings will remain empty and we'll use findingsTotal for counts
+      }
+    }
+    loadTopFindings();
+  }, [scanId, session, scan?.status, scan?.id]);
+
   // Load findings data from paginated endpoint
   useEffect(() => {
     async function loadFindings() {
@@ -178,11 +341,30 @@ export default function ScanReportPage() {
       try {
         setFindingsLoading(true);
         setFindingsError(null);
-        // Fetch findings with a reasonable limit (200 max per backend)
+        // Fetch findings with pagination and tool filter
+        const skip = findingsPage * findingsLimit;
+        let url = `/api/scans/${scanId}/findings?limit=${findingsLimit}&skip=${skip}`;
+        if (selectedToolFilter !== 'all') {
+          url += `&tool=${encodeURIComponent(selectedToolFilter)}`;
+        }
         const data = await thandevFetchJSON<{ items: Finding[]; total: number; skip: number; limit: number }>(
-          `/api/scans/${scanId}/findings?limit=200`,
+          url,
           session
         );
+        // Debug: Log first finding to verify API response
+        if (data.items && data.items.length > 0) {
+          const firstFinding = data.items[0];
+          console.log('First finding from API:', {
+            title: firstFinding.title,
+            url: firstFinding.url,
+            http_method: firstFinding.http_method,
+            parameter: firstFinding.parameter,
+            impact_summary: firstFinding.impact_summary,
+            remediation_summary: firstFinding.remediation_summary,
+            default_remediation_steps: firstFinding.default_remediation_steps,
+            vuln_type: firstFinding.vuln_type
+          });
+        }
         setFindings(data.items || []);
         setFindingsTotal(data.total || 0);
         
@@ -204,7 +386,7 @@ export default function ScanReportPage() {
       }
     }
     loadFindings();
-  }, [scanId, session]);
+  }, [scanId, session, findingsPage, findingsLimit, selectedToolFilter]);
 
   // Helper functions
   const formatDate = (dateString: string | null | undefined) => {
@@ -302,32 +484,6 @@ export default function ScanReportPage() {
     return 'bg-slate-800/40 text-slate-200 border-slate-600/50';
   };
 
-  // Tool badge component
-  function ToolBadge({ tool }: { tool: string }) {
-    const normalized = tool.toLowerCase();
-    let label = tool;
-    let classes = 'px-2 py-0.5 rounded-full text-[10px] font-medium border';
-
-    if (normalized === 'nmap') {
-      classes += ' bg-sky-900/40 text-sky-200 border-sky-500/50';
-      label = 'Nmap';
-    } else if (normalized === 'sslscan') {
-      classes += ' bg-teal-900/40 text-teal-200 border-teal-500/50';
-      label = 'SSLScan';
-    } else if (normalized === 'nuclei') {
-      classes += ' bg-purple-900/40 text-purple-200 border-purple-500/50';
-      label = 'Nuclei';
-    } else if (normalized === 'http_headers') {
-      classes += ' bg-amber-900/40 text-amber-200 border-amber-500/50';
-      label = 'HTTP Headers';
-    } else {
-      classes += ' bg-slate-800/40 text-slate-200 border-slate-600/50';
-      label = tool;
-    }
-
-    return <span className={classes}>{label}</span>;
-  }
-
   // Status badge component
   function StatusBadge({ status }: { status: FindingStatus | string | null | undefined }) {
     if (!status) return null;
@@ -369,6 +525,39 @@ export default function ScanReportPage() {
   }
 
   // Loading state
+  // Show full-page error only if initial load failed (not polling errors)
+  if (initialLoadFailed && !scan) {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <DashboardSidebar 
+          isOpen={sidebarOpen} 
+          onClose={() => setSidebarOpen(false)} 
+          showLogo={!sidebarOpen}
+        />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DashboardHeader 
+            user={session?.user} 
+            onMenuClick={() => setSidebarOpen(true)}
+            showLogo={sidebarOpen}
+          />
+          <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
+            <div className="max-w-6xl mx-auto">
+              <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 mb-4">
+                <p className="text-red-300">{error || 'Failed to fetch'}</p>
+              </div>
+              <Link
+                href={`/projects/${projectId}/scans`}
+                className="text-indigo-400 hover:text-indigo-300 underline"
+              >
+                ← Back to scans
+              </Link>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   if (loading || sessionStatus === 'loading') {
     return (
       <div className="flex h-screen overflow-hidden">
@@ -396,8 +585,9 @@ export default function ScanReportPage() {
     );
   }
 
-  // Error state
-  if (error || !scan) {
+  // Error state - only show full-page error if initial load failed and no scan data
+  // Polling errors should not replace the entire page content
+  if (initialLoadFailed && !scan) {
     return (
       <div className="flex h-screen overflow-hidden">
         <DashboardSidebar 
@@ -414,7 +604,7 @@ export default function ScanReportPage() {
           <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
             <div className="max-w-6xl mx-auto">
               <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-4 mb-4">
-                <p className="text-red-300">{error || 'Scan not found'}</p>
+                <p className="text-red-300">{error || 'Failed to fetch'}</p>
               </div>
               <Link
                 href={`/projects/${projectId}/scans`}
@@ -429,6 +619,34 @@ export default function ScanReportPage() {
     );
   }
 
+  // If scan is null but we're not in initial load failure, show loading
+  if (!scan) {
+    return (
+      <div className="flex h-screen overflow-hidden">
+        <DashboardSidebar 
+          isOpen={sidebarOpen} 
+          onClose={() => setSidebarOpen(false)} 
+          showLogo={!sidebarOpen}
+        />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DashboardHeader 
+            user={session?.user} 
+            onMenuClick={() => setSidebarOpen(true)}
+            showLogo={sidebarOpen}
+          />
+          <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
+            <div className="max-w-6xl mx-auto">
+              <div className="text-center py-12">
+                <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                <p className="mt-4" style={{ color: 'var(--muted)' }}>Loading scan...</p>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   // Calculate network & TLS metrics from loaded findings
   const nmapFindings = findings.filter(f => f.tool_name?.toLowerCase() === 'nmap');
   const sslscanFindings = findings.filter(f => f.tool_name?.toLowerCase() === 'sslscan');
@@ -436,44 +654,68 @@ export default function ScanReportPage() {
   const hasTlsIssues = sslscanFindings.length > 0;
 
   // Generate executive summary if not available but findings exist
+    // Prefer canonical keys (severity_breakdown, findings_count) with fallback to deprecated (findings_by_severity, total_findings)
+    // Backend emits both during migration period. See MIGRATION_NOTES.md
   const generateExecutiveSummary = () => {
     if (scan?.summary?.executive_summary) {
       return scan.summary.executive_summary;
     }
-    if (findings.length === 0 || scan?.status !== 'completed') {
+    
+    // Prefer canonical keys with fallback to deprecated
+    let criticalCount = 0, highCount = 0, mediumCount = 0, lowCount = 0, infoCount = 0;
+    const totalFindingsCount = findingsTotal || (scan?.summary?.findings_count ?? scan?.summary?.total_findings ?? 0);
+    
+    // Prefer canonical severity_breakdown, fallback to deprecated findings_by_severity
+    const severityBreakdown = scan?.summary?.severity_breakdown ?? scan?.summary?.findings_by_severity;
+    if (severityBreakdown && typeof severityBreakdown === 'object') {
+      // Use severity breakdown from scan summary (complete data)
+      criticalCount = severityBreakdown.critical || severityBreakdown.CRITICAL || 0;
+      highCount = severityBreakdown.high || severityBreakdown.HIGH || 0;
+      mediumCount = severityBreakdown.medium || severityBreakdown.MEDIUM || 0;
+      lowCount = severityBreakdown.low || severityBreakdown.LOW || 0;
+      infoCount = severityBreakdown.info || severityBreakdown.INFO || 0;
+    } else {
+      // Fallback: use top 100 findings to estimate (may not be complete)
+      const findingsForSummary = allFindings.length > 0 ? allFindings : findings;
+      criticalCount = findingsForSummary.filter(f => f.severity?.toLowerCase() === 'critical').length;
+      highCount = findingsForSummary.filter(f => f.severity?.toLowerCase() === 'high').length;
+      mediumCount = findingsForSummary.filter(f => f.severity?.toLowerCase() === 'medium').length;
+      lowCount = findingsForSummary.filter(f => f.severity?.toLowerCase() === 'low').length;
+      infoCount = findingsForSummary.filter(f => f.severity?.toLowerCase() === 'info').length;
+    }
+    
+    if (totalFindingsCount === 0 || scan?.status !== 'completed') {
       return null;
     }
     
-    const criticalCount = findings.filter(f => f.severity?.toLowerCase() === 'critical').length;
-    const highCount = findings.filter(f => f.severity?.toLowerCase() === 'high').length;
-    const mediumCount = findings.filter(f => f.severity?.toLowerCase() === 'medium').length;
-    const lowCount = findings.filter(f => f.severity?.toLowerCase() === 'low').length;
-    const infoCount = findings.filter(f => f.severity?.toLowerCase() === 'info').length;
-    
     if (criticalCount > 0) {
-      return `CRITICAL: ${criticalCount} critical vulnerability${criticalCount > 1 ? 'ies' : 'y'} detected requiring immediate attention. ${highCount > 0 ? `Additionally, ${highCount} high-severity issue${highCount > 1 ? 's' : ''} were found.` : ''} This scan identified ${findings.length} total finding${findings.length > 1 ? 's' : ''} across the target.`;
+      return `CRITICAL: ${criticalCount} critical vulnerability${criticalCount > 1 ? 'ies' : 'y'} detected requiring immediate attention. ${highCount > 0 ? `Additionally, ${highCount} high-severity issue${highCount > 1 ? 's' : ''} were found.` : ''} This scan identified ${totalFindingsCount} total finding${totalFindingsCount > 1 ? 's' : ''} across the target.`;
     } else if (highCount > 0) {
-      return `HIGH PRIORITY: ${highCount} high-severity vulnerability${highCount > 1 ? 'ies' : 'y'} found. Review recommended. ${mediumCount > 0 ? `The scan also detected ${mediumCount} medium-severity issue${mediumCount > 1 ? 's' : ''}.` : ''} Total findings: ${findings.length}.`;
+      return `HIGH PRIORITY: ${highCount} high-severity vulnerability${highCount > 1 ? 'ies' : 'y'} found. Review recommended. ${mediumCount > 0 ? `The scan also detected ${mediumCount} medium-severity issue${mediumCount > 1 ? 's' : ''}.` : ''} Total findings: ${totalFindingsCount}.`;
     } else if (mediumCount > 0 || lowCount > 0) {
-      return `Scan completed with ${findings.length} finding${findings.length > 1 ? 's' : ''}. ${mediumCount > 0 ? `${mediumCount} medium-severity` : `${lowCount} low-severity`} issue${(mediumCount || lowCount) > 1 ? 's' : ''} detected. No critical or high-severity vulnerabilities found.`;
+      return `Scan completed with ${totalFindingsCount} finding${totalFindingsCount > 1 ? 's' : ''}. ${mediumCount > 0 ? `${mediumCount} medium-severity` : `${lowCount} low-severity`} issue${(mediumCount || lowCount) > 1 ? 's' : ''} detected. No critical or high-severity vulnerabilities found.`;
     } else if (infoCount > 0) {
       return `Scan completed successfully. ${infoCount} informational finding${infoCount > 1 ? 's' : ''} detected. No security vulnerabilities identified.`;
     } else {
-      return `Scan completed with ${findings.length} finding${findings.length > 1 ? 's' : ''}. Review recommended.`;
+      return `Scan completed with ${totalFindingsCount} finding${totalFindingsCount > 1 ? 's' : ''}. Review recommended.`;
     }
   };
 
   // Generate top risks if not available but findings exist
+  // Use allFindings (complete dataset) instead of paginated findings
   const generateTopRisks = () => {
     if (scan?.summary?.top_risks && scan.summary.top_risks.length > 0) {
       return scan.summary.top_risks;
     }
-    if (findings.length === 0 || scan?.status !== 'completed') {
+    // Use allFindings if available, otherwise fallback to paginated findings
+    const findingsForRisks = allFindings.length > 0 ? allFindings : findings;
+    
+    if (findingsForRisks.length === 0 || scan?.status !== 'completed') {
       return [];
     }
     
     const severityOrder = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
-    const sortedFindings = [...findings].sort((a, b) => {
+    const sortedFindings = [...findingsForRisks].sort((a, b) => {
       const aSev = severityOrder[a.severity?.toLowerCase() as keyof typeof severityOrder] ?? 99;
       const bSev = severityOrder[b.severity?.toLowerCase() as keyof typeof severityOrder] ?? 99;
       if (aSev !== bSev) return aSev - bSev;
@@ -544,8 +786,26 @@ export default function ScanReportPage() {
         />
         <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
           <div className="max-w-6xl mx-auto space-y-6">
+            {/* Polling error banner - Show non-intrusive banner for transient errors */}
+            {error && !initialLoadFailed && (
+              <div className="bg-yellow-900/20 border border-yellow-500/50 rounded-lg p-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <p className="text-yellow-300 text-sm">{error}</p>
+                </div>
+                <button
+                  onClick={() => setError(null)}
+                  className="text-yellow-400 hover:text-yellow-300 text-sm underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+            
             {/* Error banner - Show prominently at top if scan has error */}
-            {scan?.error_message && (
+            {scan?.error_message && scan.status === 'failed' && (
               <div className="rounded-xl border-2 border-red-500/70 bg-red-900/30 p-4 shadow-lg">
                 <div className="flex items-start gap-3">
                   <div className="flex-shrink-0 mt-0.5">
@@ -555,7 +815,45 @@ export default function ScanReportPage() {
                   </div>
                   <div className="flex-1">
                     <div className="font-semibold mb-1 text-sm text-red-300">Scan Error</div>
-                    <pre className="whitespace-pre-wrap text-sm text-red-200 font-sans">{scan.error_message}</pre>
+                    <pre className="whitespace-pre-wrap text-sm text-red-200 font-sans mb-3">{scan.error_message}</pre>
+                    <button
+                      onClick={async () => {
+                        if (!session) {
+                          alert('Session required. Please log in again.');
+                          return;
+                        }
+                        try {
+                          // Create a new scan with the same level
+                          const newScan = await thandevFetchJSON<ScanDetail>(
+                            '/api/scans',
+                            session,
+                            {
+                              method: 'POST',
+                              body: JSON.stringify({
+                                project_id: projectId,
+                                scan_level: scan.scan_level,
+                              }),
+                            }
+                          );
+                          // Navigate to the new scan
+                          router.push(`/projects/${projectId}/scans/${newScan.id}`);
+                        } catch (err) {
+                          console.error('Error retrying scan:', err);
+                          alert(`Failed to retry scan: ${err instanceof Error ? err.message : 'Unknown error'}`);
+                        }
+                      }}
+                      className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border transition hover:opacity-80"
+                      style={{
+                        background: 'var(--surface)',
+                        borderColor: 'var(--border)',
+                        color: 'var(--fg)',
+                      }}
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                      </svg>
+                      Retry Scan
+                    </button>
                   </div>
                 </div>
               </div>
@@ -680,13 +978,13 @@ export default function ScanReportPage() {
                       <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>Related security news</h3>
                       <div className="relative inline-block group">
                         <Link
-                          href={`/dashboard/news?search=${encodeURIComponent(cveIds[0])}`}
+                          href={`/dashboard/cve/${encodeURIComponent(cveIds[0])}`}
                           className="inline-flex items-center gap-1.5 text-xs text-[var(--brand)] hover:text-[var(--brand)]/80 hover:underline transition-colors"
                         >
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
                           </svg>
-                          View news for {cveIds[0]}
+                          View details for {cveIds[0]}
                           {cveIds.length > 1 && (
                             <span className="ml-1 text-[var(--muted)]">({cveIds.length} CVEs)</span>
                           )}
@@ -779,7 +1077,8 @@ export default function ScanReportPage() {
 
             {/* Findings card */}
             <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-              <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>
                 Findings
                 {findingsTotal > 0 && (
                   <span className="ml-2 text-sm font-normal" style={{ color: 'var(--muted)' }}>
@@ -787,6 +1086,71 @@ export default function ScanReportPage() {
                   </span>
                 )}
               </h2>
+                <div className="flex items-center gap-3">
+                  {/* Tool filter dropdown - shows ALL tools with findings, not just current page */}
+                  {(availableTools.length > 0 || findingsTotal > 0) && (
+                    <select
+                      value={selectedToolFilter}
+                      onChange={(e) => {
+                        setSelectedToolFilter(e.target.value);
+                        setFindingsPage(0); // Reset to first page when filter changes
+                      }}
+                      className="text-sm px-3 py-1.5 rounded-lg border appearance-none cursor-pointer font-medium"
+                      style={{ 
+                        background: 'var(--surface)', 
+                        borderColor: 'var(--border)', 
+                        color: 'var(--fg)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <option value="all" style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>All Tools</option>
+                      {(availableTools.length > 0 ? availableTools : Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort()).map(toolName => (
+                        <option key={toolName} value={toolName} style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>
+                          {toolName.charAt(0).toUpperCase() + toolName.slice(1)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+              
+              {/* Pagination controls at top */}
+              {findingsTotal > findingsLimit && (
+                <div className="flex items-center justify-between mb-4 pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                  <div className="text-sm" style={{ color: 'var(--muted)' }}>
+                    Showing {findingsPage * findingsLimit + 1} - {Math.min((findingsPage + 1) * findingsLimit, findingsTotal)} of {findingsTotal} findings
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setFindingsPage(prev => Math.max(0, prev - 1))}
+                      disabled={findingsPage === 0 || findingsLoading}
+                      className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      style={{ 
+                        background: findingsPage === 0 ? 'var(--surface-2)' : 'var(--surface-2)',
+                        borderColor: 'var(--border)',
+                        color: findingsPage === 0 ? 'var(--muted)' : 'var(--fg)'
+                      }}
+                    >
+                      Previous
+                    </button>
+                    <span className="text-sm px-2" style={{ color: 'var(--muted)' }}>
+                      Page {findingsPage + 1} of {Math.ceil(findingsTotal / findingsLimit)}
+                    </span>
+                    <button
+                      onClick={() => setFindingsPage(prev => prev + 1)}
+                      disabled={findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 || findingsLoading}
+                      className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      style={{ 
+                        background: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--surface-2)' : 'var(--surface-2)',
+                        borderColor: 'var(--border)',
+                        color: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--muted)' : 'var(--fg)'
+                      }}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
               {findingsLoading ? (
                 <div className="space-y-4">
                   {[...Array(3)].map((_, i) => (
@@ -818,71 +1182,254 @@ export default function ScanReportPage() {
                     // Generate stable key from finding properties
                     const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
                     return (
-                    <div key={findingKey} className="border rounded-lg p-4 transition-colors hover:opacity-80" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                      <div className="flex items-start justify-between gap-2 mb-2">
+                    <div key={findingKey} className="border rounded-lg p-4 transition-colors hover:opacity-80 overflow-hidden" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+                      {/* Header: Severity + Status + Title */}
+                      <div className="flex items-start justify-between gap-2 mb-3">
                         <div className="flex-1">
-                          <h4 className="font-medium text-sm" style={{ color: 'var(--fg)' }}>{finding.title}</h4>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {finding.tool_name && <ToolBadge tool={finding.tool_name} />}
-                          {finding.status && <StatusBadge status={finding.status} />}
-                          <span className={`px-2 py-1 text-xs font-medium rounded-full border ${severityClasses(finding.severity)}`}>
-                            {finding.severity?.toUpperCase() || 'INFO'}
-                          </span>
-                        </div>
-                      </div>
-                      {finding.description && (
-                        <p className="text-sm mb-2" style={{ color: 'var(--fg)' }}>{finding.description}</p>
-                      )}
-                      {finding.categories && finding.categories.length > 0 && (
-                        <div className="mt-1 mb-2 flex flex-wrap gap-1">
-                          {finding.categories.map((cat) => (
-                            <span
-                              key={cat}
-                              className="inline-flex items-center rounded-full border border-border/40 px-2 py-0.5 text-[10px] font-medium text-muted-foreground"
-                              style={{
-                                borderColor: 'var(--border)',
-                                color: 'var(--muted)',
-                                background: 'var(--surface-2)'
-                              }}
-                            >
-                              {formatCategory(cat)}
+                          <div className="flex items-center gap-2 flex-wrap mb-2">
+                            <span className={`px-2 py-1 text-xs font-medium rounded-full border ${severityClasses(finding.severity)}`}>
+                              {finding.severity?.toUpperCase() || 'INFO'}
                             </span>
-                          ))}
+                            {finding.status && <StatusBadge status={finding.status} />}
+                            {finding.not_seen_in_latest_scan !== null && (
+                              finding.not_seen_in_latest_scan ? (
+                                <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#fef3c7', color: '#92400e', borderColor: '#fbbf24' }}>
+                                  NOT SEEN IN LATEST
+                                </span>
+                              ) : (
+                                <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#d1fae5', color: '#065f46', borderColor: '#10b981' }}>
+                                  STILL PRESENT
+                                </span>
+                              )
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="font-semibold text-sm break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.title}</h4>
+                            {finding.vuln_type && (
+                              <span className="px-2 py-0.5 text-[10px] font-medium rounded border uppercase" style={{ background: 'var(--surface)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                {finding.vuln_type}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      )}
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        {finding.cve_id && (
-                          <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface-2)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
-                            CVE: {finding.cve_id}
-                          </span>
-                        )}
-                        {finding.cwe_id && (
-                          <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface-2)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
-                            CWE: {finding.cwe_id}
-                          </span>
-                        )}
-                        {finding.cvss_score !== null && finding.cvss_score !== undefined && typeof finding.cvss_score === 'number' && (
-                          <span className="px-2 py-1 text-xs rounded border" style={{ background: 'var(--surface-2)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
-                            CVSS: {finding.cvss_score.toFixed(1)}
-                          </span>
-                        )}
                       </div>
-                      {finding.url && (
-                        <p className="text-xs font-mono mt-2 break-all" style={{ color: 'var(--muted)' }}>{finding.url}</p>
-                      )}
-                      {finding.path && (
-                        <p className="text-xs font-mono mt-1" style={{ color: 'var(--muted)' }}>
-                          Path: {finding.path}
-                          {finding.line_number && ` (line ${finding.line_number})`}
-                        </p>
-                      )}
-                      {finding.recommendation && (
-                        <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-                          <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Recommendation:</p>
-                          <p className="text-xs italic" style={{ color: 'var(--muted)' }}>{finding.recommendation}</p>
+                      
+                      <div className="space-y-3">
+                        {/* 1. Where it was found - ALWAYS SHOW with tolerant logic */}
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                            Where it was found
+                          </div>
+                          {(() => {
+                            // Tolerant logic: use defaults when missing
+                            const method = finding.http_method || "GET";
+                            const url = finding.url || finding.path || null;
+                            const param = finding.parameter;
+                            
+                            if (!url) {
+                              return (
+                                <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                  Location information not available
+                                </p>
+                              );
+                            }
+                            
+                            return (
+                              <>
+                                <div className="text-xs font-mono break-all overflow-wrap-anywhere" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+                                  <span className="font-semibold">{method}</span>{' '}
+                                  <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
+                                </div>
+                                {param && (
+                                  <div className="text-xs break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                                    Parameter: <span className="font-mono font-medium break-all" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{param}</span>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </div>
+                        
+                        {/* 2. What we found - ALWAYS SHOW */}
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                            What we found
+                          </div>
+                          {finding.description ? (
+                            <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                              {finding.description}
+                            </p>
+                          ) : (
+                            <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                              No description available
+                            </p>
+                          )}
+                        </div>
+                        
+                        {/* 3. Why it matters - ALWAYS SHOW with smart fallback */}
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                            Why it matters
+                          </div>
+                          {(() => {
+                            // Prefer backend impact_summary
+                            if (finding.impact_summary) {
+                              return (
+                                <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                  {finding.impact_summary}
+                                </p>
+                              );
+                            }
+                            
+                            // Derive from vuln_type if available
+                            const vulnType = finding.vuln_type?.toLowerCase() || '';
+                            if (vulnType.includes('xss')) {
+                              return (
+                                <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                  An attacker could run JavaScript in the user's browser, steal sessions, or act as the logged-in user.
+                                </p>
+                              );
+                            }
+                            if (vulnType.includes('sqli') || vulnType.includes('sql')) {
+                              return (
+                                <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                  An attacker could read or modify data in your database and potentially gain full control of the application.
+                                </p>
+                              );
+                            }
+                            if (vulnType.includes('open') && vulnType.includes('port')) {
+                              return (
+                                <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                  Exposed services can be attacked or abused if they are misconfigured, outdated, or unnecessary.
+                                </p>
+                              );
+                            }
+                            
+                            // Generic fallback
+                            return (
+                              <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                This issue could pose a security risk to your application.
+                              </p>
+                            );
+                          })()}
+                        </div>
+                        
+                        {/* 4. How to fix it - ALWAYS SHOW, prefer backend remediation */}
+                        <div className="space-y-1">
+                          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                            How to fix it
+                          </div>
+                          {(() => {
+                            // Prefer backend remediation fields
+                            const hasRemediation = finding.remediation_summary || finding.remediation_steps || (finding as any).default_remediation_steps || finding.recommendation;
+                            
+                            if (hasRemediation) {
+                              return (
+                                <>
+                                  {finding.remediation_summary && (
+                                    <p className="text-xs mb-1 break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                      {finding.remediation_summary}
+                                    </p>
+                                  )}
+                                  {(finding.remediation_steps || (finding as any).default_remediation_steps) && (
+                                    <ul className="text-xs list-disc list-inside space-y-0.5 break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                      {(finding.remediation_steps || (finding as any).default_remediation_steps || '')
+                                        .split('\n')
+                                        .filter(s => s.trim())
+                                        .map((step, idx) => (
+                                          <li key={idx} className="break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{step.trim()}</li>
+                                        ))}
+                                    </ul>
+                                  )}
+                                  {finding.recommendation && !finding.remediation_summary && !finding.remediation_steps && (
+                                    <p className="text-xs italic break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.recommendation}</p>
+                                  )}
+                                </>
+                              );
+                            }
+                            
+                            // Only show fallback if truly no remediation available
+                            return (
+                              <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                Remediation guidance for this specific issue is not available yet. Review the technical details or consult your security team.
+                              </p>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                      
+                      {/* CVE/CWE/CVSS badges */}
+                      {(finding.cve_id || finding.cwe_id || (finding.cvss_score !== null && finding.cvss_score !== undefined)) && (
+                        <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                          {finding.cve_id && (
+                            <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                              CVE: {finding.cve_id}
+                            </span>
+                          )}
+                          {finding.cwe_id && (
+                            <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                              CWE: {finding.cwe_id}
+                            </span>
+                          )}
+                          {finding.cvss_score !== null && finding.cvss_score !== undefined && typeof finding.cvss_score === 'number' && (
+                            <span className="px-2 py-1 text-xs rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                              CVSS: {finding.cvss_score.toFixed(1)}
+                            </span>
+                          )}
                         </div>
                       )}
+                      
+                      {/* Lifecycle info */}
+                      {(finding.first_seen_at || finding.last_seen_at || finding.found_count) && (
+                        <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                          <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Lifecycle</p>
+                          <div className="text-xs space-y-1" style={{ color: 'var(--muted)' }}>
+                            {finding.first_seen_at && (
+                              <p>First seen: {formatDateTime(finding.first_seen_at)}</p>
+                            )}
+                            {finding.last_seen_at && (
+                              <p>Last seen: {formatDateTime(finding.last_seen_at)}</p>
+                            )}
+                            {finding.found_count && finding.found_count > 1 && (
+                              <p>Seen in {finding.found_count} scans</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Technical details (collapsible) - includes tool name */}
+                      <details className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                        <summary className="text-xs cursor-pointer font-medium mb-2" style={{ color: 'var(--brand)' }}>
+                          Technical details
+                        </summary>
+                        <div className="mt-2 space-y-2 text-xs" style={{ color: 'var(--muted)' }}>
+                          {finding.tool_name && (
+                            <div>
+                              <span className="font-medium" style={{ color: 'var(--fg)' }}>Detected by: </span>
+                              <span className="font-mono">{finding.tool_name}</span>
+                            </div>
+                          )}
+                          {finding.categories && finding.categories.length > 0 && (
+                            <div>
+                              <span className="font-medium" style={{ color: 'var(--fg)' }}>Categories: </span>
+                              <span>{finding.categories.map(cat => formatCategory(cat)).join(', ')}</span>
+                            </div>
+                          )}
+                          {finding.path && (
+                            <div>
+                              <span className="font-medium" style={{ color: 'var(--fg)' }}>Path: </span>
+                              <span className="font-mono">{finding.path}</span>
+                              {finding.line_number && <span> (line {finding.line_number})</span>}
+                            </div>
+                          )}
+                          {finding.url && (
+                            <div>
+                              <span className="font-medium" style={{ color: 'var(--fg)' }}>URL: </span>
+                              <span className="font-mono break-all">{finding.url}</span>
+                            </div>
+                          )}
+                        </div>
+                      </details>
                     </div>
                     );
                   })}
@@ -895,7 +1442,9 @@ export default function ScanReportPage() {
           <div className="space-y-6">
             {/* Scan metadata card */}
             <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-              <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Scan Details</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Scan Details</h2>
+              </div>
               <div className="space-y-3 text-sm">
                 <div>
                   <p className="mb-1" style={{ color: 'var(--muted)' }}>Status</p>
@@ -946,114 +1495,321 @@ export default function ScanReportPage() {
               </div>
             </div>
 
-            {/* Tools Used card */}
+            {/* Progress Indicator - Show when scan is running */}
+            {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (
+              <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Scan Progress</h2>
+                
+                {/* Progress Bar */}
+                {scan.progress_pct !== null && scan.progress_pct !== undefined && scan.total_tools !== null && scan.total_tools !== undefined && (
+                  <>
+                    <div className="mb-3">
+                      <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                        <div
+                          className="h-full transition-all duration-300 ease-out"
+                          style={{
+                            width: `${scan.progress_pct}%`,
+                            background: scan.progress_pct === 100 
+                              ? 'linear-gradient(90deg, #10b981 0%, #059669 100%)'
+                              : 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                      {scan.completed_tools ?? 0} / {scan.total_tools} checks completed
+                    </p>
+                  </>
+                )}
+                
+                {/* Fallback if progress_pct not available */}
+                {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (
+                  <>
+                    <div className="mb-3">
+                      <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
+                        <div
+                          className="h-full transition-all duration-300 ease-out"
+                          style={{
+                            width: `${(scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100}%`,
+                            background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)'
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                      {scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length} / {scan.tool_statuses.length} checks completed
+                    </p>
+                  </>
+                )}
+                
+                {/* Technical Details Toggle */}
+                {scan.tool_statuses && scan.tool_statuses.length > 0 && (
+                  <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                    <button
+                      onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+                      className="flex items-center justify-between w-full text-sm font-medium transition-colors"
+                      style={{ color: 'var(--fg)' }}
+                    >
+                      <span>Show technical details</span>
+                      <svg
+                        className={`w-5 h-5 transition-transform ${showTechnicalDetails ? 'rotate-180' : ''}`}
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </button>
+                    
+                    {/* Technical Details Panel */}
+                    {showTechnicalDetails && (
+                      <div className="mt-4 space-y-4">
+                        {/* Per-tool status list */}
+                        <div>
+                          <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tool Execution Status</h3>
+                          <div className="space-y-2">
+                            {scan.tool_statuses.map((toolStatus) => {
+                              const statusIcon = toolStatus.status === 'completed' ? '✅' : 
+                                                toolStatus.status === 'running' ? '🟡' : 
+                                                toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? '❌' : '⬜';
+                              const statusLabel = toolStatus.status === 'completed' ? 'Completed' :
+                                                toolStatus.status === 'running' ? 'Running' :
+                                                toolStatus.status === 'failed' ? 'Failed' :
+                                                toolStatus.status === 'timed_out' ? 'Timed Out' :
+                                                toolStatus.status === 'skipped' ? 'Skipped' : 'Pending';
+                              const statusColor = toolStatus.status === 'completed' ? 'text-emerald-300' :
+                                                toolStatus.status === 'running' ? 'text-blue-300' :
+                                                toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? 'text-red-300' : 'text-slate-400';
+                              
+                              return (
+                                <div
+                                  key={toolStatus.tool_name}
+                                  className="flex items-start justify-between p-3 rounded-lg border"
+                                  style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                                >
+                                  <div className="flex items-start gap-3 flex-1">
+                                    <span className="text-lg mt-0.5">{statusIcon}</span>
+                                    <div className="flex-1">
+                                      <span className="font-medium text-sm block mb-1" style={{ color: 'var(--fg)' }}>
+                                        {toolStatus.tool_name.charAt(0).toUpperCase() + toolStatus.tool_name.slice(1)}
+                                      </span>
+                                      {toolStatus.error_message && (
+                                        <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+                                          {toolStatus.error_message}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <span className={`text-xs font-medium ${statusColor} ml-2`}>
+                                    {statusLabel}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                        
+                        {/* Tools Used list (moved from separate card) */}
+                        {tools.length > 0 && (
+                          <div>
+                            <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tools Used</h3>
+                            {toolsLoading ? (
+                              <div className="text-xs" style={{ color: 'var(--muted)' }}>Loading...</div>
+                            ) : toolsError ? (
+                              <div className="text-xs text-red-400">{toolsError}</div>
+                            ) : (
+                              <div className="space-y-2">
+                                {tools.map((tool) => {
+                                  const isSuccess = tool.exit_code === 0 && !tool.timed_out;
+                                  const isTimedOut = tool.timed_out;
+                                  const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
+                                  const runtime = tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
+                                  const outputSizeKB = tool.output_size > 0 ? (tool.output_size / 1024).toFixed(1) : '0';
+                                  
+                                  return (
+                                    <div
+                                      key={tool.tool_name}
+                                      className="flex items-center justify-between p-2 rounded border"
+                                      style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                                    >
+                                      <div className="flex items-center gap-2 flex-1">
+                                        <span className="text-xs font-medium" style={{ color: 'var(--fg)' }}>
+                                          {toolName}
+                                        </span>
+                                        <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                          <span className="font-mono">{runtime}</span>
+                                          {tool.output_size > 0 && (
+                                            <>
+                                              <span>•</span>
+                                              <span className="font-mono">{outputSizeKB} KB</span>
+                                            </>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {isTimedOut && (
+                                          <span className="text-xs text-amber-400">Timed out</span>
+                                        )}
+                                        {!isTimedOut && tool.error_message && (
+                                          <span className="text-xs text-red-400 truncate max-w-[150px]" title={tool.error_message}>
+                                            Error
+                                          </span>
+                                        )}
+                                        {isSuccess && !isTimedOut && !tool.error_message && (
+                                          <span className="text-xs text-emerald-400">Success</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+
+            {/* Tools Executed card */}
             <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-              <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Tools Used</h2>
+              <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Tools Executed</h2>
               {toolsLoading ? (
-                <div className="space-y-3">
-                  <div className="h-12 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" style={{ background: 'var(--surface-2)' }}></div>
-                  <div className="h-12 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" style={{ background: 'var(--surface-2)' }}></div>
-                </div>
+                <div className="text-sm" style={{ color: 'var(--muted)' }}>Loading tools...</div>
               ) : toolsError ? (
                 <div className="text-sm text-red-400">{toolsError}</div>
               ) : tools.length === 0 ? (
-                <div className="text-center py-6">
-                  <div className="w-10 h-10 mx-auto mb-2 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)', opacity: 0.5 }}>
-                    <svg className="w-5 h-5" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                  </div>
-                  <p className="text-sm" style={{ color: 'var(--muted)' }}>No tool execution data available</p>
-                </div>
+                <div className="text-sm" style={{ color: 'var(--muted)' }}>No tool execution data available</div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {tools.map((tool) => {
-                    const isSuccess = tool.exit_code === 0 && !tool.timed_out;
-                    const isTimedOut = tool.timed_out;
-                    const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
-                    const runtime = tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
-                    const outputSizeKB = tool.output_size > 0 ? (tool.output_size / 1024).toFixed(1) : '0';
+                    const isExpanded = expandedToolRows.has(tool.tool_name);
+                    // Use tool_name_display from API if available, otherwise capitalize tool_name
+                    const toolName = tool.tool_name_display || (tool.tool_name ? tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1) : 'Unknown');
                     
-                    // Determine status label and styling
-                    let statusLabel = '';
-                    let statusColor = '';
-                    let statusBg = '';
-                    let statusBorder = '';
-                    let statusHelpText = '';
+                    // Determine status
+                    const status = tool.status || (tool.exit_code === 0 && !tool.timed_out ? 'completed' : tool.timed_out ? 'timed_out' : 'failed');
+                    const statusLabel = status === 'completed' ? 'Success' :
+                                      status === 'running' ? 'Running' :
+                                      status === 'failed' ? 'Failed' :
+                                      status === 'timed_out' ? 'Timed Out' :
+                                      status === 'skipped' ? 'Skipped' : 'Pending';
+                    const statusColor = status === 'completed' ? 'text-emerald-400' :
+                                      status === 'running' ? 'text-blue-400' :
+                                      status === 'failed' || status === 'timed_out' ? 'text-red-400' :
+                                      status === 'skipped' ? 'text-amber-400' : 'text-slate-400';
+                    const statusBg = status === 'completed' ? 'bg-emerald-500/20' :
+                                   status === 'running' ? 'bg-blue-500/20' :
+                                   status === 'failed' || status === 'timed_out' ? 'bg-red-500/20' :
+                                   status === 'skipped' ? 'bg-amber-500/20' : 'bg-slate-500/20';
                     
-                    if (isTimedOut) {
-                      statusLabel = 'Timed out';
-                      statusColor = 'text-amber-200';
-                      statusBg = 'bg-amber-900/40';
-                      statusBorder = 'border-amber-500/50';
-                      statusHelpText = 'ffuf hit the maximum runtime limit; results may be partial.';
-                    } else if (isSuccess) {
-                      statusLabel = 'Success';
-                      statusColor = 'text-emerald-200';
-                      statusBg = 'bg-emerald-900/40';
-                      statusBorder = 'border-emerald-500/50';
-                    } else {
-                      statusLabel = 'Error';
-                      statusColor = 'text-red-200';
-                      statusBg = 'bg-red-900/40';
-                      statusBorder = 'border-red-500/50';
-                    }
+                    // Format duration
+                    const duration = tool.duration_ms ? `${(tool.duration_ms / 1000).toFixed(1)}s` :
+                                   tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
+                    
+                    // Findings count display
+                    // Collapsed row: simple count (API guarantees values, coalesces NULL to 0)
+                    const createdCount = tool.created_findings_count ?? 0;
+                    const parsedCount = tool.parsed_findings_count ?? 0;
+                    const findingsDisplay = `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
+                    // Expanded row: detailed breakdown
+                    const findingsDetail = parsedCount !== createdCount 
+                      ? `parsed ${parsedCount} / created ${createdCount}`
+                      : `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
+                    const skipReason = tool.skip_reason;
                     
                     return (
                       <div
                         key={tool.tool_name}
-                        className="flex items-center justify-between p-3 rounded-lg border"
-                        style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                        className="border rounded-lg overflow-hidden"
+                        style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
                       >
-                        <div className="flex items-center gap-3 flex-1">
-                          <span
-                            className={`px-2.5 py-1 text-xs font-medium rounded-full border ${statusBg} ${statusColor} ${statusBorder}`}
-                          >
-                            {toolName}
-                          </span>
-                          <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--muted)' }}>
-                            <span className="font-mono">{runtime}</span>
-                            {tool.output_size > 0 && (
-                              <>
-                                <span>•</span>
-                                <span className="font-mono">{outputSizeKB} KB</span>
-                              </>
+                        <div
+                          className="flex items-center justify-between p-3 cursor-pointer hover:opacity-80 transition-opacity"
+                          onClick={() => {
+                            const newExpanded = new Set(expandedToolRows);
+                            if (isExpanded) {
+                              newExpanded.delete(tool.tool_name);
+                            } else {
+                              newExpanded.add(tool.tool_name);
+                            }
+                            setExpandedToolRows(newExpanded);
+                          }}
+                        >
+                          <div className="flex items-center gap-3 flex-1">
+                            <span className="font-medium text-sm" style={{ color: 'var(--fg)' }}>
+                              {toolName}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded ${statusBg} ${statusColor} font-medium`}>
+                              {statusLabel}
+                            </span>
+                            {findingsDisplay && (
+                              <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                                • {findingsDisplay}
+                              </span>
                             )}
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {isTimedOut && (
-                            <span 
-                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border bg-amber-900/20 text-amber-300 border-amber-500/30"
-                              title={statusHelpText}
+                          <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
+                            <span>Duration: {duration}</span>
+                            {tool.exit_code !== null && (
+                              <span>Exit: {tool.exit_code}</span>
+                            )}
+                            {skipReason && (
+                              <span className="text-amber-400" title="Tool skipped / partial">
+                                Skip: {skipReason.replace(/_/g, ' ')}
+                              </span>
+                            )}
+                            <svg
+                              className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
                             >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              Timed out
-                            </span>
-                          )}
-                          {!isTimedOut && tool.error_message && (
-                            <span 
-                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border bg-red-900/20 text-red-300 border-red-500/30 truncate max-w-[200px]"
-                              title={tool.error_message}
-                            >
-                              <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              Error
-                            </span>
-                          )}
-                          {isSuccess && !isTimedOut && !tool.error_message && (
-                            <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border bg-emerald-900/20 text-emerald-300 border-emerald-500/30">
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                              Success
-                            </span>
-                          )}
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                          </div>
                         </div>
+                        
+                        {/* Expanded content: findings detail, stdout/stderr previews */}
+                        {isExpanded && (
+                          <div className="border-t p-3 space-y-3" style={{ borderColor: 'var(--border)' }}>
+                            {/* Findings detail: parsed/created breakdown */}
+                            <div>
+                              <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Findings</div>
+                              <div className="text-xs" style={{ color: 'var(--fg)' }}>
+                                {findingsDetail}
+                              </div>
+                            </div>
+                            {skipReason && (
+                              <div>
+                                <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Skip reason</div>
+                                <div className="text-xs text-amber-300">{skipReason.replace(/_/g, ' ')}</div>
+                              </div>
+                            )}
+                            {tool.stdout_preview && (
+                              <div>
+                                <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDOUT Preview</div>
+                                <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
+                                  {tool.stdout_preview}
+                                </pre>
+                              </div>
+                            )}
+                            {tool.stderr_preview && (
+                              <div>
+                                <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDERR Preview</div>
+                                <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
+                                  {tool.stderr_preview}
+                                </pre>
+                              </div>
+                            )}
+                            {!tool.stdout_preview && !tool.stderr_preview && (
+                              <div className="text-xs" style={{ color: 'var(--muted)' }}>No output preview available</div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

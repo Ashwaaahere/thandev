@@ -8,13 +8,18 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.tenant_utils import require_tenant, get_current_tenant
+from app.core.dependencies import require_approved_user
 from app.models.finding import Finding
 from app.models.scan import ScanJob
 from app.models.project import Project
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/findings", tags=["findings"])
+router = APIRouter(
+    prefix="/findings",
+    tags=["findings"],
+    dependencies=[Depends(require_approved_user)],
+)
 
 
 @router.post("/batch")

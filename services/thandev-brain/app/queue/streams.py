@@ -277,6 +277,9 @@ async def read_step_results(
     # Start reading from the beginning of the stream
     last_id = "0"
     
+    # Check if we have partial results and timeout is approaching
+    timeout_warning_sec = timeout_sec * 0.8  # Warn at 80% of timeout
+    
     while len(results) < len(step_ids) and (datetime.utcnow() - start_time).total_seconds() < timeout_sec:
         try:
             # Calculate remaining time
@@ -312,7 +315,14 @@ async def read_step_results(
             
             # Handle empty result (timeout)
             if not messages:
-                # No new messages, continue waiting
+                # No new messages, check if we're approaching timeout
+                elapsed = (datetime.utcnow() - start_time).total_seconds()
+                if elapsed > timeout_warning_sec and len(results) == 0:
+                    logger.warning(
+                        f"Waiting for {len(step_ids)} step results for session {session_id}, "
+                        f"no results after {elapsed:.1f}s (timeout: {timeout_sec}s). "
+                        f"Runner service may not be processing requests."
+                    )
                 continue
             
             for stream_name, stream_messages in messages:
@@ -341,6 +351,16 @@ async def read_step_results(
             import time
             time.sleep(1)
             continue
+    
+    # Check if we got all results or timed out
+    if len(results) < len(step_ids):
+        elapsed = (datetime.utcnow() - start_time).total_seconds()
+        missing_steps = [step_id for step_id in step_ids if step_id not in results]
+        logger.warning(
+            f"Timeout waiting for step results for session {session_id}. "
+            f"Got {len(results)}/{len(step_ids)} results after {elapsed:.1f}s. "
+            f"Missing steps: {missing_steps}. Runner service may not be processing requests."
+        )
     
     return results
 

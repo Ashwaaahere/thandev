@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     SESSION_MAX_CONSECUTIVE_FAILURES: int = int(os.getenv("SESSION_MAX_CONSECUTIVE_FAILURES", "3"))
     SESSION_NO_NEW_FINDINGS_ITERATIONS: int = int(os.getenv("SESSION_NO_NEW_FINDINGS_ITERATIONS", "3"))
     
+    # Finding Enrichment Configuration
+    ENRICH_FINDINGS_ENABLED: bool = os.getenv("ENRICH_FINDINGS_ENABLED", "true").lower() == "true"
+    ENRICH_FINDINGS_MODEL: str = os.getenv("ENRICH_FINDINGS_MODEL", "gpt-4o-mini")
+    ENRICH_FINDINGS_TIMEOUT_SEC: int = int(os.getenv("ENRICH_FINDINGS_TIMEOUT_SEC", "30"))
+    
     @property
     def cors_origins_list(self) -> List[str]:
         """Parse CORS origins from comma-separated string"""

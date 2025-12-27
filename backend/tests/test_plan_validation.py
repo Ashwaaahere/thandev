@@ -5,29 +5,17 @@ Tests for PR-1: Catalog + strict plan validation
 """
 import pytest
 import json
-import sys
 from pathlib import Path
 
-# Add packages to path
-packages_path = Path(__file__).parent.parent.parent.parent / "packages"
-if str(packages_path) not in sys.path:
-    sys.path.insert(0, str(packages_path))
-
+# thandev_schemas is installed as an editable package
 from thandev_schemas.planning import PlanScanResponse, PlanStep, Timeline
 from app.services.ai.plan_validation import PlanExecutionValidator, PlanValidationError
 
 
-# Test catalog path (relative to backend/)
-TEST_CATALOG_PATH = Path(__file__).parent.parent / "services" / "thandev-brain" / "catalog" / "catalog.json"
-
-
 @pytest.fixture
-def validator():
-    """Create a PlanExecutionValidator instance"""
-    if TEST_CATALOG_PATH.exists():
-        return PlanExecutionValidator(catalog_path=TEST_CATALOG_PATH)
-    else:
-        pytest.skip(f"Catalog file not found at {TEST_CATALOG_PATH}")
+def validator(test_catalog_path):
+    """Create a PlanExecutionValidator instance using test catalog"""
+    return PlanExecutionValidator(catalog_path=test_catalog_path)
 
 
 @pytest.fixture

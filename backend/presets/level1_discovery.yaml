@@ -9,13 +9,13 @@ estimated_duration: "10-25 minutes"
 tools:
   - name: "nuclei"
     templates: ["info", "technologies", "misconfig", "exposures"]
-    timeout: 600
+    timeout: 300
     description: "Technology detection and misconfiguration checks"
     
   - name: "sslscan"
     fallback: "sslyze"
     fallback_final: "openssl s_client"
-    timeout: 180
+    timeout: 300
     description: "TLS/certificate checks"
     
   - name: "nmap"
@@ -29,7 +29,7 @@ tools:
     description: "Passive subdomain enumeration"
     
   - name: "crt.sh"
-    timeout: 120
+    timeout: 300
     description: "Certificate transparency lookups"
     
   - name: "ffuf"

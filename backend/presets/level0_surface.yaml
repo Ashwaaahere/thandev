@@ -15,7 +15,7 @@ tools:
   - name: "sslscan"
     fallback: "sslyze"
     fallback_final: "openssl s_client"
-    timeout: 180
+    timeout: 300
     description: "TLS/certificate checks"
     
   - name: "nmap"

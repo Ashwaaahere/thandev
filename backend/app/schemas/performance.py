@@ -1,7 +1,7 @@
 """
 Pydantic schemas for Performance Scan API
 """
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, Field, HttpUrl, model_validator, ConfigDict
 from typing import Optional, Dict, Any, List, Literal
 from datetime import datetime
 from app.models.scan import ScanLevel
@@ -38,8 +38,7 @@ class PerformanceScanDetail(BaseModel):
     started_at: Optional[datetime]
     completed_at: Optional[datetime]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PerformanceScanListItem(BaseModel):
@@ -53,8 +52,7 @@ class PerformanceScanListItem(BaseModel):
     perf_score: Optional[float] = None  # Extracted from metrics.overall_score
     completed_at: Optional[datetime]
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PerformanceScanListResponse(BaseModel):
