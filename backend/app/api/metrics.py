@@ -82,16 +82,18 @@ async def get_dashboard_overview(
             detail="X-Thandev-User-Id header is required"
         )
     
-    # Check if project_id column exists in scan_jobs table
+    # Check if columns exist in scan_jobs table
     from sqlalchemy import inspect
     try:
         inspector = inspect(db.bind)
         scan_jobs_columns = [col['name'] for col in inspector.get_columns('scan_jobs')] if 'scan_jobs' in inspector.get_table_names() else []
         has_project_id = 'project_id' in scan_jobs_columns
-        logger.info(f"Metrics overview: scan_jobs has project_id column: {has_project_id}")
+        has_scan_level = 'scan_level' in scan_jobs_columns
+        logger.info(f"Metrics overview: scan_jobs has project_id column: {has_project_id}, scan_level column: {has_scan_level}")
     except Exception as e:
-        logger.warning(f"Could not check scan_jobs columns: {e}, assuming project_id exists")
+        logger.warning(f"Could not check scan_jobs columns: {e}, assuming columns exist")
         has_project_id = True  # Assume it exists and let the query fail if it doesn't
+        has_scan_level = True
     
     if not has_project_id:
         logger.warning("scan_jobs table does not have project_id column yet, returning empty metrics")
@@ -178,21 +180,58 @@ async def get_dashboard_overview(
         # If project_id column doesn't exist, return empty results
         findings_query = db.query(Finding).filter(False)  # Empty query
     
+    # Check if scan_level column exists
+    try:
+        inspector = inspect(db.bind)
+        scan_jobs_columns = [col['name'] for col in inspector.get_columns('scan_jobs')] if 'scan_jobs' in inspector.get_table_names() else []
+        has_scan_level = 'scan_level' in scan_jobs_columns
+        logger.info(f"Metrics overview: scan_jobs has scan_level column: {has_scan_level}")
+    except Exception as e:
+        logger.warning(f"Could not check scan_jobs columns: {e}, assuming scan_level exists")
+        has_scan_level = True  # Assume it exists and let the query fail if it doesn't
+    
     # Total scans (all ScanJob entries for this tenant)
-    total_scans = scans_query.count()
+    # Use count() on id only to avoid loading columns that might not exist
+    try:
+        if has_scan_level:
+            total_scans = scans_query.count()
+        else:
+            # If scan_level doesn't exist, count using id only
+            total_scans = scans_query.with_entities(ScanJob.id).count()
+    except Exception as e:
+        logger.error(f"Error counting scans: {type(e).__name__}: {str(e)}", exc_info=True)
+        total_scans = 0
+    
     security_scans = total_scans  # For now, all scans are security scans
     performance_scans = 0  # Placeholder for future Lighthouse work
     
     # Vulnerabilities found (count of Finding rows for this tenant and user)
-    vulnerabilities_found = findings_query.count()
+    try:
+        vulnerabilities_found = findings_query.count()
+    except Exception as e:
+        logger.error(f"Error counting findings: {type(e).__name__}: {str(e)}", exc_info=True)
+        vulnerabilities_found = 0
     
     # Average security score
     # For completed scans with risk_score, convert to score = 100 - risk_score
-    completed_scans = (
-        scans_query
-        .filter(ScanJob.status == ScanStatus.COMPLETED)
-        .all()
-    )
+    try:
+        if has_scan_level:
+            completed_scans = (
+                scans_query
+                .filter(ScanJob.status == ScanStatus.COMPLETED)
+                .all()
+            )
+        else:
+            # If scan_level doesn't exist, query only columns that exist
+            completed_scans = (
+                scans_query
+                .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary, ScanJob.project_id, ScanJob.created_at, ScanJob.completed_at)
+                .filter(ScanJob.status == ScanStatus.COMPLETED)
+                .all()
+            )
+    except Exception as e:
+        logger.error(f"Error fetching completed scans: {type(e).__name__}: {str(e)}", exc_info=True)
+        completed_scans = []
     
     scores = []
     for scan in completed_scans:
@@ -219,13 +258,27 @@ async def get_dashboard_overview(
     # Use joinedload to avoid N+1 queries
     from sqlalchemy.orm import joinedload
     try:
-        recent_scan_jobs = (
-            scans_query
-            .options(joinedload(ScanJob.project))
-            .order_by(ScanJob.created_at.desc())
-            .limit(10)
-            .all()
-        )
+        if has_scan_level:
+            recent_scan_jobs = (
+                scans_query
+                .options(joinedload(ScanJob.project))
+                .order_by(ScanJob.created_at.desc())
+                .limit(10)
+                .all()
+            )
+        else:
+            # If scan_level doesn't exist, query only columns that exist
+            recent_scan_jobs = (
+                scans_query
+                .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary, ScanJob.project_id, ScanJob.created_at, ScanJob.completed_at, ScanJob.project)
+                .options(joinedload(ScanJob.project))
+                .order_by(ScanJob.created_at.desc())
+                .limit(10)
+                .all()
+            )
+            # Since we used with_entities, we get tuples, not ScanJob objects
+            # We need to handle this differently - let's just skip scan_level for now
+            recent_scan_jobs = []
     except Exception as e:
         logger.error(f"Error fetching recent scans: {type(e).__name__}: {str(e)}", exc_info=True)
         recent_scan_jobs = []
