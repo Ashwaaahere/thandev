@@ -11,6 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import inspect
 from sqlalchemy.sql import text
+from sqlalchemy.dialects import postgresql
 import logging
 
 # revision identifiers, used by Alembic.
@@ -129,7 +130,61 @@ def upgrade():
     else:
         logger.info("projects table already exists, skipping")
     
-    # 4. Add foreign keys to notifications table if it exists but doesn't have them
+    # 4. Add root_domain column to projects if missing (migration 0015 may have skipped this)
+    if table_exists('projects'):
+        project_cols = inspector.get_columns('projects')
+        project_col_names = {col['name'] for col in project_cols}
+        if 'root_domain' not in project_col_names:
+            logger.info("Adding root_domain column to projects table...")
+            op.add_column('projects', sa.Column('root_domain', sa.String(255), nullable=True))
+            op.create_index('ix_projects_root_domain', 'projects', ['root_domain'])
+            logger.info("✓ Added root_domain column to projects")
+    
+    # 5. Create domain_verifications table if missing (migration 0015 may have skipped this)
+    if not table_exists('domain_verifications') and table_exists('tenants') and table_exists('projects'):
+        logger.info("Creating domain_verifications table...")
+        # Import enum type (should exist from migration 0015)
+        domain_status_enum = postgresql.ENUM(
+            "pending", "verified", "failed", "expired",
+            name="domain_verification_status",
+            create_type=False,
+        )
+        op.create_table(
+            'domain_verifications',
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('tenant_id', sa.String(36), sa.ForeignKey('tenants.id'), nullable=False),
+            sa.Column('project_id', sa.String(36), sa.ForeignKey('projects.id'), nullable=False),
+            sa.Column('domain', sa.String(255), nullable=False),
+            sa.Column('status', domain_status_enum, nullable=False),
+            sa.Column('token', sa.String(255), nullable=False),
+            sa.Column('last_checked_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('verified_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('expires_at', sa.DateTime(timezone=True), nullable=True),
+            sa.Column('last_error', sa.Text(), nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
+        )
+        op.create_index('ix_domain_verifications_project_domain', 'domain_verifications', ['project_id', 'domain'])
+        logger.info("✓ domain_verifications table created")
+    
+    # 6. Create entitlements table if missing (migration 0016 may have skipped this)
+    if not table_exists('entitlements') and table_exists('tenants') and table_exists('users'):
+        logger.info("Creating entitlements table...")
+        op.create_table(
+            'entitlements',
+            sa.Column('id', sa.String(36), primary_key=True),
+            sa.Column('tenant_id', sa.String(36), sa.ForeignKey('tenants.id'), nullable=False),
+            sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=True),
+            sa.Column('plan_name', sa.String(50), nullable=False),
+            sa.Column('limits_json', postgresql.JSON() if is_postgresql else sa.Text, nullable=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+            sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
+        )
+        op.create_index('ix_entitlements_tenant_id', 'entitlements', ['tenant_id'])
+        op.create_index('ix_entitlements_user_id', 'entitlements', ['user_id'])
+        logger.info("✓ entitlements table created")
+    
+    # 7. Add foreign keys to notifications table if it exists but doesn't have them
     # This handles the case where notifications table was created before tenants/users
     if table_exists('notifications'):
         logger.info("Checking notifications table foreign keys...")
