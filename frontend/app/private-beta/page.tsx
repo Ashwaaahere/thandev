@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { useSession } from 'next-auth/react'
+import { useSession, signOut } from 'next-auth/react'
 import { thandevFetchJSON } from '@/lib/thandevApi'
 
 export default function PrivateBetaPage() {
@@ -47,40 +47,66 @@ export default function PrivateBetaPage() {
         Please request access and an admin will review your request.
       </p>
 
-      {isAdmin ? (
-        <div className="space-y-3">
-          <p className="text-green-400">You are an admin.</p>
-          <Link
-            href="/admin"
-            className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-          >
-            Go to Admin
-          </Link>
-        </div>
-      ) : isApproved ? (
-        <div className="space-y-3">
-          {showWelcome && (
-            <div className="text-lg text-emerald-300 animate-pulse">
-              🎉 Welcome aboard! Your access is live.
+      <div className="space-y-3">
+        {isAdmin ? (
+          <>
+            <p className="text-green-400">You are an admin.</p>
+            <div className="flex gap-3">
+              <Link
+                href="/admin"
+                className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+              >
+                Go to Admin
+              </Link>
+              <button
+                onClick={() => signOut({ callbackUrl: '/' })}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded"
+              >
+                Sign out
+              </button>
             </div>
-          )}
-          <p className="text-green-400">Your account is already approved.</p>
-          <Link
-            href="/dashboard"
-            className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
-          >
-            Go to dashboard
-          </Link>
-        </div>
-      ) : (
-        <button
-          onClick={requestAccess}
-          disabled={status === 'pending' || status === 'sent'}
-          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-60"
-        >
-          {status === 'pending' ? 'Sending...' : status === 'sent' ? 'Request sent' : 'Request access'}
-        </button>
-      )}
+          </>
+        ) : isApproved ? (
+          <>
+            {showWelcome && (
+              <div className="text-lg text-emerald-300 animate-pulse">
+                🎉 Welcome aboard! Your access is live.
+              </div>
+            )}
+            <p className="text-green-400">Your account is already approved.</p>
+            <div className="flex gap-3">
+              <Link
+                href="/dashboard"
+                className="inline-block bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+              >
+                Go to dashboard
+              </Link>
+              <button
+                onClick={() => signOut({ callbackUrl: '/' })}
+                className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded"
+              >
+                Sign out
+              </button>
+            </div>
+          </>
+        ) : (
+          <div className="flex gap-3">
+            <button
+              onClick={requestAccess}
+              disabled={status === 'pending' || status === 'sent'}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded disabled:opacity-60"
+            >
+              {status === 'pending' ? 'Sending...' : status === 'sent' ? 'Request sent' : 'Request access'}
+            </button>
+            <button
+              onClick={() => signOut({ callbackUrl: '/' })}
+              className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded"
+            >
+              Sign out
+            </button>
+          </div>
+        )}
+      </div>
 
       {message && <p className="mt-4 text-sm text-gray-200">{message}</p>}
     </div>

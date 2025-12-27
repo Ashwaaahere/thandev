@@ -41,7 +41,8 @@ export default function Navbar() {
         <nav className="hidden gap-6 text-sm opacity-80 md:flex">
           {user && <Link href="/dashboard" className="hover:opacity-100">Dashboard</Link>}
           <Link href="/news" className="hover:opacity-100">News</Link>
-          <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link>
+          {/* Exploit feed button disabled but page kept */}
+          {/* <Link href="/exploits" className="hover:opacity-100">Exploit feed</Link> */}
           <Link href="/dashboard/scan" className="hover:opacity-100">Security Scan</Link>
           <Link href="/docs" className="hover:opacity-100">Docs</Link>
         </nav>
@@ -121,13 +122,14 @@ export default function Navbar() {
             >
               📰 News
             </Link>
-            <Link
+            {/* Exploit feed button disabled but page kept */}
+            {/* <Link
               href="/exploits"
               onClick={closeMobileMenu}
               className="block px-4 py-3 rounded-lg hover:bg-white/10 transition-colors text-sm font-medium"
             >
               🔍 Exploit feed
-            </Link>
+            </Link> */}
                    <Link
                      href="/dashboard/scan"
                      onClick={closeMobileMenu}

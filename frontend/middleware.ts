@@ -10,7 +10,7 @@ const PROTECTED_PATHS = [
   '/notifications',
   '/performance',
   '/admin',
-  '/', // root dashboard
+  // '/' removed - landing page should be accessible without login
 ]
 
 const SENSITIVE_PATHS = [
@@ -40,8 +40,10 @@ export async function middleware(req: NextRequest) {
   const isProtected = PROTECTED_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`))
   const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/')
   const isAuthOrBeta = pathname.startsWith('/auth') || pathname.startsWith('/private-beta')
+  // Public pages accessible without login
+  const isPublicPage = pathname === '/' || pathname.startsWith('/news') || pathname.startsWith('/docs') || pathname.startsWith('/exploits') || pathname.startsWith('/terms') || pathname.startsWith('/privacy')
 
-  if (isProtected && !isAuthOrBeta) {
+  if (isProtected && !isAuthOrBeta && !isPublicPage) {
     const token = await getToken({ req, secret: process.env.NEXTAUTH_SECRET })
 
     if (!token) {
