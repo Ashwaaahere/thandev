@@ -30,6 +30,9 @@ export const metadata = {
   },
 };
 
+// Force dynamic rendering since we use getServerSession which requires headers
+export const dynamic = 'force-dynamic';
+
 export default async function Auth() {
   const session = await getSafeServerSession();
   

@@ -10,6 +10,9 @@ export const metadata: Metadata = {
   keywords: 'projects, security scanning, vulnerability assessment, thandev',
 };
 
+// Force dynamic rendering since we use getServerSession which requires headers
+export const dynamic = 'force-dynamic';
+
 export default async function ProjectsPage() {
   const session = await getServerSession(authOptions);
   
