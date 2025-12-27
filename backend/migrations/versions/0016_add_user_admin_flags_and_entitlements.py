@@ -57,13 +57,16 @@ def upgrade():
                     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name='fk_entitlements_user_id'),
                 ]
             
+            # Use JSONB for PostgreSQL, Text for SQLite
+            limits_json_type = postgresql.JSON() if is_postgresql else sa.Text()
+            
             op.create_table(
                 "entitlements",
                 sa.Column("id", sa.String(length=36), primary_key=True),
                 sa.Column("tenant_id", sa.String(length=36), nullable=False),
                 sa.Column("user_id", sa.String(length=36), nullable=True),
                 sa.Column("plan_name", sa.String(length=50), nullable=False),
-                sa.Column("limits_json", sa.JSON(), nullable=True),
+                sa.Column("limits_json", limits_json_type, nullable=True),
                 sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
                 sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
                 *table_args

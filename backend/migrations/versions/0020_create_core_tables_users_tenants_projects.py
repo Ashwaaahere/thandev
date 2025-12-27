@@ -143,12 +143,18 @@ def upgrade():
     # 5. Create domain_verifications table if missing (migration 0015 may have skipped this)
     if not table_exists('domain_verifications') and table_exists('tenants') and table_exists('projects'):
         logger.info("Creating domain_verifications table...")
-        # Import enum type (should exist from migration 0015)
-        domain_status_enum = postgresql.ENUM(
-            "pending", "verified", "failed", "expired",
-            name="domain_verification_status",
-            create_type=False,
-        )
+        # Use enum type (should exist from migration 0015)
+        # For SQLite, use String instead of ENUM
+        if is_postgresql:
+            domain_status_enum = postgresql.ENUM(
+                "pending", "verified", "failed", "expired",
+                name="domain_verification_status",
+                create_type=False,
+            )
+        else:
+            # SQLite doesn't support ENUM, use String
+            domain_status_enum = sa.String(20)
+        
         op.create_table(
             'domain_verifications',
             sa.Column('id', sa.String(36), primary_key=True),
@@ -170,13 +176,16 @@ def upgrade():
     # 6. Create entitlements table if missing (migration 0016 may have skipped this)
     if not table_exists('entitlements') and table_exists('tenants') and table_exists('users'):
         logger.info("Creating entitlements table...")
+        # Use JSONB for PostgreSQL, Text for SQLite
+        limits_json_type = postgresql.JSON() if is_postgresql else sa.Text()
+        
         op.create_table(
             'entitlements',
             sa.Column('id', sa.String(36), primary_key=True),
             sa.Column('tenant_id', sa.String(36), sa.ForeignKey('tenants.id'), nullable=False),
             sa.Column('user_id', sa.String(36), sa.ForeignKey('users.id'), nullable=True),
             sa.Column('plan_name', sa.String(50), nullable=False),
-            sa.Column('limits_json', postgresql.JSON() if is_postgresql else sa.Text, nullable=True),
+            sa.Column('limits_json', limits_json_type, nullable=True),
             sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
             sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
         )
