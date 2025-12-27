@@ -410,13 +410,26 @@ async def get_dashboard_overview(
         db.rollback()
         scans_last_7_days = 0
     
-    # Get last scan timestamp
-    last_scan = (
-        scans_query
-        .order_by(ScanJob.created_at.desc())
-        .first()
-    )
-    last_scan_at = last_scan.created_at if last_scan else None
+    # Get last scan timestamp - use with_entities to avoid loading all columns
+    try:
+        last_scan_query = (
+            db.query(ScanJob.created_at)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
+            .order_by(ScanJob.created_at.desc())
+            .limit(1)
+        )
+        last_scan_row = last_scan_query.first()
+        last_scan_at = last_scan_row[0] if last_scan_row else None
+    except Exception as e:
+        logger.error(f"Error getting last scan: {type(e).__name__}: {str(e)}", exc_info=True)
+        db.rollback()
+        last_scan_at = None
     
     recent_activity = RecentActivityMetrics(
         last_scan_at=last_scan_at,
