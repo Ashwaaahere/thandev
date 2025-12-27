@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Text, DateTime, Boolean, Numeric, Integer, String, Index, CheckConstraint, JSON
 from sqlalchemy.dialects.postgresql import JSONB
-from .db import Base
+from app.core.database import Base
 
 # Detect if we're using PostgreSQL
 import os
