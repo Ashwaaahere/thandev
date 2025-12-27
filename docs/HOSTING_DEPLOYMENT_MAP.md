@@ -1583,4 +1583,3 @@ All claims in this document are grounded in actual repository files:
 - Sentry initialization code (package installed but not used)
 - Global rate limiting middleware (only per-router implementation found)
 - Structured logging implementation (`app/core/logging_config.py` referenced but not verified)
-
