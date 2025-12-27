@@ -3,7 +3,7 @@ import sqlalchemy as sa
 from sqlalchemy import inspect
 
 revision = '0001_init'
-down_revision = None
+down_revision = '0000_fix_alembic_version'
 branch_labels = None
 depends_on = None
 

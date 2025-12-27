@@ -76,6 +76,9 @@ COPY --chown=app:app . .
 # Use COPY --chmod to set executable permission at build time
 COPY --chown=app:app --chmod=755 entrypoint.sh /app/entrypoint.sh
 
+# Copy fix script with executable permissions (included in COPY . . but ensure correct permissions)
+COPY --chown=app:app --chmod=755 fix_alembic_version_column.py /app/fix_alembic_version_column.py
+
 # Switch to non-root user
 USER app
 
