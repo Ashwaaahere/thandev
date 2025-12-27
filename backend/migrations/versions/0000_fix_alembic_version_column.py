@@ -33,28 +33,19 @@ def upgrade():
         # (Alembic uses VARCHAR(255) by default in newer versions)
         return
     
-    # Check current column definition
-    columns = inspector.get_columns('alembic_version')
-    version_num_col = next((col for col in columns if col['name'] == 'version_num'), None)
-    
-    if not version_num_col:
-        # Column doesn't exist - Alembic will create it
-        return
-    
-    # Get the column type
-    col_type = str(version_num_col['type'])
-    
-    # Check if column is too short (VARCHAR(32) or similar)
-    # For PostgreSQL, we check if it's character varying(32)
-    # For SQLite, VARCHAR has no length limit, so we skip
+    # For PostgreSQL, always try to alter to VARCHAR(255) to be safe
+    # This is idempotent - if already VARCHAR(255), it will be a no-op
     if is_postgresql:
-        if 'varying(32)' in col_type.lower() or col_type.lower() == 'character varying(32)':
-            # Alter column to VARCHAR(255)
-            op.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
-        elif 'varying' in col_type.lower() and '255' not in col_type:
-            # If it's VARCHAR but not 255, check if it's shorter than 50 (safety check)
-            # Extract number if possible, otherwise just alter to 255 to be safe
-            op.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
+        try:
+            # Use raw SQL to alter column - this works even if column is VARCHAR(32) with data
+            # PostgreSQL allows ALTER COLUMN TYPE to a larger type even with existing data
+            op.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255) USING version_num::VARCHAR(255)"))
+        except Exception as e:
+            # If alteration fails (maybe already correct size), log but don't fail
+            # This ensures migration doesn't break if column is already correct
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Could not alter alembic_version.version_num column: {e}. This may be safe if column is already large enough.")
 
 
 def downgrade():

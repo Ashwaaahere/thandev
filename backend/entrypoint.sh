@@ -21,6 +21,12 @@ else
   echo "Using SQLite database (no connection wait needed)"
 fi
 
+# Fix alembic_version column length BEFORE running any migrations
+# This prevents "value too long for type character varying(32)" errors
+# Run this even if command args are provided (e.g., for release_command)
+echo "Fixing alembic_version column length if needed..."
+python fix_alembic_version_column.py || echo "Warning: Could not fix alembic_version column, continuing..."
+
 # If command arguments are provided, execute them and exit
 # This allows: entrypoint.sh alembic upgrade head
 if [ $# -gt 0 ]; then
@@ -31,11 +37,6 @@ fi
 # Default behavior: run migrations then start uvicorn
 # Migrations run here to ensure they complete before app starts
 # (In addition to Fly.io release_command, this provides a safety net)
-
-# Fix alembic_version column length BEFORE running migrations
-# This prevents "value too long for type character varying(32)" errors
-echo "Fixing alembic_version column length if needed..."
-python fix_alembic_version_column.py || echo "Warning: Could not fix alembic_version column, continuing..."
 
 echo "Running Alembic migrations..."
 if ! alembic upgrade head; then

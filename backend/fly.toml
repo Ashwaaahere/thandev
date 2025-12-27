@@ -6,8 +6,9 @@ primary_region = "iad"
 
 [deploy]
   # Run migrations once per deploy via release_command
+  # Fix alembic_version column first, then run migrations
   # This ensures migrations run on the same database as the app, before containers start
-  release_command = "alembic upgrade head"
+  release_command = "python fix_alembic_version_column.py && alembic upgrade head"
 
 [env]
   PORT = "8000"
