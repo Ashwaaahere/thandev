@@ -1,15 +1,41 @@
 'use client';
 
-import { useState } from 'react';
-import { signIn } from 'next-auth/react';
+import { useState, useEffect } from 'react';
+import { signIn, getProviders } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 
 export default function AuthPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [providers, setProviders] = useState<any>(null);
+  const [hasGitHub, setHasGitHub] = useState(false);
   const router = useRouter();
 
+  useEffect(() => {
+    // Check available providers
+    getProviders().then((provs) => {
+      setProviders(provs);
+      setHasGitHub(!!provs?.github);
+      
+      // If no GitHub provider, show configuration error
+      if (!provs?.github && process.env.NODE_ENV === 'production') {
+        setError(
+          'GitHub OAuth is not configured. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET ' +
+          'in Vercel project settings. Contact your administrator for assistance.'
+        );
+      }
+    }).catch((err) => {
+      console.error('Error loading providers:', err);
+      setError('Unable to load authentication providers. Please try again later.');
+    });
+  }, []);
+
   const handleGitHubSignIn = async () => {
+    if (!hasGitHub) {
+      setError('GitHub authentication is not available. Please configure GitHub OAuth credentials.');
+      return;
+    }
+    
     try {
       setIsLoading(true);
       setError(null);
@@ -118,7 +144,7 @@ export default function AuthPage() {
               <div className="mb-8">
                 <button
                   onClick={handleGitHubSignIn}
-                  disabled={isLoading}
+                  disabled={isLoading || !hasGitHub || providers === null}
                   className="w-full flex items-center justify-center gap-4 py-5 px-8 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                   style={{ 
                     background: 'linear-gradient(135deg, #24292e 0%, #1a1e22 100%)',
@@ -128,6 +154,10 @@ export default function AuthPage() {
                 >
                   {isLoading ? (
                     <div className="animate-spin rounded-full h-6 w-6 border-2 border-white border-t-transparent"></div>
+                  ) : providers === null ? (
+                    <span>Loading...</span>
+                  ) : !hasGitHub ? (
+                    <span>GitHub OAuth Not Configured</span>
                   ) : (
                     <>
                       <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20">

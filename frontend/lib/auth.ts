@@ -112,12 +112,28 @@ if (githubClientId && githubClientSecret) {
     })
   )
 } else {
-  // In production runtime, throw error if credentials are missing
-  // This will only trigger at runtime, not during build
-  throw new Error(
-    'Missing GitHub OAuth credentials. Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET ' +
-    '(or GITHUB_ID and GITHUB_SECRET) environment variables in Vercel project settings.'
+  // In production runtime without credentials, use a stub provider that shows an error
+  // This prevents the app from crashing and allows a graceful error message
+  providers.push(
+    CredentialsProvider({
+      name: 'Configuration Error',
+      credentials: {},
+      async authorize() {
+        // This will never succeed, but prevents the app from crashing
+        // The error will be shown in the UI instead
+        return null
+      },
+    })
   )
+  
+  // Log error for debugging (won't crash the app)
+  if (typeof console !== 'undefined') {
+    console.error(
+      '⚠️  GitHub OAuth credentials missing in production.\n' +
+      '   Please set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET in Vercel project settings.\n' +
+      '   Authentication will not work until credentials are configured.'
+    )
+  }
 }
 
 export const authOptions: NextAuthOptions = {
