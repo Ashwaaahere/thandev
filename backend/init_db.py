@@ -9,24 +9,35 @@ from sqlalchemy import create_engine
 import logging
 
 # Import all models to ensure they're registered with Base
-# New model structure
+# New model structure (from app/models/ directory)
 from app.models import (
     User, Tenant, Project, ScanJob, Finding, ToolResult,
     DomainVerification, DomainVerificationStatus, Entitlement,
     PerformanceScan, Notification, AuditLog, AllowedDomain
 )
 
-# Import legacy models from old models.py file
+# Import legacy models from old app/models.py file (not the directory)
+# These models are still used by some routers
 try:
-    from app.models import ThreatItem, PerformanceScanJob
-except ImportError:
-    # Try importing from the old models.py file directly
-    try:
-        import app.models as legacy_models
+    # Import the old models.py file directly (not the package)
+    import importlib.util
+    import os
+    models_file = os.path.join(os.path.dirname(__file__), 'app', 'models.py')
+    if os.path.exists(models_file):
+        spec = importlib.util.spec_from_file_location("app_models_legacy", models_file)
+        legacy_models = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(legacy_models)
+        # Access the models from the loaded module
         ThreatItem = getattr(legacy_models, 'ThreatItem', None)
         PerformanceScanJob = getattr(legacy_models, 'PerformanceScanJob', None)
-    except (ImportError, AttributeError):
-        pass
+    else:
+        ThreatItem = None
+        PerformanceScanJob = None
+except Exception as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Could not import legacy models: {e}")
+    ThreatItem = None
+    PerformanceScanJob = None
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
