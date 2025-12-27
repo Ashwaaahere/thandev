@@ -57,12 +57,18 @@ def upgrade():
         logger.warning("projects table does not exist, adding project_id as nullable for now")
         op.add_column('scan_jobs', sa.Column('project_id', sa.String(36), nullable=True))
     else:
-        # Add project_id column with foreign key constraint
-        # For fresh DB with no scan_jobs data, we can make it non-nullable
-        # Since this migration runs after projects table is created, and scan_jobs
-        # would have been created in migration 0002 (old schema), we're migrating the schema.
-        # For fresh DBs, there should be no data, so non-nullable is safe.
-        op.add_column('scan_jobs', sa.Column('project_id', sa.String(36), sa.ForeignKey('projects.id'), nullable=False))
+        # Check if there's any data in scan_jobs table
+        result = bind.execute(sa.text("SELECT COUNT(*) FROM scan_jobs")).scalar()
+        has_data = result > 0
+        
+        if has_data:
+            # If there's existing data, add as nullable first (will need backfill in a future migration)
+            logger.warning(f"scan_jobs table has {result} rows, adding project_id as nullable (backfill needed)")
+            op.add_column('scan_jobs', sa.Column('project_id', sa.String(36), sa.ForeignKey('projects.id'), nullable=True))
+        else:
+            # For fresh DB with no data, we can make it non-nullable
+            logger.info("scan_jobs table is empty, adding project_id as non-nullable")
+            op.add_column('scan_jobs', sa.Column('project_id', sa.String(36), sa.ForeignKey('projects.id'), nullable=False))
         
         # Create index on project_id
         if is_postgresql:
