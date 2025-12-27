@@ -77,17 +77,23 @@ if DATABASE_URL:
     logger.info(f'Initializing database using: {DATABASE_URL[:20]}...')
     engine = create_engine(DATABASE_URL)
     
-    # For production, we should rely on Alembic migrations for schema creation
-    # init_db.py is mainly for development/testing
-    # Only create tables if they don't exist (Alembic will handle migrations)
-    try:
-        Base.metadata.create_all(engine, checkfirst=True)
-        logger.info('Database tables verified/created successfully!')
-    except Exception as e:
-        # If there's an error (e.g., enum conflicts), log it but don't fail
-        # Alembic migrations will handle the schema properly
-        logger.warning(f'Table creation encountered an issue (this is OK if using Alembic): {e}')
-        logger.info('Continuing - Alembic migrations will handle schema updates.')
+    # In production (PostgreSQL), rely entirely on Alembic for schema management
+    # init_db.py should only be used for SQLite development
+    is_postgresql = DATABASE_URL.startswith('postgresql')
+    
+    if is_postgresql:
+        # For PostgreSQL, don't create tables - let Alembic handle it
+        logger.info('PostgreSQL detected - skipping table creation (Alembic will handle schema)')
+        logger.info('All models imported and registered with Base.')
+    else:
+        # For SQLite (development), create tables if they don't exist
+        logger.info('SQLite detected - creating tables if they don\'t exist...')
+        try:
+            Base.metadata.create_all(engine, checkfirst=True)
+            logger.info('Database tables verified/created successfully!')
+        except Exception as e:
+            logger.warning(f'Table creation encountered an issue: {e}')
+            logger.info('Continuing anyway...')
 else:
     logger.error('DATABASE_URL not found!')
     sys.exit(1)
