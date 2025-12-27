@@ -256,9 +256,6 @@ async def get_dashboard_overview(
         logger.warning(f"Error fetching completed scans, likely due to missing columns: {fetch_error}")
         db.rollback()
         completed_scans = []
-    except Exception as e:
-        logger.error(f"Error fetching completed scans: {type(e).__name__}: {str(e)}", exc_info=True)
-        completed_scans = []
     
     scores = []
     for scan in completed_scans:
@@ -395,11 +392,23 @@ async def get_dashboard_overview(
     from datetime import timedelta
     seven_days_ago = seven_days_ago - timedelta(days=7)
     
-    scans_last_7_days = (
-        scans_query
-        .filter(ScanJob.created_at >= seven_days_ago)
-        .count()
-    )
+    try:
+        scans_last_7_days_query = (
+            db.query(func.count(ScanJob.id))
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id,
+                ScanJob.created_at >= seven_days_ago
+            )
+        )
+        scans_last_7_days = scans_last_7_days_query.scalar() or 0
+    except Exception as e:
+        logger.error(f"Error counting scans last 7 days: {type(e).__name__}: {str(e)}", exc_info=True)
+        db.rollback()
+        scans_last_7_days = 0
     
     # Get last scan timestamp
     last_scan = (
