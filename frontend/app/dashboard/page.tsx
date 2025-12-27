@@ -1,7 +1,6 @@
 import { Metadata } from 'next'
-import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
-import { authOptions } from '@/lib/auth'
+import { getSafeServerSession } from '@/lib/auth-safe'
 import DashboardClient from '@/components/Dashboard/DashboardClient'
 
 export const metadata: Metadata = {
@@ -37,7 +36,7 @@ const dashboardStructuredData = {
 }
 
 export default async function DashboardPage() {
-  const session = await getServerSession(authOptions);
+  const session = await getSafeServerSession();
   
   if (!session) {
     redirect('/auth');

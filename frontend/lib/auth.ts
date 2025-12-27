@@ -136,6 +136,20 @@ if (githubClientId && githubClientSecret) {
   }
 }
 
+// Ensure we have at least one provider (required by NextAuth)
+if (providers.length === 0) {
+  // Fallback: add a minimal credentials provider to prevent NextAuth from crashing
+  providers.push(
+    CredentialsProvider({
+      name: 'Unavailable',
+      credentials: {},
+      async authorize() {
+        return null
+      },
+    })
+  )
+}
+
 export const authOptions: NextAuthOptions = {
   providers,
   callbacks: {
@@ -250,6 +264,6 @@ export const authOptions: NextAuthOptions = {
   jwt: {
     maxAge: 24 * 60 * 60, // 24 hours
   },
-  secret: process.env.NEXTAUTH_SECRET,
+  secret: process.env.NEXTAUTH_SECRET || (isBuildTime ? 'build-time-secret-placeholder' : undefined),
   debug: process.env.NODE_ENV === 'development', // Enable debug in development
 }
