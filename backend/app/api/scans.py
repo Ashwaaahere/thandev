@@ -1519,6 +1519,21 @@ async def cancel_scan(
     scan_job.completed_at = datetime.now(timezone.utc)
     scan_job.error_message = "Cancelled by user"
     
+    # Try to stop brain session if it exists
+    if scan_job.brain_session_id:
+        try:
+            from app.services.brain_client import get_brain_client
+            brain_client = get_brain_client()
+            await brain_client.stop_session(
+                session_id=scan_job.brain_session_id,
+                org_id=tenant.id,
+                project_id=scan_job.project_id,
+            )
+            logger.info(f"Stopped brain session {scan_job.brain_session_id} for cancelled scan {scan_id}")
+        except Exception as e:
+            logger.warning(f"Failed to stop brain session {scan_job.brain_session_id}: {e}")
+            # Don't fail the cancellation if we can't stop the brain session
+    
     # Try to revoke the Celery task if it exists
     if scan_job.celery_task_id:
         try:

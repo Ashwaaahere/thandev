@@ -1,5 +1,14 @@
 """
 Celery application configuration and tasks
+
+NOTE: Celery is used as a FALLBACK when the Brain Service is disabled or unavailable.
+When BRAIN_SERVICE_ENABLED=true (default), the Brain Service handles scan orchestration
+via Redis Streams and the Runner Service. Celery tasks are only triggered when:
+1. BRAIN_SERVICE_ENABLED=false, OR
+2. Brain session creation fails AND BRAIN_REQUIRED=false
+
+See backend/app/api/scans.py for the conditional logic that chooses between
+Brain sessions and Celery tasks.
 """
 from celery import Celery
 from app.core.config import settings
@@ -33,10 +42,17 @@ celery.conf.update(
 @celery.task(name="thandev.run_scan_task", bind=True, max_retries=10)
 def run_scan_task(self, scan_job_id: str, target_url: str, scan_level: str, user_id: str = None):
     """
-    Celery task to execute a security scan
+    Celery task to execute a security scan (FALLBACK MODE ONLY).
+    
+    NOTE: This task is only used when Brain Service is disabled or unavailable.
+    When Brain Service is enabled (default), scans are orchestrated via Redis Streams
+    and the Runner Service, not via Celery.
     
     This task delegates to the scan orchestrator's run_scan_for_job function,
     which handles the actual execution based on the scan level profile.
+    
+    Triggered from: backend/app/api/scans.py (create_scan/quick_scan endpoints)
+    when BRAIN_SERVICE_ENABLED=false or brain session creation fails.
     
     Args:
         scan_job_id: ID of the scan job

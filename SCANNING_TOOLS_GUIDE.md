@@ -54,8 +54,11 @@ This document describes the additional scanning tools used in Thandev and how th
 - **Wordlist Required**: ❌ No
 - **How it executes**:
   ```bash
-  sqlmap -u <target_url> --batch --risk=1 --level=1 --timeout=10 --time-sec=5 --random-agent -v 0 --output-dir <output_dir>
+  sqlmap -u <target_url> --batch --risk=1 --level=1 --timeout=10 --time-sec=5 --random-agent -v 0 --forms --crawl 2 --output-dir <output_dir>
   ```
+  - `--forms`: Auto-detect and test POST forms (e.g., login.php with POST parameters)
+  - `--crawl 2`: Discover parameters by crawling if forms are not detected
+  - This allows detection of SQL injection in both GET parameters and POST form fields
 - **Installation**:
   ```bash
   pip install sqlmap
@@ -130,6 +133,8 @@ The system automatically detects tools in this order:
 3. System PATH
 
 Tools are verified before execution to ensure the correct binaries are found.
+
+
 
 
 

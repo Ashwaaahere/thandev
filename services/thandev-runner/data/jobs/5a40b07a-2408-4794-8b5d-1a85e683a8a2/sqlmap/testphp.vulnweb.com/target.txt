@@ -1,0 +1,3 @@
+http://testphp.vulnweb.com/search.php?test=query (POST)  # /home/shree/ashwath/thandev/backend/.venv/bin/sqlmap -u http://testphp.vulnweb.com/login.php --batch --risk=1 --level=1 --timeout=10 --time-sec=5 --random-agent -v 0 --forms --output-dir data/jobs/5a40b07a-2408-4794-8b5d-1a85e683a8a2/sqlmap
+
+searchFor=TbTK&goButton=go
