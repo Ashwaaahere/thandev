@@ -4,6 +4,10 @@ primary_region = "iad"
 
 [build]
 
+[deploy]
+  # Run migrations during deployment, not on every boot
+  release_command = "python init_db.py && alembic upgrade head"
+
 [env]
   PORT = "8000"
 

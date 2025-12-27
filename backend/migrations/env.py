@@ -60,23 +60,27 @@ def run_migrations_online() -> None:
                 connection=connection, target_metadata=target_metadata
             )
 
-            # Use autocommit mode for PostgreSQL to avoid transaction abort issues
-            # when indexes/tables already exist
-            if connectable.dialect.name == 'postgresql':
-                # For PostgreSQL, use autocommit to allow individual operations to succeed/fail independently
-                connection = connectable.connect()
-                connection.execution_options(autocommit=True)
-                context.configure(
-                    connection=connection, target_metadata=target_metadata
-                )
+            with context.begin_transaction():
                 context.run_migrations()
-                connection.close()
-            else:
-                # For SQLite and others, use transaction as before
-                with context.begin_transaction():
-                    context.run_migrations()
     except Exception as e:
-        logger.error(f"Migration failed: {e}", exc_info=True)
+        # Log the original exception with full traceback
+        import traceback
+        logger.error("=" * 80)
+        logger.error("MIGRATION FAILED - Original Exception:")
+        logger.error(f"Exception type: {type(e).__name__}")
+        logger.error(f"Exception message: {str(e)}")
+        logger.error("Full traceback:")
+        logger.error(traceback.format_exc())
+        logger.error("=" * 80)
+        
+        # If this is a chained exception (from another exception), log the original
+        if e.__cause__:
+            logger.error("Original cause:")
+            logger.error(f"  Type: {type(e.__cause__).__name__}")
+            logger.error(f"  Message: {str(e.__cause__)}")
+            if hasattr(e.__cause__, 'orig'):
+                logger.error(f"  SQLAlchemy orig: {e.__cause__.orig}")
+        
         # Provide user-friendly error message
         error_msg = str(e)
         if "connection" in error_msg.lower() or "connect" in error_msg.lower():
@@ -92,7 +96,7 @@ def run_migrations_online() -> None:
         else:
             raise RuntimeError(
                 f"Migration error: {error_msg}. "
-                f"Check the logs for more details."
+                f"Check the logs above for the original exception details."
             ) from e
 
 

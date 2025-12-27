@@ -82,5 +82,6 @@ HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Start the application
-# Run database initialization and migrations, then start the server
-CMD ["sh", "-c", "python init_db.py && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+# Note: Migrations run via Fly.io release_command, not on every boot
+# This ensures migrations run once per deploy, not on every machine restart
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
