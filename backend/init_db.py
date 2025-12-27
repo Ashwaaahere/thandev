@@ -16,20 +16,26 @@ from app.models import (
     PerformanceScan, Notification, AuditLog, AllowedDomain
 )
 
-# Import legacy models from old app/models.py file (not the directory)
-# These models are still used by some routers
+# Import legacy models from old app/models.py file
+# Note: Python will import from app/models/__init__.py first, so we need to
+# explicitly import the old models.py file. We'll use a workaround by importing
+# the module with a different name to avoid conflicts.
 try:
-    # Import the old models.py file directly (not the package)
-    import importlib.util
+    # Import legacy models by importing the models.py file directly
+    # We need to import it in a way that doesn't conflict with the models package
+    import sys
     import os
-    models_file = os.path.join(os.path.dirname(__file__), 'app', 'models.py')
-    if os.path.exists(models_file):
-        spec = importlib.util.spec_from_file_location("app_models_legacy", models_file)
-        legacy_models = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(legacy_models)
-        # Access the models from the loaded module
-        ThreatItem = getattr(legacy_models, 'ThreatItem', None)
-        PerformanceScanJob = getattr(legacy_models, 'PerformanceScanJob', None)
+    models_py_path = os.path.join(os.path.dirname(__file__), 'app', 'models.py')
+    if os.path.exists(models_py_path):
+        # Read and exec the file to load legacy models
+        with open(models_py_path, 'r') as f:
+            code = f.read()
+        # Create a namespace for the legacy models
+        legacy_namespace = {'__file__': models_py_path}
+        exec(code, legacy_namespace)
+        # The models are now in legacy_namespace
+        ThreatItem = legacy_namespace.get('ThreatItem')
+        PerformanceScanJob = legacy_namespace.get('PerformanceScanJob')
     else:
         ThreatItem = None
         PerformanceScanJob = None
