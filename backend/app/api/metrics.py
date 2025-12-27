@@ -82,6 +82,54 @@ async def get_dashboard_overview(
             detail="X-Thandev-User-Id header is required"
         )
     
+    # Check if project_id column exists in scan_jobs table
+    from sqlalchemy import inspect
+    try:
+        inspector = inspect(db.bind)
+        scan_jobs_columns = [col['name'] for col in inspector.get_columns('scan_jobs')] if 'scan_jobs' in inspector.get_table_names() else []
+        has_project_id = 'project_id' in scan_jobs_columns
+        logger.info(f"Metrics overview: scan_jobs has project_id column: {has_project_id}")
+    except Exception as e:
+        logger.warning(f"Could not check scan_jobs columns: {e}, assuming project_id exists")
+        has_project_id = True  # Assume it exists and let the query fail if it doesn't
+    
+    if not has_project_id:
+        logger.warning("scan_jobs table does not have project_id column yet, returning empty metrics")
+        # Return empty metrics if column doesn't exist
+        from app.schemas.metrics import (
+            TotalsMetrics,
+            RecentActivityMetrics,
+            FindingsBySeverityMetrics,
+        )
+        return DashboardOverviewMetrics(
+            total_scans=0,
+            security_scans=0,
+            performance_scans=0,
+            vulnerabilities_found=0,
+            avg_security_score=0.0,
+            scans_this_month=0,
+            recent_scans=[],
+            latest_scans=[],
+            totals=TotalsMetrics(
+                total_projects=0,
+                total_scans=0,
+                total_findings=0,
+                total_vulnerabilities=0,
+            ),
+            recent_activity=RecentActivityMetrics(
+                scans_today=0,
+                scans_this_week=0,
+                scans_this_month=0,
+            ),
+            findings_by_severity=FindingsBySeverityMetrics(
+                critical=0,
+                high=0,
+                medium=0,
+                low=0,
+                info=0,
+            ),
+        )
+    
     try:
         # Base query for scans for this tenant and user
         # Use outerjoin to handle cases where project_id might be NULL (from old schema)
@@ -98,7 +146,7 @@ async def get_dashboard_overview(
         )
     except Exception as e:
         logger.error(f"Error creating scans_query: {type(e).__name__}: {str(e)}", exc_info=True)
-        # If project_id column doesn't exist, return empty results
+        # If query fails, return empty results
         scans_query = db.query(ScanJob).filter(False)  # Empty query
     
     # Base query for projects for this tenant and user
