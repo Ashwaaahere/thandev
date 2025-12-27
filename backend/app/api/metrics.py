@@ -191,11 +191,20 @@ async def get_dashboard_overview(
         has_scan_level = True  # Assume it exists and let the query fail if it doesn't
     
     # Total scans (all ScanJob entries for this tenant)
-    # Use func.count() to avoid loading all columns
+    # Use direct count on id to avoid loading all columns
     try:
-        total_scans = db.query(func.count(ScanJob.id)).select_from(
-            scans_query.subquery()
-        ).scalar() or 0
+        # Create a simple count query using the same filters but only selecting id
+        count_query = (
+            db.query(func.count(ScanJob.id))
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
+        )
+        total_scans = count_query.scalar() or 0
     except Exception as e:
         logger.error(f"Error counting scans: {type(e).__name__}: {str(e)}", exc_info=True)
         db.rollback()
@@ -205,11 +214,20 @@ async def get_dashboard_overview(
     performance_scans = 0  # Placeholder for future Lighthouse work
     
     # Vulnerabilities found (count of Finding rows for this tenant and user)
-    # Use func.count() to avoid loading all columns (including raw_data which might not exist)
+    # Use direct count on id to avoid loading all columns (including raw_data which might not exist)
     try:
-        vulnerabilities_found = db.query(func.count(Finding.id)).select_from(
-            findings_query.subquery()
-        ).scalar() or 0
+        count_query = (
+            db.query(func.count(Finding.id))
+            .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
+        )
+        vulnerabilities_found = count_query.scalar() or 0
     except Exception as e:
         logger.error(f"Error counting findings: {type(e).__name__}: {str(e)}", exc_info=True)
         db.rollback()
@@ -219,15 +237,21 @@ async def get_dashboard_overview(
     # For completed scans with risk_score, convert to score = 100 - risk_score
     # Use with_entities to only select columns that exist
     try:
-        # Only select columns that exist (id, status, summary) to avoid scan_level
+        # Only select columns that exist (status, summary) to avoid scan_level
         completed_scans_query = (
-            scans_query
-            .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary)
-            .filter(ScanJob.status == ScanStatus.COMPLETED)
+            db.query(ScanJob.status, ScanJob.summary)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id,
+                ScanJob.status == ScanStatus.COMPLETED
+            )
         )
         completed_scan_rows = completed_scans_query.all()
         # Convert to a simple structure for processing
-        completed_scans = [type('Scan', (), {'id': row[0], 'status': row[1], 'summary': row[2]})() for row in completed_scan_rows]
+        completed_scans = [type('Scan', (), {'status': row[0], 'summary': row[1]})() for row in completed_scan_rows]
     except Exception as fetch_error:
         logger.warning(f"Error fetching completed scans, likely due to missing columns: {fetch_error}")
         db.rollback()
@@ -252,11 +276,19 @@ async def get_dashboard_overview(
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     try:
-        # Use func.count() to avoid loading all columns
-        scans_this_month_query = scans_query.filter(ScanJob.created_at >= month_start)
-        scans_this_month = db.query(func.count(ScanJob.id)).select_from(
-            scans_this_month_query.subquery()
-        ).scalar() or 0
+        # Use direct count to avoid loading all columns
+        count_query = (
+            db.query(func.count(ScanJob.id))
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id,
+                ScanJob.created_at >= month_start
+            )
+        )
+        scans_this_month = count_query.scalar() or 0
     except Exception as count_error:
         logger.error(f"Error counting scans this month: {count_error}", exc_info=True)
         db.rollback()
@@ -333,9 +365,22 @@ async def get_dashboard_overview(
             completed_at=scan_job.completed_at,
         ))
     
-    # Phase 2: Totals
-    total_projects = projects_query.count()
-    total_findings = findings_query.count()
+    # Phase 2: Totals - use func.count to avoid loading all columns
+    try:
+        total_projects = projects_query.count()
+    except Exception as e:
+        logger.error(f"Error counting projects: {type(e).__name__}: {str(e)}", exc_info=True)
+        db.rollback()
+        total_projects = 0
+    
+    try:
+        total_findings = db.query(func.count(Finding.id)).select_from(
+            findings_query.subquery()
+        ).scalar() or 0
+    except Exception as e:
+        logger.error(f"Error counting total findings: {type(e).__name__}: {str(e)}", exc_info=True)
+        db.rollback()
+        total_findings = 0
     
     totals = TotalsMetrics(
         projects=total_projects,
@@ -370,13 +415,26 @@ async def get_dashboard_overview(
     )
     
     # Phase 2: Findings by severity (only open findings)
-    findings_by_severity_counts = (
-        findings_query
-        .filter(Finding.status == FindingStatus.OPEN)
-        .with_entities(Finding.severity, func.count(Finding.id))
-        .group_by(Finding.severity)
-        .all()
-    )
+    # Use direct query to avoid loading all columns
+    try:
+        findings_by_severity_counts = (
+            db.query(Finding.severity, func.count(Finding.id))
+            .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+            .outerjoin(Project, ScanJob.project_id == Project.id)
+            .filter(
+                ScanJob.project_id.isnot(None),
+                Project.id.isnot(None),
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id,
+                Finding.status == FindingStatus.OPEN
+            )
+            .group_by(Finding.severity)
+            .all()
+        )
+    except Exception as e:
+        logger.error(f"Error counting findings by severity: {type(e).__name__}: {str(e)}", exc_info=True)
+        db.rollback()
+        findings_by_severity_counts = []
     
     findings_by_severity_dict = {
         Severity.CRITICAL.value: 0,
