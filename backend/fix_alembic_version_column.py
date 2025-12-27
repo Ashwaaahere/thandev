@@ -43,47 +43,23 @@ def fix_alembic_version_column():
             
             # Check if we need to alter it (for PostgreSQL)
             if settings.DATABASE_URL.startswith('postgresql'):
-                # Check if it's VARCHAR(32) or similar small size
-                # PostgreSQL allows ALTER COLUMN TYPE even with data if new type is larger
-                if 'varying(32)' in col_type.lower() or 'character varying(32)' in col_type.lower():
-                    print(f"Current column type: {col_type}")
-                    print("Altering alembic_version.version_num to VARCHAR(255)...")
-                    try:
-                        conn.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
-                        print("✓ Successfully altered column to VARCHAR(255)")
-                    except Exception as e:
-                        print(f"Warning: Could not alter column: {e}")
-                        # Auto-commit mode means no rollback needed
-                elif 'varying' in col_type.lower():
-                    # Check if it's already large enough
-                    if '255' in col_type or 'text' in col_type.lower():
-                        print(f"Column already large enough: {col_type}")
+                # Always try to alter to VARCHAR(255) - PostgreSQL allows this even with data
+                # Using USING clause to ensure safe conversion
+                print(f"Current column type: {col_type}")
+                print("Altering alembic_version.version_num to VARCHAR(255)...")
+                try:
+                    # Use USING clause for safe conversion - works even if column already has data
+                    conn.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255) USING version_num::VARCHAR(255)"))
+                    print("✓ Successfully altered column to VARCHAR(255)")
+                except Exception as e:
+                    error_str = str(e).lower()
+                    # If column is already VARCHAR(255) or larger, PostgreSQL might error or succeed silently
+                    # Check if error suggests it's already correct
+                    if 'already' in error_str or 'duplicate' in error_str or 'does not exist' in error_str:
+                        print(f"Column may already be correct size: {col_type}")
                     else:
-                        # Try to extract size - if less than 50, alter to 255 to be safe
-                        # Extract number from VARCHAR(n) pattern
-                        import re
-                        match = re.search(r'varying\((\d+)\)', col_type.lower())
-                        if match:
-                            size = int(match.group(1))
-                            if size < 50:
-                                print(f"Column type: {col_type}, altering to VARCHAR(255) to be safe...")
-                                try:
-                                    conn.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
-                                    print("✓ Successfully altered column to VARCHAR(255)")
-                                except Exception as e:
-                                    print(f"Warning: Could not alter column: {e}")
-                            else:
-                                print(f"Column type {col_type} should be large enough")
-                        else:
-                            # Can't determine size, alter to 255 to be safe
-                            print(f"Column type: {col_type}, altering to VARCHAR(255) to be safe...")
-                            try:
-                                conn.execute(text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(255)"))
-                                print("✓ Successfully altered column to VARCHAR(255)")
-                            except Exception as e:
-                                print(f"Warning: Could not alter column: {e}")
-                else:
-                    print(f"Column type {col_type} doesn't need alteration")
+                        print(f"Warning: Could not alter column: {e}")
+                        # Don't fail - let migration handle it if needed
             else:
                 # SQLite - VARCHAR has no length limit
                 print(f"Using SQLite - no column length limit needed (current type: {col_type})")
