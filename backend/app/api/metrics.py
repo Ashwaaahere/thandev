@@ -80,12 +80,14 @@ async def get_dashboard_overview(
         )
     
     # Base query for scans for this tenant and user
-    # Filter out scan_jobs without project_id (NULL values from old schema)
+    # Use outerjoin to handle cases where project_id might be NULL (from old schema)
+    # Then filter to only include scan_jobs with valid projects
     scans_query = (
         db.query(ScanJob)
-        .join(Project, ScanJob.project_id == Project.id)
+        .outerjoin(Project, ScanJob.project_id == Project.id)
         .filter(
             ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
+            Project.id.isnot(None),  # Ensure project exists
             Project.tenant_id == tenant.id,
             Project.owner_id == current_user.id
         )
@@ -101,13 +103,15 @@ async def get_dashboard_overview(
     )
     
     # Base query for findings for this tenant and user
-    # Filter out scan_jobs without project_id (NULL values from old schema)
+    # Use outerjoin to handle cases where project_id might be NULL (from old schema)
+    # Then filter to only include findings from scan_jobs with valid projects
     findings_query = (
         db.query(Finding)
         .join(ScanJob, Finding.scan_job_id == ScanJob.id)
-        .join(Project, ScanJob.project_id == Project.id)
+        .outerjoin(Project, ScanJob.project_id == Project.id)
         .filter(
             ScanJob.project_id.isnot(None),  # Exclude scan_jobs without project_id
+            Project.id.isnot(None),  # Ensure project exists
             Project.tenant_id == tenant.id,
             Project.owner_id == current_user.id
         )
