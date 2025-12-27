@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     # CORS
     # For development, allow localhost:3000 (Next.js frontend) to call this backend
     # Also allow 127.0.0.1:3000 in case browser resolves localhost differently
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://thandev.com"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001,https://thandev.com,https://thandev.vercel.app"
     
     # Environment
     ENVIRONMENT: str = "development"

@@ -37,6 +37,8 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
     try:
         env_lower = settings.ENVIRONMENT.strip().lower()
         self_service_enabled = _is_self_service_enabled()
+        
+        logger.info(f"Bootstrap request: provider={payload.provider}, external_user_id={payload.external_user_id}, email={payload.email}, env={env_lower}, self_service_enabled={self_service_enabled}")
 
         # Find by external identity first
         user: User | None = (
@@ -51,11 +53,14 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
         # Fallback: match by email if external mapping missing
         if not user:
             user = db.query(User).filter(User.email == payload.email).first()
+            if user:
+                logger.info(f"Bootstrap: Found user by email: {user.id}")
 
         created = False
 
         # If no user and self-service disabled in production, block creation
         if not user and env_lower == "production" and not self_service_enabled:
+            logger.warning(f"Bootstrap 403: Self-service signup disabled in production. provider={payload.provider}, email={payload.email}")
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Self-service signup is disabled. Please contact support.",
@@ -124,6 +129,7 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
         if not tenant:
             if env_lower == "production" and not self_service_enabled and created:
                 # If creation was already blocked above this shouldn't happen, but guard anyway
+                logger.warning(f"Bootstrap 403: Self-service tenant creation disabled. user_id={user.id}, email={payload.email}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Self-service tenant creation is disabled.",

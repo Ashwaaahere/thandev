@@ -11,7 +11,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "0015_domain_verification_and_root_domain"
-down_revision = "0014_add_external_identity_to_users"
+down_revision = "0014b_create_core_tables_pre_0015"
 branch_labels = None
 depends_on = None
 
