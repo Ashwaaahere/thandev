@@ -31,7 +31,8 @@ class DomainVerification(Base):
     tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     domain = Column(String(255), nullable=False, index=True)  # registrable domain (eTLD+1)
-    status = Column(SQLEnum(DomainVerificationStatus, name="domain_verification_status"), nullable=False)
+    # Use native_enum=False to store as VARCHAR, ensuring enum values (lowercase) are used
+    status = Column(SQLEnum(DomainVerificationStatus, name="domain_verification_status", native_enum=False, create_constraint=False), nullable=False)
     token = Column(String(255), nullable=False)
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)

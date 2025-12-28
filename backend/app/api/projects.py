@@ -406,7 +406,8 @@ def request_domain_verification(
         )
 
     dv = get_or_create_verification(db, project, domain)
-    if payload.force_rotate or dv.status != DomainVerificationStatus.PENDING:
+    # Compare against value since DB stores string
+    if payload.force_rotate or (dv.status != DomainVerificationStatus.PENDING.value and dv.status != DomainVerificationStatus.PENDING):
         dv = rotate_token(db, dv)
 
     return _domain_verification_response(project, dv)

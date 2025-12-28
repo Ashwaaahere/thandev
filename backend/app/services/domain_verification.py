@@ -49,7 +49,7 @@ def get_or_create_verification(db, project: Project, domain: str) -> DomainVerif
         project_id=project.id,
         tenant_id=project.tenant_id,
         domain=domain,
-        status=DomainVerificationStatus.PENDING,
+        status=DomainVerificationStatus.PENDING.value,  # Use .value to get the lowercase string
         token=generate_token(),
     )
     db.add(dv)
@@ -60,7 +60,7 @@ def get_or_create_verification(db, project: Project, domain: str) -> DomainVerif
 
 def rotate_token(db, dv: DomainVerification) -> DomainVerification:
     dv.token = generate_token()
-    dv.status = DomainVerificationStatus.PENDING
+    dv.status = DomainVerificationStatus.PENDING.value  # Use .value for lowercase string
     dv.verified_at = None
     dv.last_checked_at = None
     dv.last_error = None
@@ -71,7 +71,7 @@ def rotate_token(db, dv: DomainVerification) -> DomainVerification:
 
 def mark_expired_if_needed(db, dv: DomainVerification) -> DomainVerification:
     if dv.expires_at and dv.expires_at < _now_utc():
-        dv.status = DomainVerificationStatus.EXPIRED
+        dv.status = DomainVerificationStatus.EXPIRED.value  # Use .value for lowercase string
         db.commit()
         db.refresh(dv)
     return dv
@@ -79,7 +79,8 @@ def mark_expired_if_needed(db, dv: DomainVerification) -> DomainVerification:
 
 def verify_dns_token(db, dv: DomainVerification, timeout: int = 5, tries: int = 2) -> DomainVerification:
     dv = mark_expired_if_needed(db, dv)
-    if dv.status == DomainVerificationStatus.EXPIRED:
+    # Compare against value since DB stores string
+    if dv.status == DomainVerificationStatus.EXPIRED.value or dv.status == DomainVerificationStatus.EXPIRED:
         return dv
 
     record_name = build_record_name(dv.domain)
@@ -111,7 +112,7 @@ def verify_dns_token(db, dv: DomainVerification, timeout: int = 5, tries: int = 
 
     dv.last_checked_at = _now_utc()
     if matched:
-        dv.status = DomainVerificationStatus.VERIFIED
+        dv.status = DomainVerificationStatus.VERIFIED.value  # Use .value for lowercase string
         dv.verified_at = dv.last_checked_at
         dv.last_error = None
     else:
@@ -204,7 +205,8 @@ def enforce_domain_verification_for_scan(
         .order_by(DomainVerification.created_at.desc())
         .first()
     )
-    if not dv or dv.status != DomainVerificationStatus.VERIFIED:
+    # Compare against value since DB stores string
+    if not dv or (dv.status != DomainVerificationStatus.VERIFIED.value and dv.status != DomainVerificationStatus.VERIFIED):
         # Return structured error response
         error_detail = {
             "code": "DOMAIN_NOT_VERIFIED",

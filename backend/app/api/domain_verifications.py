@@ -223,8 +223,8 @@ def start_domain_verification(
     # Get or create verification
     dv = get_or_create_verification(db, project, root_domain)
     
-    # If already verified, return that status
-    if dv.status == DomainVerificationStatus.VERIFIED:
+    # If already verified, return that status (compare against value since DB stores string)
+    if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
         return DomainVerificationStartResponse(
             verification_id=dv.id,
             project_id=project.id,
@@ -301,8 +301,8 @@ def check_domain_verification(
             detail="Either verification_id or root_domain must be provided",
         )
     
-    # If already verified, return immediately
-    if dv.status == DomainVerificationStatus.VERIFIED:
+    # If already verified, return immediately (compare against value since DB stores string)
+    if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
         return DomainVerificationCheckResponse(
             status="VERIFIED",
             verified_at=dv.verified_at.isoformat() if dv.verified_at else None,
