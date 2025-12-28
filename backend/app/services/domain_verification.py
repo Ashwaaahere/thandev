@@ -37,6 +37,9 @@ def normalize_domain_from_host(host: str) -> Optional[str]:
 
 
 def get_or_create_verification(db, project: Project, domain: str) -> DomainVerification:
+    import logging
+    logger = logging.getLogger(__name__)
+    
     dv = (
         db.query(DomainVerification)
         .filter(DomainVerification.project_id == project.id, DomainVerification.domain == domain)
@@ -44,17 +47,31 @@ def get_or_create_verification(db, project: Project, domain: str) -> DomainVerif
         .first()
     )
     if dv:
+        logger.info(f"Found existing verification for {domain}: id={dv.id}, status={dv.status}")
         return dv
+    
+    # Create new verification with lowercase status
+    status_value = DomainVerificationStatus.PENDING.value  # This is "pending" (lowercase)
+    token = generate_token()
+    
+    logger.info(f"Creating new verification for {domain}: status={status_value}, token={token[:10]}...")
+    
     dv = DomainVerification(
         project_id=project.id,
         tenant_id=project.tenant_id,
         domain=domain,
-        status=DomainVerificationStatus.PENDING.value,  # Use .value to get the lowercase string
-        token=generate_token(),
+        status=status_value,  # Use .value to get the lowercase string "pending"
+        token=token,
     )
     db.add(dv)
-    db.commit()
-    db.refresh(dv)
+    try:
+        db.commit()
+        db.refresh(dv)
+        logger.info(f"Successfully created verification: id={dv.id}, status={dv.status}")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to commit verification: {e}", exc_info=True)
+        raise
     return dv
 
 

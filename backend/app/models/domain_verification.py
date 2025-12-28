@@ -35,16 +35,31 @@ class DomainVerificationStatusType(TypeDecorator):
     
     def process_bind_param(self, value, dialect):
         """Convert enum to lowercase string value when inserting"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
         if value is None:
             return None
+        
+        # Handle enum object
         if isinstance(value, DomainVerificationStatus):
-            return value.value  # Return lowercase string
+            result = value.value  # This is "pending", "verified", etc. (lowercase)
+            logger.debug(f"TypeDecorator: converted enum {value} to value '{result}'")
+            return result
+        
+        # Handle string - ensure it's lowercase
         if isinstance(value, str):
-            return value.lower()  # Ensure lowercase
-        return str(value).lower()
+            result = value.lower()
+            logger.debug(f"TypeDecorator: converted string '{value}' to lowercase '{result}'")
+            return result
+        
+        # Fallback: convert to string and lowercase
+        result = str(value).lower()
+        logger.debug(f"TypeDecorator: converted {type(value)} '{value}' to lowercase string '{result}'")
+        return result
     
     def process_result_value(self, value, dialect):
-        """Convert string back to enum when reading"""
+        """Convert string back when reading"""
         if value is None:
             return None
         # Return as string - comparisons will handle both enum and string

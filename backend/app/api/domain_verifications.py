@@ -161,88 +161,123 @@ def start_domain_verification(
     - Creates or reuses PENDING verification
     - Returns TXT record name and value
     """
-    if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-Thandev-User-Id header is required",
-        )
-    
-    target_url = str(payload.url)
-    root_domain = normalize_domain_from_url(target_url)
-    
-    if not root_domain:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unable to determine registrable domain from URL",
-        )
-    
-    # Check if domain is allowlisted
-    if _check_allowed_domain(db, tenant, root_domain):
-        # Find or create project for allowlisted domain
-        project = _get_or_create_project_for_domain(db, tenant, current_user, root_domain, target_url)
-        
-        return DomainVerificationStartResponse(
-            verification_id="",  # No verification needed
-            project_id=project.id,
-            root_domain=root_domain,
-            txt_name="",
-            txt_value="",
-            status="ALLOWLISTED",
-            message="Demo target - DNS verification not required",
-        )
-    
-    # Get or create project
-    if payload.project_id:
-        # Use provided project if it exists and belongs to tenant
-        project = (
-            db.query(Project)
-            .filter(
-                Project.id == payload.project_id,
-                Project.tenant_id == tenant.id,
-            )
-            .first()
-        )
-        if not project:
+    try:
+        if not current_user:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found or access denied",
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Thandev-User-Id header is required",
             )
-        # Ensure root_domain matches
-        if project.root_domain and project.root_domain != root_domain:
+        
+        target_url = str(payload.url)
+        logger.info(f"Starting domain verification for URL: {target_url}, tenant: {tenant.id}, user: {current_user.id}")
+        
+        root_domain = normalize_domain_from_url(target_url)
+        
+        if not root_domain:
+            logger.warning(f"Unable to determine root_domain from URL: {target_url}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Project root_domain ({project.root_domain}) does not match URL root_domain ({root_domain})",
+                detail="Unable to determine registrable domain from URL",
             )
-        if not project.root_domain:
-            project.root_domain = root_domain
-            db.commit()
-            db.refresh(project)
-    else:
-        project = _get_or_create_project_for_domain(db, tenant, current_user, root_domain, target_url)
-    
-    # Get or create verification
-    dv = get_or_create_verification(db, project, root_domain)
-    
-    # If already verified, return that status (compare against value since DB stores string)
-    if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
-        return DomainVerificationStartResponse(
+        
+        logger.info(f"Extracted root_domain: {root_domain}")
+        
+        # Check if domain is allowlisted
+        if _check_allowed_domain(db, tenant, root_domain):
+            logger.info(f"Domain {root_domain} is allowlisted")
+            # Find or create project for allowlisted domain
+            project = _get_or_create_project_for_domain(db, tenant, current_user, root_domain, target_url)
+            
+            return DomainVerificationStartResponse(
+                verification_id="",  # No verification needed
+                project_id=project.id,
+                root_domain=root_domain,
+                txt_name="",
+                txt_value="",
+                status="ALLOWLISTED",
+                message="Demo target - DNS verification not required",
+            )
+        
+        # Get or create project
+        if payload.project_id:
+            # Use provided project if it exists and belongs to tenant
+            project = (
+                db.query(Project)
+                .filter(
+                    Project.id == payload.project_id,
+                    Project.tenant_id == tenant.id,
+                )
+                .first()
+            )
+            if not project:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found or access denied",
+                )
+            # Ensure root_domain matches
+            if project.root_domain and project.root_domain != root_domain:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Project root_domain ({project.root_domain}) does not match URL root_domain ({root_domain})",
+                )
+            if not project.root_domain:
+                project.root_domain = root_domain
+                db.commit()
+                db.refresh(project)
+        else:
+            project = _get_or_create_project_for_domain(db, tenant, current_user, root_domain, target_url)
+        
+        logger.info(f"Using project: {project.id}, root_domain: {project.root_domain}")
+        
+        # Get or create verification
+        try:
+            dv = get_or_create_verification(db, project, root_domain)
+            logger.info(f"Verification record: id={dv.id}, status={dv.status}, token={dv.token[:10]}...")
+        except Exception as e:
+            logger.error(f"Failed to get_or_create_verification: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to create verification record: {str(e)}",
+            )
+        
+        # Build TXT record name and value
+        txt_name = build_record_name(root_domain)
+        txt_value = dv.token
+        
+        logger.info(f"TXT record - name: {txt_name}, value: {txt_value[:20]}...")
+        
+        # If already verified, return that status (compare against value since DB stores string)
+        if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
+            logger.info(f"Domain {root_domain} already verified")
+            return DomainVerificationStartResponse(
+                verification_id=dv.id,
+                project_id=project.id,
+                root_domain=root_domain,
+                txt_name=txt_name,
+                txt_value=txt_value,
+                status="VERIFIED",
+            )
+        
+        # Return PENDING status with TXT record info
+        logger.info(f"Returning PENDING status for {root_domain} with TXT record")
+        response = DomainVerificationStartResponse(
             verification_id=dv.id,
             project_id=project.id,
             root_domain=root_domain,
-            txt_name=build_record_name(root_domain),
-            txt_value=dv.token,
-            status="VERIFIED",
+            txt_name=txt_name,
+            txt_value=txt_value,
+            status="PENDING",
         )
-    
-    # Return PENDING status with TXT record info
-    return DomainVerificationStartResponse(
-        verification_id=dv.id,
-        project_id=project.id,
-        root_domain=root_domain,
-        txt_name=build_record_name(root_domain),
-        txt_value=dv.token,
-        status="PENDING",
-    )
+        logger.info(f"Response: verification_id={response.verification_id}, txt_name={response.txt_name}, txt_value={response.txt_value[:20]}...")
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in start_domain_verification: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
+        )
 
 
 @router.post("/check", response_model=DomainVerificationCheckResponse, status_code=status.HTTP_200_OK)
