@@ -27,12 +27,14 @@ def _create_project(db_session, tenant_id, user_id, target_url="http://example.c
 
 
 def _create_dv(db_session, project, status=DomainVerificationStatus.PENDING, token="tok-123"):
+    # Use .value to ensure lowercase string is stored
+    status_value = status.value if hasattr(status, 'value') else status
     dv = DomainVerification(
         id=str(uuid.uuid4()),
         tenant_id=project.tenant_id,
         project_id=project.id,
         domain=project.root_domain,
-        status=status,
+        status=status_value,
         token=token,
     )
     db_session.add(dv)

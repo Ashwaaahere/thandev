@@ -28,7 +28,7 @@ def _mk_project(db: Session, tenant_id: str, user_id: str, url: str, root: str =
             tenant_id=tenant_id,
             project_id=project.id,
             domain="example.com",
-            status=DomainVerificationStatus.VERIFIED,
+            status=DomainVerificationStatus.VERIFIED.value,  # Use .value for lowercase string
             token="t",
         )
         db.add(dv)
