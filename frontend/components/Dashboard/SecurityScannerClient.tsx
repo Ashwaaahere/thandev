@@ -145,12 +145,34 @@ export default function SecurityScannerClient() {
 
     setLoadingUrls(true);
     try {
-      // Use the new targets endpoint
+      // Check verification status before loading URLs
+      const isAdmin = Boolean(session.user?.isAdmin);
+      const project = projects.find(p => p.id === projectId);
+      const isAllowed = project?.root_domain && allowedDomains.some(ad => 
+        ad.domain === project.root_domain.toLowerCase()
+      );
+      
+      // Only load URLs if domain is verified, allowlisted, or user is admin
+      if (!isAdmin && !isAllowed) {
+        // Check if domain is verified
+        if (!dvStatus || dvStatus.status !== 'verified') {
+          console.log('Domain not verified, not loading URLs. Status:', dvStatus?.status);
+          setExistingUrls([]);
+          setSelectedUrl('');
+          setUrlSelectionMode('new');
+          setNewUrlForProject('https://');
+          setLoadingUrls(false);
+          return;
+        }
+      }
+      
+      // Use the new targets endpoint (backend will also filter)
       const urls = await thandevFetchJSON<string[]>(
         `/api/projects/${projectId}/targets`,
         session
       );
       
+      console.log('Loaded URLs for project:', projectId, 'URLs:', urls);
       setExistingUrls(urls || []);
       
       // If we have URLs, select the first one by default
@@ -171,7 +193,7 @@ export default function SecurityScannerClient() {
     } finally {
       setLoadingUrls(false);
     }
-  }, [session]);
+  }, [session, dvStatus, projects, allowedDomains]);
 
   // Load URLs when project is selected - but only if domain is verified
   useEffect(() => {
