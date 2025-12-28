@@ -305,6 +305,44 @@ export default function SecurityScannerClient() {
   useEffect(() => {
     if (selectedMode === 'existing' && selectedProjectId) {
       const isAdmin = Boolean(session?.user?.isAdmin);
+      const project = projects.find(p => p.id === selectedProjectId);
+      const isAllowed = project?.root_domain && allowedDomains.some(ad => 
+        ad.domain === project.root_domain.toLowerCase()
+      );
+      
+      console.log('Checking URL visibility:', {
+        projectId: selectedProjectId,
+        rootDomain: project?.root_domain,
+        isAdmin,
+        isAllowed,
+        dvStatus: dvStatus?.status,
+        existingUrlsCount: existingUrls.length
+      });
+      
+      // If domain is not verified and not allowlisted (and not admin), clear URLs
+      if (!isAdmin && !isAllowed) {
+        if (!dvStatus || dvStatus.status !== 'verified') {
+          // Domain not verified or verification deleted - clear URLs immediately
+          console.log('Domain not verified or verification deleted, clearing URLs. dvStatus:', dvStatus?.status);
+          if (existingUrls.length > 0) {
+            setExistingUrls([]);
+            setSelectedUrl('');
+            setUrlSelectionMode('new');
+            setNewUrlForProject('https://');
+          }
+        } else {
+          console.log('Domain is verified, URLs can be shown. Status:', dvStatus.status);
+        }
+      } else {
+        console.log('Domain is allowlisted or user is admin, URLs can be shown');
+      }
+    }
+  }, [dvStatus, selectedProjectId, selectedMode, session, allowedDomains, projects, existingUrls.length]);
+  
+  // Clear URLs when verification status changes to unverified or deleted
+  useEffect(() => {
+    if (selectedMode === 'existing' && selectedProjectId) {
+      const isAdmin = Boolean(session?.user?.isAdmin);
       const isAllowed = allowedDomains.some(ad => {
         const project = projects.find(p => p.id === selectedProjectId);
         if (!project?.root_domain) return false;
