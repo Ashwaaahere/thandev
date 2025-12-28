@@ -608,12 +608,22 @@ export default function SecurityScannerClient() {
       }
       if (!isAdmin) {
         if (!preparedProjectId || preparedProjectId !== selectedProjectId) {
-          setError('Prepare domain verification first.');
+          setError('Domain verification required. Please verify domain ownership before scanning.');
           return;
         }
-        if (!allowedForTargetUrl && dvStatus && dvStatus.status !== 'verified') {
-          setError('Domain not verified. Please add DNS TXT and verify.');
-          return;
+        if (!allowedForTargetUrl) {
+          if (!verificationData) {
+            setError('Domain verification required. Please verify domain ownership before scanning.');
+            return;
+          }
+          if (verificationData.status === 'PENDING') {
+            setError('Domain verification is pending. Please complete DNS verification before scanning.');
+            return;
+          }
+          if (verificationData.status !== 'VERIFIED' && verificationData.status !== 'ALLOWLISTED') {
+            setError('Domain not verified. Please add DNS TXT record and verify domain ownership before scanning.');
+            return;
+          }
         }
       }
     }
