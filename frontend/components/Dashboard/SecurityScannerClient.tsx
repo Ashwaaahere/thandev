@@ -200,7 +200,7 @@ export default function SecurityScannerClient() {
     }
   }, [session]);
 
-  const loadDomainVerification = useCallback(async (projectId: string) => {
+  const loadDomainVerification = useCallback(async (projectId: string, autoCreate: boolean = true) => {
     if (!session || !projectId) {
       setDvStatus(null);
       return;
@@ -213,17 +213,29 @@ export default function SecurityScannerClient() {
         session
       );
       setDvStatus(res);
-    } catch (err) {
-      // If not found, request token
-      try {
-        const req = await thandevFetchJSON<DomainVerificationStatus>(
-          `/api/projects/${projectId}/domain-verification/request`,
-          session,
-          { method: 'POST' }
-        );
-        setDvStatus(req);
-      } catch (e) {
-        console.error('DV load failed', e);
+    } catch (err: any) {
+      // If not found (404), only auto-create if requested (not after deletion)
+      if (err?.message?.includes('404') || err?.message?.includes('not found')) {
+        if (autoCreate) {
+          // Auto-create only when explicitly requested (e.g., on project selection)
+          try {
+            const req = await thandevFetchJSON<DomainVerificationStatus>(
+              `/api/projects/${projectId}/domain-verification/request`,
+              session,
+              { method: 'POST' }
+            );
+            setDvStatus(req);
+          } catch (e) {
+            console.log('No domain verification found (expected after deletion)');
+            setDvStatus(null);
+          }
+        } else {
+          // Don't auto-create - just clear state (e.g., after deletion)
+          console.log('No domain verification found, clearing state');
+          setDvStatus(null);
+        }
+      } else {
+        console.error('DV load failed', err);
         setDvStatus(null);
       }
     } finally {
@@ -419,18 +431,11 @@ export default function SecurityScannerClient() {
         setTargetUrl('');
       }
       
-      // Clear dvStatus for existing project tab
+      // Clear dvStatus for existing project tab - DO NOT reload, just clear state
+      // Reloading would trigger get_or_create_verification which creates a new one!
       if (dvStatus) {
         setDvStatus(null);
-        // Reload domain verification to get fresh state (should return null/404 after deletion)
-        if (selectedProjectId) {
-          try {
-            await loadDomainVerification(selectedProjectId);
-          } catch (e) {
-            // Expected - verification was deleted, so 404 is fine
-            console.log('Verification deleted, status cleared');
-          }
-        }
+        console.log('Verification deleted, state cleared. Not reloading to prevent auto-creation.');
       }
     } catch (e: any) {
       console.error('Failed to delete verification:', e);
@@ -1029,7 +1034,11 @@ export default function SecurityScannerClient() {
                                 </span>
                                 <button
                                   type="button"
-                                  onClick={deleteDomainVerification}
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    deleteDomainVerification();
+                                  }}
                                   className="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
                                   title="Remove this pending verification"
                                 >
