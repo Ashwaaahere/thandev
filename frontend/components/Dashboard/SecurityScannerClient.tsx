@@ -29,9 +29,13 @@ type DomainVerificationStatus = {
   project_id: string;
   domain: string;
   status: string;
-  challenge_name: string;
-  challenge_value: string;
+  token: string;
+  record_name: string;
+  record_value: string;
   last_checked_at?: string;
+  verified_at?: string;
+  expires_at?: string;
+  last_error?: string;
 };
 
 type DomainVerificationStartResponse = {
@@ -1147,8 +1151,8 @@ export default function SecurityScannerClient() {
                     {dvStatus.status !== 'verified' && (
                       <div className="text-xs space-y-1" style={{ color: 'var(--muted)' }}>
                         <div>Add this TXT record to verify:</div>
-                        <div className="font-mono text-sm text-gray-200">{dvStatus.challenge_name}</div>
-                        <div className="font-mono text-sm text-gray-200">{dvStatus.challenge_value}</div>
+                        <div className="font-mono text-sm text-gray-200">TXT Name: {dvStatus.record_name}</div>
+                        <div className="font-mono text-sm text-gray-200">TXT Value: {dvStatus.record_value}</div>
                         <div className="text-yellow-400 text-xs mt-1">Scanning is disabled until domain is verified.</div>
                         <button
                           type="button"
