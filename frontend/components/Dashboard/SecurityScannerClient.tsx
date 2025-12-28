@@ -348,15 +348,30 @@ export default function SecurityScannerClient() {
   };
 
   const deleteDomainVerification = async () => {
-    if (!session || !verificationData) return;
+    if (!session) return;
     
     if (!confirm('Are you sure you want to remove this pending verification? You can start a new verification anytime.')) {
       return;
     }
     
     try {
+      // Determine which verification to delete
+      let verificationId: string | null = null;
+      
+      if (verificationData && verificationData.verification_id) {
+        // Delete from new target tab
+        verificationId = verificationData.verification_id;
+      } else if (dvStatus && dvStatus.id) {
+        // Delete from existing project tab
+        verificationId = dvStatus.id;
+      }
+      
+      if (!verificationId) {
+        throw new Error('No verification ID found');
+      }
+      
       await thandevFetchJSON(
-        `/api/domain-verifications/${verificationData.verification_id}`,
+        `/api/domain-verifications/${verificationId}`,
         session,
         {
           method: 'DELETE',
@@ -364,15 +379,25 @@ export default function SecurityScannerClient() {
       );
       
       // Clear verification data and reset state
-      setVerificationData(null);
-      setPreparedProjectId(null);
-      if (verificationPollInterval) {
-        clearInterval(verificationPollInterval);
-        setVerificationPollInterval(null);
+      if (verificationData) {
+        setVerificationData(null);
+        setPreparedProjectId(null);
+        if (verificationPollInterval) {
+          clearInterval(verificationPollInterval);
+          setVerificationPollInterval(null);
+        }
+        // Reset target URL input
+        setTargetUrl('');
       }
       
-      // Reset target URL input
-      setTargetUrl('');
+      // Clear dvStatus for existing project tab
+      if (dvStatus) {
+        setDvStatus(null);
+        // Reload domain verification to get fresh state
+        if (selectedProjectId) {
+          await loadDomainVerification(selectedProjectId);
+        }
+      }
     } catch (e: any) {
       console.error('Failed to delete verification:', e);
       setError(e?.message || 'Failed to delete verification');
@@ -1067,15 +1092,27 @@ export default function SecurityScannerClient() {
                       <div className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
                         Domain verification
                       </div>
-                      <span
-                        className="text-xs px-2 py-1 rounded"
-                        style={{
-                          background: dvStatus.status === 'verified' ? '#065f46' : '#92400e',
-                          color: 'white',
-                        }}
-                      >
-                        {dvStatus.status}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="text-xs px-2 py-1 rounded"
+                          style={{
+                            background: dvStatus.status === 'verified' ? '#065f46' : '#92400e',
+                            color: 'white',
+                          }}
+                        >
+                          {dvStatus.status}
+                        </span>
+                        {dvStatus.status === 'pending' && (
+                          <button
+                            type="button"
+                            onClick={deleteDomainVerification}
+                            className="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
+                            title="Remove this pending verification"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
                     </div>
                     {dvStatus.status !== 'verified' && (
                       <div className="text-xs space-y-1" style={{ color: 'var(--muted)' }}>
