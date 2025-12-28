@@ -81,7 +81,7 @@ A: Not currently. Scans must be initiated manually through the dashboard.
 A: Scans will fall back to default tool configurations, but AI-powered planning won't be available.
 
 **Q: Can I integrate Thandev with my CI/CD pipeline?**  
-A: Not currently. Thandev doesn't provide native CI/CD integrations, but API access may be available for custom integrations.
+A: Not currently. Thandev doesn't provide native CI/CD integrations.
 
 ---
 
