@@ -34,6 +34,23 @@ type DomainVerificationStatus = {
   last_checked_at?: string;
 };
 
+type DomainVerificationStartResponse = {
+  verification_id: string;
+  project_id: string;
+  root_domain: string;
+  txt_name: string;
+  txt_value: string;
+  status: 'PENDING' | 'VERIFIED' | 'ALLOWLISTED';
+  message?: string;
+};
+
+type DomainVerificationCheckResponse = {
+  status: string;
+  verified_at?: string;
+  last_checked_at?: string;
+  last_check_error?: string;
+};
+
 type AllowedDomain = {
   id: string;
   domain: string;
@@ -79,6 +96,11 @@ export default function SecurityScannerClient() {
   const [preparedProjectId, setPreparedProjectId] = useState<string>('');
   const [allowedDomains, setAllowedDomains] = useState<AllowedDomain[]>([]);
   
+  // New target verification state
+  const [verificationData, setVerificationData] = useState<DomainVerificationStartResponse | null>(null);
+  const [verificationChecking, setVerificationChecking] = useState(false);
+  const [verificationPollInterval, setVerificationPollInterval] = useState<NodeJS.Timeout | null>(null);
+  
   // New state for URL selection in existing project mode
   const [existingUrls, setExistingUrls] = useState<string[]>([]);
   const [loadingUrls, setLoadingUrls] = useState(false);
@@ -119,38 +141,16 @@ export default function SecurityScannerClient() {
 
     setLoadingUrls(true);
     try {
-      // Get project details to fetch its target_url
-      const projectRes = await thandevFetchJSON<ProjectListItem>(
-        `/api/projects/${projectId}`,
+      // Use the new targets endpoint
+      const urls = await thandevFetchJSON<string[]>(
+        `/api/projects/${projectId}/targets`,
         session
       );
       
-      const urls: string[] = [];
-      
-      // Add project's default target_url if available
-      if (projectRes?.target_url) {
-        urls.push(projectRes.target_url);
-      }
-      
-      // Try to fetch scan history to get other URLs that were scanned
-      try {
-        const scansRes = await thandevFetchJSON<{ items: ScanItem[] }>(
-          `/api/scans?project_id=${projectId}&limit=50`,
-          session
-        );
-        
-        // Note: Scan items might not have target_url directly in the response
-        // For now, we primarily use the project's target_url
-        // The API can handle both project_id and target_url when creating scans
-      } catch (scanErr) {
-        // Ignore scan fetch errors, we'll still use project target_url
-        console.debug('Could not fetch scan history for URLs', scanErr);
-      }
-      
-      setExistingUrls(urls);
+      setExistingUrls(urls || []);
       
       // If we have URLs, select the first one by default
-      if (urls.length > 0) {
+      if (urls && urls.length > 0) {
         setSelectedUrl(urls[0]);
         setUrlSelectionMode('existing');
       } else {
@@ -256,7 +256,7 @@ export default function SecurityScannerClient() {
     }
   };
 
-  const prepareNewTarget = async () => {
+  const startDomainVerification = async () => {
     if (!session) return;
     const trimmed = targetUrl.trim();
     if (!trimmed) {
@@ -269,30 +269,151 @@ export default function SecurityScannerClient() {
     }
     setSubmitting(true);
     setError(null);
+    setVerificationData(null);
+    
     try {
-      const payload = {
-        name: deriveProjectName(trimmed),
-        target_url: trimmed,
-      };
-      const project = await thandevFetchJSON<{ id: string }>(
-        '/api/projects',
+      const response = await thandevFetchJSON<DomainVerificationStartResponse>(
+        '/api/domain-verifications/start',
         session,
         {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ url: trimmed }),
         }
       );
-      setPreparedProjectId(project.id);
-      setSelectedProjectId(project.id);
-      await loadDomainVerification(project.id);
-      loadProjects();
-      setSelectedMode('existing'); // move to existing once prepared
+      
+      setVerificationData(response);
+      setPreparedProjectId(response.project_id);
+      
+      // If allowlisted, automatically proceed
+      if (response.status === 'ALLOWLISTED') {
+        // Add URL to project targets
+        try {
+          await thandevFetchJSON(
+            `/api/projects/${response.project_id}/targets`,
+            session,
+            {
+              method: 'POST',
+              body: JSON.stringify({ url: trimmed }),
+            }
+          );
+        } catch (e) {
+          console.warn('Failed to add URL to project targets', e);
+        }
+        
+        // Switch to existing project tab
+        setSelectedProjectId(response.project_id);
+        await loadProjects();
+        await loadExistingUrls(response.project_id);
+        setSelectedMode('existing');
+        setVerificationData(null);
+      } else if (response.status === 'VERIFIED') {
+        // Already verified, add URL and switch
+        try {
+          await thandevFetchJSON(
+            `/api/projects/${response.project_id}/targets`,
+            session,
+            {
+              method: 'POST',
+              body: JSON.stringify({ url: trimmed }),
+            }
+          );
+        } catch (e) {
+          console.warn('Failed to add URL to project targets', e);
+        }
+        
+        setSelectedProjectId(response.project_id);
+        await loadProjects();
+        await loadExistingUrls(response.project_id);
+        setSelectedMode('existing');
+        setVerificationData(null);
+      }
+      // If PENDING, stay on new target tab and show TXT records
     } catch (e: any) {
-      setError(e?.message || 'Failed to prepare target or fetch verification');
+      setError(e?.message || 'Failed to start domain verification');
     } finally {
       setSubmitting(false);
     }
   };
+
+  const checkDomainVerification = async () => {
+    if (!session || !verificationData) return;
+    
+    setVerificationChecking(true);
+    try {
+      const response = await thandevFetchJSON<DomainVerificationCheckResponse>(
+        '/api/domain-verifications/check',
+        session,
+        {
+          method: 'POST',
+          body: JSON.stringify({ verification_id: verificationData.verification_id }),
+        }
+      );
+      
+      if (response.status === 'VERIFIED') {
+        // Update verification data
+        setVerificationData({ ...verificationData, status: 'VERIFIED' });
+        
+        // Add URL to project targets
+        try {
+          await thandevFetchJSON(
+            `/api/projects/${verificationData.project_id}/targets`,
+            session,
+            {
+              method: 'POST',
+              body: JSON.stringify({ url: targetUrl.trim() }),
+            }
+          );
+        } catch (e) {
+          console.warn('Failed to add URL to project targets', e);
+        }
+        
+        // Switch to existing project tab
+        setSelectedProjectId(verificationData.project_id);
+        await loadProjects();
+        await loadExistingUrls(verificationData.project_id);
+        setSelectedMode('existing');
+        setVerificationData(null);
+        
+        // Stop polling
+        if (verificationPollInterval) {
+          clearInterval(verificationPollInterval);
+          setVerificationPollInterval(null);
+        }
+      }
+    } catch (e: any) {
+      console.error('Failed to check verification', e);
+    } finally {
+      setVerificationChecking(false);
+    }
+  };
+
+  // Auto-poll when verification is pending
+  useEffect(() => {
+    if (verificationData && verificationData.status === 'PENDING' && !verificationPollInterval) {
+      const interval = setInterval(() => {
+          checkDomainVerification();
+        }, 15000); // Poll every 15 seconds
+      setVerificationPollInterval(interval);
+    } else if (verificationData && verificationData.status !== 'PENDING' && verificationPollInterval) {
+      clearInterval(verificationPollInterval);
+      setVerificationPollInterval(null);
+    }
+    
+    return () => {
+      if (verificationPollInterval) {
+        clearInterval(verificationPollInterval);
+      }
+    };
+  }, [verificationData, verificationPollInterval]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (verificationPollInterval) {
+        clearInterval(verificationPollInterval);
+      }
+    };
+  }, [verificationPollInterval]);
 
   const refreshVerification = useCallback(async () => {
     if (!session) return;
@@ -382,11 +503,13 @@ export default function SecurityScannerClient() {
           body.target_url = newUrlForProject.trim();
         }
       } else {
-        if (isAdmin) {
-        body.target_url = targetUrl.trim();
-        } else {
-          body.project_id = preparedProjectId;
+        // New target mode - must have verified project
+        if (!preparedProjectId) {
+          setError('Please verify domain ownership first');
+          return;
         }
+        body.project_id = preparedProjectId;
+        body.target_url = targetUrl.trim();
       }
 
       const scan = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
@@ -414,9 +537,22 @@ export default function SecurityScannerClient() {
           errorMessage = err;
         } else if (err?.message && typeof err.message === 'string') {
           errorMessage = err.message;
+          // Check for DOMAIN_NOT_VERIFIED error
+          if (err.message.includes('DOMAIN_NOT_VERIFIED') || err.message.includes('Verify domain ownership')) {
+            // Show error and suggest going to new target tab
+            setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+            setSelectedMode('new');
+            return;
+          }
         } else if (err?.error && typeof err.error === 'string') {
           errorMessage = err.error;
         } else if (typeof err === 'object') {
+          // Check for structured error response
+          if (err.detail && typeof err.detail === 'object' && err.detail.code === 'DOMAIN_NOT_VERIFIED') {
+            setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+            setSelectedMode('new');
+            return;
+          }
           // Try to stringify if it's an object, but limit length
           try {
             const errorStr = JSON.stringify(err);
@@ -720,12 +856,16 @@ export default function SecurityScannerClient() {
                 {selectedMode === 'new' && (
                   <div className="mb-6">
                     <label className="block text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
-                      Target URL (prepare DNS verification first)
+                      Target URL
                     </label>
                     <input
                       type="url"
                       value={targetUrl}
-                      onChange={(e) => setTargetUrl(e.target.value)}
+                      onChange={(e) => {
+                        setTargetUrl(e.target.value);
+                        setVerificationData(null);
+                        setError(null);
+                      }}
                       placeholder="https://example.com"
                       required
                       className="w-full px-3 py-2 rounded-lg border text-sm"
@@ -736,20 +876,112 @@ export default function SecurityScannerClient() {
                       }}
                     />
                     <p className="mt-1 text-xs" style={{ color: 'var(--muted)' }}>
-                      Example: https://example.com. We will create or reuse a project and issue a DNS TXT token.
+                      Enter the URL you want to scan. You'll need to verify domain ownership via DNS.
                     </p>
                     {!session.user?.isAdmin && (
                       <button
                         type="button"
-                        onClick={prepareNewTarget}
+                        onClick={startDomainVerification}
                         disabled={submitting}
-                        className="mt-4 px-4 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50"
+                        className="mt-4 px-4 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50 hover:opacity-90"
                       >
-                        {submitting ? 'Verifying...' : 'Verify domain ownership'}
+                        {submitting ? 'Starting verification...' : 'Verify domain ownership'}
                       </button>
                     )}
+                    
+                    {/* Verification Status */}
+                    {verificationData && (
+                      <div className="mt-4 p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+                        {verificationData.status === 'ALLOWLISTED' && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm font-medium text-emerald-400">✓ Demo domain approved</span>
+                            </div>
+                            <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                              {verificationData.message || 'This domain is allowlisted. DNS verification not required.'}
+                            </p>
+                          </div>
+                        )}
+                        
+                        {verificationData.status === 'VERIFIED' && (
+                          <div>
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="text-sm font-medium text-emerald-400">✓ Domain verified</span>
+                            </div>
+                            <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                              Your domain has been verified. You can now proceed to scan.
+                            </p>
+                          </div>
+                        )}
+                        
+                        {verificationData.status === 'PENDING' && (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <div className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
+                                Domain verification
+                              </div>
+                              <span className="text-xs px-2 py-1 rounded bg-yellow-900/50 text-yellow-200 border border-yellow-700">
+                                PENDING
+                              </span>
+                            </div>
+                            <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                              Add the following DNS TXT record to verify domain ownership:
+                            </p>
+                            <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: 'var(--muted)' }}>TXT Name:</div>
+                                <div className="font-mono text-sm flex items-center gap-2" style={{ color: 'var(--fg)' }}>
+                                  <span className="break-all">{verificationData.txt_name}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(verificationData.txt_name);
+                                    }}
+                                    className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:opacity-80"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              </div>
+                              <div>
+                                <div className="text-xs mb-1" style={{ color: 'var(--muted)' }}>TXT Value:</div>
+                                <div className="font-mono text-sm flex items-center gap-2" style={{ color: 'var(--fg)' }}>
+                                  <span className="break-all">{verificationData.txt_value}</span>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      navigator.clipboard.writeText(verificationData.txt_value);
+                                    }}
+                                    className="px-2 py-1 text-xs rounded bg-blue-600 text-white hover:opacity-80"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                            <p className="text-xs text-yellow-400">
+                              You must add this TXT record in DNS of this domain. Once added, click "Check verification" below.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={checkDomainVerification}
+                              disabled={verificationChecking}
+                              className="px-4 py-2 rounded bg-blue-600 text-white text-sm disabled:opacity-50 hover:opacity-90"
+                            >
+                              {verificationChecking ? 'Checking...' : 'Check verification'}
+                            </button>
+                            {verificationPollInterval && (
+                              <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                                Auto-checking every 15 seconds...
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    
                     {/* Admin allowlist visible to all users */}
-                    {allowedDomains.length > 0 && (
+                    {allowedDomains.length > 0 && !verificationData && (
                       <div className="mt-4 p-3 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
                         <div className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
                           Admin allowlist (pre-approved domains)
@@ -879,42 +1111,39 @@ export default function SecurityScannerClient() {
                   </div>
                 )}
 
-                {/* Actions (hidden for non-admin new target) */}
-                {!(!session.user?.isAdmin && selectedMode === 'new') && (
-                  <div className="flex items-center justify-between gap-4">
-                    <button
-                      type="submit"
-                      disabled={
-                        submitting ||
-                        (selectedMode === 'existing'
-                          ? (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
-                          : (
-                              session.user?.isAdmin
-                                ? !targetUrl.trim()
-                                : (!preparedProjectId || (!allowedForTargetUrl && dvStatus && dvStatus.status !== 'verified'))
-                            ))
-                      }
-                      className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
-                      style={{ background: 'var(--brand)' }}
-                    >
-                      {submitting ? (
-                        <span className="flex items-center gap-2">
-                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                          Starting scan...
-                        </span>
-                      ) : (
-                        'Start scan'
-                      )}
-                    </button>
-                    <Link
-                      href="/dashboard/history"
-                      className="text-sm font-medium hover:opacity-80 transition-opacity"
-                      style={{ color: 'var(--brand)' }}
-                    >
-                      View scan history
-                    </Link>
-                  </div>
-                )}
+                {/* Actions */}
+                <div className="flex items-center justify-between gap-4">
+                  <button
+                    type="submit"
+                    disabled={
+                      submitting ||
+                      (selectedMode === 'existing'
+                        ? (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
+                        : (
+                            !preparedProjectId || 
+                            (verificationData && verificationData.status !== 'VERIFIED' && verificationData.status !== 'ALLOWLISTED')
+                          ))
+                    }
+                    className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+                    style={{ background: 'var(--brand)' }}
+                  >
+                    {submitting ? (
+                      <span className="flex items-center gap-2">
+                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                        Starting scan...
+                      </span>
+                    ) : (
+                      'Start scan'
+                    )}
+                  </button>
+                  <Link
+                    href="/dashboard/history"
+                    className="text-sm font-medium hover:opacity-80 transition-opacity"
+                    style={{ color: 'var(--brand)' }}
+                  >
+                    View scan history
+                  </Link>
+                </div>
               </form>
             </div>
           </div>

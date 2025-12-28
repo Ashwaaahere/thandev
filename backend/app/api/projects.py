@@ -462,3 +462,178 @@ def get_domain_verification_status(
     dv = get_or_create_verification(db, project, domain)
     return _domain_verification_response(project, dv)
 
+
+# ---------------- Project Targets (URLs) ----------------
+
+
+@router.get("/{project_id}/targets", response_model=list[str])
+def list_project_targets(
+    project_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    List all URLs for this project.
+    Returns project's target_url and any URLs from scan history (stack_info).
+    Only returns URLs if the project's root_domain is verified or allowlisted.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required",
+        )
+    
+    project = _project_for_tenant_user(db, project_id, tenant, current_user)
+    
+    # Check if domain is verified or allowlisted
+    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    if not is_admin and project.root_domain:
+        # Check allowlist
+        from app.models.allowed_domain import AllowedDomain
+        import sqlalchemy as sa
+        allowed = (
+            db.query(AllowedDomain)
+            .filter(
+                AllowedDomain.enabled == True,  # noqa: E712
+                AllowedDomain.domain == project.root_domain.lower(),
+                sa.or_(AllowedDomain.scope == "global", AllowedDomain.tenant_id == tenant.id),
+            )
+            .first()
+        )
+        
+        if not allowed:
+            # Check verification
+            dv = (
+                db.query(DomainVerification)
+                .filter(
+                    DomainVerification.project_id == project.id,
+                    DomainVerification.domain == project.root_domain,
+                    DomainVerification.status == DomainVerificationStatus.VERIFIED,
+                )
+                .first()
+            )
+            
+            if not dv:
+                # Domain not verified - return empty list
+                return []
+    
+    # Collect URLs
+    urls = []
+    
+    # Add project's target_url
+    if project.target_url:
+        urls.append(project.target_url)
+    
+    # Get unique URLs from scan jobs' stack_info
+    from app.models.scan import ScanJob
+    scan_jobs = (
+        db.query(ScanJob.stack_info)
+        .filter(
+            ScanJob.project_id == project.id,
+            ScanJob.stack_info.isnot(None),
+        )
+        .all()
+    )
+    
+    for stack_info in scan_jobs:
+        if isinstance(stack_info[0], dict) and "target_url" in stack_info[0]:
+            url = stack_info[0]["target_url"]
+            if url and url not in urls:
+                urls.append(url)
+    
+    return urls
+
+
+@router.post("/{project_id}/targets", status_code=status.HTTP_201_CREATED)
+def add_project_target(
+    project_id: str,
+    payload: dict,  # Simple dict with "url" key
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Add a URL to a project's target list.
+    Validates that the URL's root_domain matches the project's root_domain.
+    Also checks domain verification status.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required",
+        )
+    
+    project = _project_for_tenant_user(db, project_id, tenant, current_user)
+    
+    if "url" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="url field is required",
+        )
+    
+    target_url = payload["url"]
+    if not isinstance(target_url, str) or not target_url.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="url must be a non-empty string",
+        )
+    
+    # Extract root_domain
+    root_domain = registrable_domain_from_url(target_url)
+    if not root_domain:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to determine registrable domain from URL",
+        )
+    
+    # Check root_domain matches project
+    if project.root_domain and project.root_domain != root_domain:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"URL root_domain ({root_domain}) does not match project root_domain ({project.root_domain})",
+        )
+    
+    # Check domain verification or allowlist
+    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    if not is_admin:
+        # Check allowlist
+        from app.models.allowed_domain import AllowedDomain
+        import sqlalchemy as sa
+        allowed = (
+            db.query(AllowedDomain)
+            .filter(
+                AllowedDomain.enabled == True,  # noqa: E712
+                AllowedDomain.domain == root_domain.lower(),
+                sa.or_(AllowedDomain.scope == "global", AllowedDomain.tenant_id == tenant.id),
+            )
+            .first()
+        )
+        
+        if not allowed:
+            # Check verification
+            dv = (
+                db.query(DomainVerification)
+                .filter(
+                    DomainVerification.project_id == project.id,
+                    DomainVerification.domain == root_domain,
+                    DomainVerification.status == DomainVerificationStatus.VERIFIED,
+                )
+                .first()
+            )
+            
+            if not dv:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "DOMAIN_NOT_VERIFIED",
+                        "root_domain": root_domain,
+                        "message": "Domain must be verified or allowlisted before adding URLs.",
+                    },
+                )
+    
+    # URL is valid - it will be tracked when a scan is created
+    # For now, just return success
+    # In the future, we could create a project_targets table to explicitly track URLs
+    return {"url": target_url, "message": "URL added to project"}
+

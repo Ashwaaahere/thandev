@@ -700,11 +700,14 @@ async def quick_scan(
     
     if settings.BRAIN_SERVICE_ENABLED:
         try:
+            # Use target_url from payload if provided, otherwise use project.target_url
+            scan_target_url = normalized_url if normalized_url else project.target_url
+            
             # Get stack_info (lightweight HTTP probe)
             stack_info = {}
             try:
                 import requests
-                resp = requests.head(project.target_url, timeout=5, allow_redirects=True)
+                resp = requests.head(scan_target_url, timeout=5, allow_redirects=True)
                 stack_info["http"] = {
                     "status_code": resp.status_code,
                     "headers": {
@@ -715,6 +718,9 @@ async def quick_scan(
             except Exception:
                 pass  # stack_info can be empty
             
+            # Store target_url in stack_info for tracking
+            stack_info["target_url"] = scan_target_url
+            
             # Convert enum to string value
             scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
             
@@ -722,7 +728,7 @@ async def quick_scan(
             brain_client = get_brain_client()
             session_response = await brain_client.start_session(
                 scan_job_id=scan_job.id,
-                target_url=project.target_url,
+                target_url=scan_target_url,
                 scan_level=scan_level_str,
                 org_id=tenant.id,
                 project_id=project.id,

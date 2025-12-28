@@ -25,7 +25,7 @@ def generate_token() -> str:
 
 
 def build_record_name(domain: str) -> str:
-    return f"_thandev-challenge.{domain}"
+    return f"_thandev.{domain}"
 
 
 def normalize_domain_from_url(url: str) -> Optional[str]:
@@ -115,7 +115,8 @@ def verify_dns_token(db, dv: DomainVerification, timeout: int = 5, tries: int = 
         dv.verified_at = dv.last_checked_at
         dv.last_error = None
     else:
-        dv.status = DomainVerificationStatus.FAILED
+        # Keep status as PENDING if not matched (don't set to FAILED immediately)
+        # User can retry by checking again
         dv.last_error = last_error or "TXT record not found or token mismatch"
 
     db.commit()
@@ -204,8 +205,14 @@ def enforce_domain_verification_for_scan(
         .first()
     )
     if not dv or dv.status != DomainVerificationStatus.VERIFIED:
+        # Return structured error response
+        error_detail = {
+            "code": "DOMAIN_NOT_VERIFIED",
+            "root_domain": registrable,
+            "message": "Verify domain ownership before scanning.",
+        }
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="DOMAIN_NOT_VERIFIED: Add DNS TXT record and verify before scanning.",
+            detail=error_detail,
         )
 
