@@ -673,6 +673,19 @@ def add_project_target(
                         "message": "Domain must be verified or allowlisted before adding URLs.",
                     },
                 )
+            
+            # Check status - must be VERIFIED (not PENDING, FAILED, or EXPIRED)
+            dv_status = dv.status.value if hasattr(dv.status, "value") else dv.status
+            if dv_status != DomainVerificationStatus.VERIFIED.value:
+                # Verification exists but is not VERIFIED - deny
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "code": "DOMAIN_NOT_VERIFIED",
+                        "root_domain": root_domain,
+                        "message": f"Domain verification is {dv_status}. Must be verified before adding URLs.",
+                    },
+                )
     
     # URL is valid - it will be tracked when a scan is created
     # For now, just return success
