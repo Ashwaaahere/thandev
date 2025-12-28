@@ -7,16 +7,27 @@ primary_region = "iad"
 [env]
   PORT = "8001"
 
-[http_service]
+# PRIVATE service - accessed via .internal DNS only
+# No [http_service] section to keep it private
+[[services]]
   internal_port = 8001
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 0
+  protocol = "tcp"
   processes = ["app"]
+  
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+    protocol = "http"
+
+[processes]
+  app = "uvicorn app.main:app --host 0.0.0.0 --port 8001"
 
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
-  memory_mb = 512
+  memory_mb = 2048
+  disk_size_gb = 15
 

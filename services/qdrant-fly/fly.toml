@@ -1,0 +1,30 @@
+# Fly.io configuration for Qdrant vector database
+app = "thandev-qdrant"
+primary_region = "iad"
+
+[build]
+  image = "qdrant/qdrant:v1.7.4"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+
+[[mounts]]
+  source = "qdrant_data"
+  destination = "/qdrant/storage"
+
+[env]
+  QDRANT__SERVICE__HTTP_PORT = "6333"
+
+# PRIVATE service - accessed via .internal DNS only
+# [[services]] required for .internal DNS routing
+# NO [http_service] section (keeps it private, no public access)
+[[services]]
+  internal_port = 6333
+  protocol = "tcp"
+  processes = ["app"]
+
+[processes]
+  app = "/qdrant/qdrant"
+
