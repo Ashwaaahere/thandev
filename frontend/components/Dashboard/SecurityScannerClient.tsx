@@ -1148,7 +1148,11 @@ export default function SecurityScannerClient() {
                         {dvStatus.status === 'pending' && (
                           <button
                             type="button"
-                            onClick={deleteDomainVerification}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              deleteDomainVerification();
+                            }}
                             className="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
                             title="Remove this pending verification"
                           >
