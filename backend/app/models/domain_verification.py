@@ -26,7 +26,8 @@ class DomainVerificationStatus(str, enum.Enum):
 
 
 class DomainVerificationStatusType(TypeDecorator):
-    """Custom type that ensures enum values (lowercase strings) are stored"""
+    """Custom type that ensures enum values (lowercase strings) are stored in PostgreSQL enum column"""
+    # Use String as base - we'll convert values to lowercase before they reach the database
     impl = String
     cache_ok = True
     
