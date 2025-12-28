@@ -514,7 +514,12 @@ def list_project_targets(
     
     # Check if domain is verified or allowlisted
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
-    if not is_admin and project.root_domain:
+    
+    # If no root_domain, return empty list (no URLs to show)
+    if not project.root_domain:
+        return []
+    
+    if not is_admin:
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa

@@ -431,11 +431,24 @@ export default function SecurityScannerClient() {
         setTargetUrl('');
       }
       
-      // Clear dvStatus for existing project tab - DO NOT reload, just clear state
+      // Clear dvStatus for existing project tab - DO NOT reload verification, just clear state
       // Reloading would trigger get_or_create_verification which creates a new one!
       if (dvStatus) {
         setDvStatus(null);
         console.log('Verification deleted, state cleared. Not reloading to prevent auto-creation.');
+        
+        // Reload existing URLs to filter out unverified domains
+        if (selectedProjectId) {
+          try {
+            await loadExistingUrls(selectedProjectId);
+            // Clear selected URL if it was from an unverified domain
+            setSelectedUrl('');
+            setUrlSelectionMode('new');
+            setNewUrlForProject('https://');
+          } catch (e) {
+            console.warn('Failed to reload URLs after deletion:', e);
+          }
+        }
       }
     } catch (e: any) {
       console.error('Failed to delete verification:', e);
@@ -568,9 +581,20 @@ export default function SecurityScannerClient() {
         }
       }
       
-      if (!isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified') {
-        setError('Domain not verified. Please add DNS TXT and verify.');
-        return;
+      // Check domain verification status
+      if (!isAdmin && !allowedForSelectedProject) {
+        if (!dvStatus) {
+          setError('Domain verification required. Please verify domain ownership before scanning.');
+          return;
+        }
+        if (dvStatus.status === 'pending') {
+          setError('Domain verification is pending. Please complete DNS verification before scanning.');
+          return;
+        }
+        if (dvStatus.status !== 'verified') {
+          setError('Domain not verified. Please add DNS TXT record and verify domain ownership before scanning.');
+          return;
+        }
       }
     } else {
       const trimmed = targetUrl.trim();
