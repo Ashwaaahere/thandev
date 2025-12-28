@@ -106,7 +106,14 @@ def list_projects(
 ):
     """
     List projects for the current user & tenant, including stats.
+    Only returns projects with verified or allowlisted domains.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # Check if user is admin
+    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    
     # base query: only this tenant + this user
     base_q = (
         db.query(Project)
@@ -117,14 +124,80 @@ def list_projects(
         .order_by(Project.created_at.desc())
     )
 
-    projects = base_q.offset(offset).limit(limit).all()
-    total = base_q.count()
+    all_projects = base_q.all()
+    
+    # Filter projects by verification status (unless admin)
+    filtered_projects = []
+    if is_admin:
+        # Admins see all projects
+        filtered_projects = all_projects
+        logger.info(f"Admin user, returning all {len(all_projects)} projects")
+    else:
+        # Check allowlist and verification for each project
+        from app.models.allowed_domain import AllowedDomain
+        import sqlalchemy as sa
+        
+        for p in all_projects:
+            # Skip projects without root_domain
+            if not p.root_domain:
+                logger.debug(f"Project {p.id} has no root_domain, skipping")
+                continue
+            
+            # Check if domain is allowlisted
+            allowed = (
+                db.query(AllowedDomain)
+                .filter(
+                    AllowedDomain.enabled == True,  # noqa: E712
+                    AllowedDomain.domain == p.root_domain.lower(),
+                    sa.or_(AllowedDomain.scope == "global", AllowedDomain.tenant_id == tenant.id),
+                )
+                .first()
+            )
+            
+            if allowed:
+                # Allowlisted domains can show projects
+                filtered_projects.append(p)
+                logger.debug(f"Project {p.id} ({p.root_domain}) is allowlisted, including")
+                continue
+            
+            # Check verification - must exist AND be VERIFIED
+            dv = (
+                db.query(DomainVerification)
+                .filter(
+                    DomainVerification.project_id == p.id,
+                    DomainVerification.domain == p.root_domain,
+                    DomainVerification.tenant_id == tenant.id,
+                )
+                .first()
+            )
+            
+            if not dv:
+                # No verification record exists (was deleted) - skip this project
+                logger.debug(f"Project {p.id} ({p.root_domain}) has no verification (deleted), skipping")
+                continue
+            
+            # Check status - must be VERIFIED (not PENDING, FAILED, or EXPIRED)
+            dv_status = dv.status.value if hasattr(dv.status, "value") else dv.status
+            if dv_status != DomainVerificationStatus.VERIFIED.value:
+                # Verification exists but is not VERIFIED - skip this project
+                logger.debug(f"Project {p.id} ({p.root_domain}) verification status is {dv_status} (not VERIFIED), skipping")
+                continue
+            
+            # Project is verified, include it
+            filtered_projects.append(p)
+            logger.debug(f"Project {p.id} ({p.root_domain}) is verified, including")
+        
+        logger.info(f"Filtered {len(all_projects)} projects to {len(filtered_projects)} verified/allowlisted projects")
+
+    # Apply pagination to filtered results
+    paginated_projects = filtered_projects[offset:offset + limit]
+    total = len(filtered_projects)
 
     # If you already have stats calculation in this file, keep that logic
     # and only wrap the result into ProjectListWithStatsResponse; this is
     # just a safe placeholder shape:
     items: list[ProjectWithStats] = []
-    for p in projects:
+    for p in paginated_projects:
         items.append(
             ProjectWithStats(
                 id=p.id,
