@@ -281,6 +281,18 @@ export default function SecurityScannerClient() {
         }
       );
       
+      console.log('Domain verification start response:', response);
+      
+      // Validate response has required fields
+      if (!response) {
+        throw new Error('Empty response from server');
+      }
+      
+      if (response.status === 'PENDING' && (!response.txt_name || !response.txt_value)) {
+        console.error('Invalid response: PENDING status but missing TXT record details', response);
+        throw new Error('Server returned PENDING status but missing TXT record details. Please try again.');
+      }
+      
       setVerificationData(response);
       setPreparedProjectId(response.project_id);
       
