@@ -51,18 +51,28 @@ def get_or_create_verification(db, project: Project, domain: str) -> DomainVerif
         return dv
     
     # Create new verification with lowercase status
+    # CRITICAL: Use .value to get lowercase string, and ensure it's actually lowercase
     status_value = DomainVerificationStatus.PENDING.value  # This is "pending" (lowercase)
+    # Double-check it's lowercase (defensive programming)
+    if status_value != status_value.lower():
+        logger.error(f"ERROR: status_value is not lowercase! Got: '{status_value}'")
+        status_value = status_value.lower()
+    
     token = generate_token()
     
-    logger.info(f"Creating new verification for {domain}: status={status_value}, token={token[:10]}...")
+    logger.info(f"Creating new verification for {domain}: status='{status_value}' (type: {type(status_value)}), token={token[:10]}...")
     
+    # Create the object - TypeDecorator should convert this to lowercase
     dv = DomainVerification(
         project_id=project.id,
         tenant_id=project.tenant_id,
         domain=domain,
-        status=status_value,  # Use .value to get the lowercase string "pending"
+        status=status_value,  # This should be "pending" (lowercase string)
         token=token,
     )
+    
+    # Log what we're about to insert
+    logger.info(f"DomainVerification object created: status attribute = '{dv.status}' (type: {type(dv.status)})")
     db.add(dv)
     try:
         db.commit()
