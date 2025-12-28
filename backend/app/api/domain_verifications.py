@@ -280,6 +280,56 @@ def start_domain_verification(
         )
 
 
+@router.delete("/{verification_id}", status_code=status.HTTP_200_OK)
+def delete_domain_verification(
+    verification_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a domain verification record.
+    
+    Only allows deletion of PENDING verifications for security.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required",
+        )
+    
+    # Find verification
+    dv = (
+        db.query(DomainVerification)
+        .filter(
+            DomainVerification.id == verification_id,
+            DomainVerification.tenant_id == tenant.id,
+        )
+        .first()
+    )
+    
+    if not dv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Verification not found or access denied",
+        )
+    
+    # Only allow deletion of PENDING verifications for security
+    # (Prevent accidental deletion of verified domains)
+    if dv.status != DomainVerificationStatus.PENDING.value and dv.status != DomainVerificationStatus.PENDING:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PENDING verifications can be deleted. Verified domains cannot be removed.",
+        )
+    
+    logger.info(f"Deleting verification {verification_id} for domain {dv.domain}, tenant {tenant.id}")
+    
+    db.delete(dv)
+    db.commit()
+    
+    return {"message": "Verification deleted successfully", "verification_id": verification_id}
+
+
 @router.post("/check", response_model=DomainVerificationCheckResponse, status_code=status.HTTP_200_OK)
 def check_domain_verification(
     payload: DomainVerificationCheckRequest,

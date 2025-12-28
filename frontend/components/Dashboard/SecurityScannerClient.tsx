@@ -347,6 +347,38 @@ export default function SecurityScannerClient() {
     }
   };
 
+  const deleteDomainVerification = async () => {
+    if (!session || !verificationData) return;
+    
+    if (!confirm('Are you sure you want to remove this pending verification? You can start a new verification anytime.')) {
+      return;
+    }
+    
+    try {
+      await thandevFetchJSON(
+        `/api/domain-verifications/${verificationData.verification_id}`,
+        session,
+        {
+          method: 'DELETE',
+        }
+      );
+      
+      // Clear verification data and reset state
+      setVerificationData(null);
+      setPreparedProjectId(null);
+      if (verificationPollInterval) {
+        clearInterval(verificationPollInterval);
+        setVerificationPollInterval(null);
+      }
+      
+      // Reset target URL input
+      setTargetUrl('');
+    } catch (e: any) {
+      console.error('Failed to delete verification:', e);
+      setError(e?.message || 'Failed to delete verification');
+    }
+  };
+
   const checkDomainVerification = async () => {
     if (!session || !verificationData) return;
     
@@ -932,9 +964,19 @@ export default function SecurityScannerClient() {
                               <div className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
                                 Domain verification
                               </div>
-                              <span className="text-xs px-2 py-1 rounded bg-yellow-900/50 text-yellow-200 border border-yellow-700">
-                                PENDING
-                              </span>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs px-2 py-1 rounded bg-yellow-900/50 text-yellow-200 border border-yellow-700">
+                                  PENDING
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={deleteDomainVerification}
+                                  className="text-xs px-2 py-1 rounded bg-red-600/20 text-red-400 border border-red-600/50 hover:bg-red-600/30 transition-colors"
+                                  title="Remove this pending verification"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </div>
                             <p className="text-xs" style={{ color: 'var(--muted)' }}>
                               Add the following DNS TXT record to verify domain ownership:
