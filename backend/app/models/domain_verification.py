@@ -9,6 +9,7 @@ from sqlalchemy import (
     Enum as SQLEnum,
     Text,
     Index,
+    TypeDecorator,
 )
 from sqlalchemy.sql import func
 import uuid
@@ -24,6 +25,32 @@ class DomainVerificationStatus(str, enum.Enum):
     EXPIRED = "expired"
 
 
+class DomainVerificationStatusType(TypeDecorator):
+    """Custom type that ensures enum values (lowercase strings) are stored"""
+    impl = String
+    cache_ok = True
+    
+    def __init__(self):
+        super().__init__(length=50)
+    
+    def process_bind_param(self, value, dialect):
+        """Convert enum to lowercase string value when inserting"""
+        if value is None:
+            return None
+        if isinstance(value, DomainVerificationStatus):
+            return value.value  # Return lowercase string
+        if isinstance(value, str):
+            return value.lower()  # Ensure lowercase
+        return str(value).lower()
+    
+    def process_result_value(self, value, dialect):
+        """Convert string back to enum when reading"""
+        if value is None:
+            return None
+        # Return as string - comparisons will handle both enum and string
+        return value
+
+
 class DomainVerification(Base):
     __tablename__ = "domain_verifications"
 
@@ -31,8 +58,9 @@ class DomainVerification(Base):
     tenant_id = Column(String(36), ForeignKey("tenants.id"), nullable=False, index=True)
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=False, index=True)
     domain = Column(String(255), nullable=False, index=True)  # registrable domain (eTLD+1)
-    # Use native PostgreSQL enum - SQLAlchemy will use enum.value automatically when we pass .value
-    status = Column(SQLEnum(DomainVerificationStatus, name="domain_verification_status", native_enum=True, create_constraint=True), nullable=False)
+    # Use custom TypeDecorator to ensure lowercase strings are stored
+    # This works with PostgreSQL enum columns by inserting the lowercase value
+    status = Column(DomainVerificationStatusType(), nullable=False)
     token = Column(String(255), nullable=False)
     last_checked_at = Column(DateTime(timezone=True), nullable=True)
     verified_at = Column(DateTime(timezone=True), nullable=True)
