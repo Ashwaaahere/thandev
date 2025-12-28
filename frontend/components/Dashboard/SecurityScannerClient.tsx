@@ -152,11 +152,20 @@ export default function SecurityScannerClient() {
         ad.domain === project.root_domain.toLowerCase()
       );
       
+      console.log('loadExistingUrls: Checking before API call', {
+        projectId,
+        rootDomain: project?.root_domain,
+        isAdmin,
+        isAllowed,
+        dvStatus: dvStatus?.status,
+        allowedDomains: allowedDomains.map(ad => ad.domain)
+      });
+      
       // Only load URLs if domain is verified, allowlisted, or user is admin
       if (!isAdmin && !isAllowed) {
         // Check if domain is verified
         if (!dvStatus || dvStatus.status !== 'verified') {
-          console.log('Domain not verified, not loading URLs. Status:', dvStatus?.status);
+          console.log('Domain not verified and not allowlisted, NOT loading URLs. Status:', dvStatus?.status, 'Root domain:', project?.root_domain);
           setExistingUrls([]);
           setSelectedUrl('');
           setUrlSelectionMode('new');
@@ -164,6 +173,9 @@ export default function SecurityScannerClient() {
           setLoadingUrls(false);
           return;
         }
+        console.log('Domain is verified, proceeding to load URLs');
+      } else {
+        console.log('Domain is allowlisted or user is admin, proceeding to load URLs');
       }
       
       // Use the new targets endpoint (backend will also filter)
