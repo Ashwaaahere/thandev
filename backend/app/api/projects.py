@@ -447,6 +447,12 @@ def get_domain_verification_status(
     tenant: Tenant = Depends(require_tenant),
     current_user: User = Depends(get_current_user),
 ):
+    """
+    Get domain verification status for a project.
+    
+    Returns existing verification if found, or 404 if not found.
+    Does NOT auto-create verification - use /request endpoint for that.
+    """
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -461,7 +467,25 @@ def get_domain_verification_status(
             detail="Project has no root_domain set. Request verification first.",
         )
 
-    dv = get_or_create_verification(db, project, domain)
+    # Only return existing verification - do NOT auto-create
+    # This prevents deleted verifications from being recreated automatically
+    dv = (
+        db.query(DomainVerification)
+        .filter(
+            DomainVerification.project_id == project.id,
+            DomainVerification.domain == domain,
+            DomainVerification.tenant_id == tenant.id,
+        )
+        .order_by(DomainVerification.created_at.desc())
+        .first()
+    )
+    
+    if not dv:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No domain verification found for this project. Use /request endpoint to create one.",
+        )
+
     return _domain_verification_response(project, dv)
 
 
