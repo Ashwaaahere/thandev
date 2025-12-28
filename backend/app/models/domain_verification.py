@@ -34,28 +34,32 @@ class DomainVerificationStatusType(TypeDecorator):
         super().__init__(length=50)
     
     def process_bind_param(self, value, dialect):
-        """Convert enum to lowercase string value when inserting"""
+        """Convert enum to lowercase string value when inserting - CRITICAL: always return lowercase"""
         import logging
         logger = logging.getLogger(__name__)
         
         if value is None:
             return None
         
-        # Handle enum object
+        # CRITICAL: Always convert to lowercase string
+        # Handle enum object - extract the value (which is already lowercase)
         if isinstance(value, DomainVerificationStatus):
             result = value.value  # This is "pending", "verified", etc. (lowercase)
-            logger.debug(f"TypeDecorator: converted enum {value} to value '{result}'")
+            logger.info(f"TypeDecorator: converted enum {value.name} to value '{result}'")
             return result
         
-        # Handle string - ensure it's lowercase
+        # Handle string - FORCE lowercase (in case somehow uppercase got through)
         if isinstance(value, str):
-            result = value.lower()
-            logger.debug(f"TypeDecorator: converted string '{value}' to lowercase '{result}'")
+            result = value.lower().strip()
+            if result != value:
+                logger.warning(f"TypeDecorator: converted uppercase string '{value}' to lowercase '{result}'")
+            else:
+                logger.debug(f"TypeDecorator: string '{value}' is already lowercase")
             return result
         
-        # Fallback: convert to string and lowercase
-        result = str(value).lower()
-        logger.debug(f"TypeDecorator: converted {type(value)} '{value}' to lowercase string '{result}'")
+        # Fallback: convert to string and FORCE lowercase
+        result = str(value).lower().strip()
+        logger.warning(f"TypeDecorator: converted {type(value)} '{value}' to lowercase string '{result}'")
         return result
     
     def process_result_value(self, value, dialect):
