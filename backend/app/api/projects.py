@@ -650,18 +650,21 @@ def add_project_target(
         )
         
         if not allowed:
-            # Check verification
+            # Check verification - must exist AND be VERIFIED
+            # If verification was deleted or is PENDING, deny adding URLs
             dv = (
                 db.query(DomainVerification)
                 .filter(
                     DomainVerification.project_id == project.id,
                     DomainVerification.domain == root_domain,
-                    DomainVerification.status == DomainVerificationStatus.VERIFIED,
+                    DomainVerification.tenant_id == tenant.id,
                 )
                 .first()
             )
             
+            # Only allow if verification exists AND is VERIFIED
             if not dv:
+                # No verification record exists (was deleted) - deny
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
