@@ -523,6 +523,9 @@ def list_project_targets(
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa
+        import logging
+        logger = logging.getLogger(__name__)
+        
         allowed = (
             db.query(AllowedDomain)
             .filter(
@@ -533,7 +536,10 @@ def list_project_targets(
             .first()
         )
         
-        if not allowed:
+        if allowed:
+            logger.info(f"Domain {project.root_domain} is allowlisted, returning URLs")
+            # Allowlisted domains can show URLs without verification
+        else:
             # Check verification - must exist AND be VERIFIED
             # If verification was deleted or is PENDING, return empty list
             dv = (
@@ -549,13 +555,17 @@ def list_project_targets(
             # Only return URLs if verification exists AND is VERIFIED
             if not dv:
                 # No verification record exists (was deleted) - return empty list
+                logger.info(f"Domain {project.root_domain} has no verification (deleted), returning empty list")
                 return []
             
             # Check status - must be VERIFIED (not PENDING, FAILED, or EXPIRED)
             dv_status = dv.status.value if hasattr(dv.status, "value") else dv.status
             if dv_status != DomainVerificationStatus.VERIFIED.value:
                 # Verification exists but is not VERIFIED - return empty list
+                logger.info(f"Domain {project.root_domain} verification status is {dv_status} (not VERIFIED), returning empty list")
                 return []
+            
+            logger.info(f"Domain {project.root_domain} is verified, returning URLs")
     
     # Collect URLs
     urls = []

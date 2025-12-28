@@ -498,26 +498,40 @@ export default function SecurityScannerClient() {
       // Clear dvStatus for existing project tab - DO NOT reload verification, just clear state
       // Reloading would trigger get_or_create_verification which creates a new one!
       if (dvStatus) {
+        const deletedDomain = dvStatus.domain;
         setDvStatus(null);
-        console.log('Verification deleted, state cleared. Not reloading to prevent auto-creation.');
+        console.log('Verification deleted for domain:', deletedDomain, 'State cleared. Not reloading to prevent auto-creation.');
         
         // IMMEDIATELY clear URLs state - don't wait for reload
-        setExistingUrls([]);
-        setSelectedUrl('');
-        setUrlSelectionMode('new');
-        setNewUrlForProject('https://');
+        // Check if domain is allowlisted - if not, clear URLs
+        const project = projects.find(p => p.id === selectedProjectId);
+        const isAllowed = project?.root_domain && allowedDomains.some(ad => 
+          ad.domain === project.root_domain.toLowerCase()
+        );
+        const isAdmin = Boolean(session?.user?.isAdmin);
         
-        // Then reload existing URLs to ensure backend filtering is applied
-        if (selectedProjectId) {
-          try {
-            await loadExistingUrls(selectedProjectId);
-            console.log('URLs reloaded after verification deletion');
-          } catch (e) {
-            console.warn('Failed to reload URLs after deletion:', e);
-            // Ensure state is cleared even if reload fails
-            setExistingUrls([]);
-            setSelectedUrl('');
+        // Only clear URLs if domain is NOT allowlisted (allowlisted domains don't need verification)
+        if (!isAdmin && !isAllowed) {
+          console.log('Domain is not allowlisted, clearing URLs after verification deletion');
+          setExistingUrls([]);
+          setSelectedUrl('');
+          setUrlSelectionMode('new');
+          setNewUrlForProject('https://');
+          
+          // Then reload existing URLs to ensure backend filtering is applied
+          if (selectedProjectId) {
+            try {
+              await loadExistingUrls(selectedProjectId);
+              console.log('URLs reloaded after verification deletion - should be empty');
+            } catch (e) {
+              console.warn('Failed to reload URLs after deletion:', e);
+              // Ensure state is cleared even if reload fails
+              setExistingUrls([]);
+              setSelectedUrl('');
+            }
           }
+        } else {
+          console.log('Domain is allowlisted or user is admin, keeping URLs');
         }
       }
     } catch (e: any) {
