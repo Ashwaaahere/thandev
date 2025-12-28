@@ -213,17 +213,27 @@ export default function SecurityScannerClient() {
       // Only load URLs if domain is verified or allowlisted
       // Check dvStatus to ensure we don't show URLs for unverified domains
       const isAdmin = Boolean(session?.user?.isAdmin);
-      const isAllowed = allowedDomains.some(ad => {
-        const project = projects.find(p => p.id === selectedProjectId);
-        if (!project?.root_domain) return false;
-        return ad.domain === project.root_domain.toLowerCase();
+      const project = projects.find(p => p.id === selectedProjectId);
+      const isAllowed = project?.root_domain && allowedDomains.some(ad => 
+        ad.domain === project.root_domain.toLowerCase()
+      );
+      
+      console.log('useEffect [selectedProjectId]: Checking URL loading', {
+        projectId: selectedProjectId,
+        rootDomain: project?.root_domain,
+        isAdmin,
+        isAllowed,
+        dvStatus: dvStatus?.status,
+        existingUrlsCount: existingUrls.length
       });
       
       // Only load URLs if: admin, allowlisted, or verified
       if (isAdmin || isAllowed || (dvStatus && dvStatus.status === 'verified')) {
+        console.log('Conditions met, loading URLs');
         loadExistingUrls(selectedProjectId);
       } else {
         // Domain not verified - clear URLs
+        console.log('Conditions NOT met, clearing URLs. isAdmin:', isAdmin, 'isAllowed:', isAllowed, 'dvStatus:', dvStatus?.status);
         setExistingUrls([]);
         setSelectedUrl('');
         setUrlSelectionMode('new');
@@ -236,7 +246,7 @@ export default function SecurityScannerClient() {
       setNewUrlForProject('');
       setUrlSelectionMode('existing');
     }
-  }, [selectedProjectId, selectedMode, loadExistingUrls, dvStatus, session, allowedDomains, projects]);
+  }, [selectedProjectId, selectedMode, loadExistingUrls, dvStatus, session, allowedDomains, projects, existingUrls.length]);
 
   const loadAllowedDomains = useCallback(async () => {
     if (!session) return;
