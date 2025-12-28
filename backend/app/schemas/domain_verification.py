@@ -13,6 +13,7 @@ class DomainVerificationRequest(BaseModel):
 
 class DomainVerificationStatusResponse(BaseModel):
     """Domain verification status response."""
+    id: str = Field(..., description="Verification record ID")
     project_id: str
     domain: str
     status: str

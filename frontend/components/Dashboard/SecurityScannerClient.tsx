@@ -358,17 +358,40 @@ export default function SecurityScannerClient() {
       // Determine which verification to delete
       let verificationId: string | null = null;
       
+      // Priority 1: Check verificationData (new target tab)
       if (verificationData && verificationData.verification_id) {
-        // Delete from new target tab
         verificationId = verificationData.verification_id;
-      } else if (dvStatus && dvStatus.id) {
-        // Delete from existing project tab
+        console.log('Using verification_id from verificationData:', verificationId);
+      } 
+      // Priority 2: Check dvStatus (existing project tab)
+      else if (dvStatus && dvStatus.id) {
         verificationId = dvStatus.id;
+        console.log('Using id from dvStatus:', verificationId);
+      }
+      // Priority 3: If we have project_id and domain, try to find verification
+      else if (selectedProjectId && targetUrl) {
+        console.log('Attempting to find verification by project and domain...');
+        // Try to get verification from project
+        try {
+          const projectDv = await thandevFetchJSON<DomainVerificationStatus>(
+            `/api/projects/${selectedProjectId}/domain-verification`,
+            session
+          );
+          if (projectDv && projectDv.id) {
+            verificationId = projectDv.id;
+            console.log('Found verification ID from project endpoint:', verificationId);
+          }
+        } catch (e) {
+          console.warn('Could not fetch verification from project:', e);
+        }
       }
       
       if (!verificationId) {
-        throw new Error('No verification ID found');
+        console.error('No verification ID found. verificationData:', verificationData, 'dvStatus:', dvStatus);
+        throw new Error('No verification ID found. Please try refreshing the page.');
       }
+      
+      console.log('Deleting verification with ID:', verificationId);
       
       await thandevFetchJSON(
         `/api/domain-verifications/${verificationId}`,
@@ -377,6 +400,8 @@ export default function SecurityScannerClient() {
           method: 'DELETE',
         }
       );
+      
+      console.log('Verification deleted successfully');
       
       // Clear verification data and reset state
       if (verificationData) {
@@ -393,9 +418,14 @@ export default function SecurityScannerClient() {
       // Clear dvStatus for existing project tab
       if (dvStatus) {
         setDvStatus(null);
-        // Reload domain verification to get fresh state
+        // Reload domain verification to get fresh state (should return null/404 after deletion)
         if (selectedProjectId) {
-          await loadDomainVerification(selectedProjectId);
+          try {
+            await loadDomainVerification(selectedProjectId);
+          } catch (e) {
+            // Expected - verification was deleted, so 404 is fine
+            console.log('Verification deleted, status cleared');
+          }
         }
       }
     } catch (e: any) {

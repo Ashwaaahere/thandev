@@ -359,6 +359,7 @@ def _domain_verification_response(project: Project, dv: DomainVerification) -> D
     token = dv.token
     record_name = build_record_name(domain)
     return DomainVerificationStatusResponse(
+        id=dv.id,  # Include verification ID
         project_id=project.id,
         domain=domain,
         status=dv.status.value if hasattr(dv.status, "value") else dv.status,
