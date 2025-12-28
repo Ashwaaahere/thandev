@@ -278,6 +278,30 @@ export default function SecurityScannerClient() {
       setDvStatus(null);
     }
   }, [selectedProjectId, loadDomainVerification]);
+  
+  // Clear URLs when verification status changes to unverified or deleted
+  useEffect(() => {
+    if (selectedMode === 'existing' && selectedProjectId) {
+      const isAdmin = Boolean(session?.user?.isAdmin);
+      const isAllowed = allowedDomains.some(ad => {
+        const project = projects.find(p => p.id === selectedProjectId);
+        if (!project?.root_domain) return false;
+        return ad.domain === project.root_domain.toLowerCase();
+      });
+      
+      // If domain is not verified and not allowlisted (and not admin), clear URLs
+      if (!isAdmin && !isAllowed) {
+        if (!dvStatus || dvStatus.status !== 'verified') {
+          // Domain not verified or verification deleted - clear URLs immediately
+          console.log('Domain not verified, clearing URLs. dvStatus:', dvStatus);
+          setExistingUrls([]);
+          setSelectedUrl('');
+          setUrlSelectionMode('new');
+          setNewUrlForProject('https://');
+        }
+      }
+    }
+  }, [dvStatus, selectedProjectId, selectedMode, session, allowedDomains, projects]);
 
   // New target flow removed for all users
 
