@@ -534,19 +534,27 @@ def list_project_targets(
         )
         
         if not allowed:
-            # Check verification
+            # Check verification - must exist AND be VERIFIED
+            # If verification was deleted or is PENDING, return empty list
             dv = (
                 db.query(DomainVerification)
                 .filter(
                     DomainVerification.project_id == project.id,
                     DomainVerification.domain == project.root_domain,
-                    DomainVerification.status == DomainVerificationStatus.VERIFIED,
+                    DomainVerification.tenant_id == tenant.id,
                 )
                 .first()
             )
             
+            # Only return URLs if verification exists AND is VERIFIED
             if not dv:
-                # Domain not verified - return empty list
+                # No verification record exists (was deleted) - return empty list
+                return []
+            
+            # Check status - must be VERIFIED (not PENDING, FAILED, or EXPIRED)
+            dv_status = dv.status.value if hasattr(dv.status, "value") else dv.status
+            if dv_status != DomainVerificationStatus.VERIFIED.value:
+                # Verification exists but is not VERIFIED - return empty list
                 return []
     
     # Collect URLs

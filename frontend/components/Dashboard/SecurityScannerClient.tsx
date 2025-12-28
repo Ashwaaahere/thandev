@@ -437,16 +437,22 @@ export default function SecurityScannerClient() {
         setDvStatus(null);
         console.log('Verification deleted, state cleared. Not reloading to prevent auto-creation.');
         
-        // Reload existing URLs to filter out unverified domains
+        // IMMEDIATELY clear URLs state - don't wait for reload
+        setExistingUrls([]);
+        setSelectedUrl('');
+        setUrlSelectionMode('new');
+        setNewUrlForProject('https://');
+        
+        // Then reload existing URLs to ensure backend filtering is applied
         if (selectedProjectId) {
           try {
             await loadExistingUrls(selectedProjectId);
-            // Clear selected URL if it was from an unverified domain
-            setSelectedUrl('');
-            setUrlSelectionMode('new');
-            setNewUrlForProject('https://');
+            console.log('URLs reloaded after verification deletion');
           } catch (e) {
             console.warn('Failed to reload URLs after deletion:', e);
+            // Ensure state is cleared even if reload fails
+            setExistingUrls([]);
+            setSelectedUrl('');
           }
         }
       }
