@@ -1,0 +1,86 @@
+name: Fly.io Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/thandev-brain/**'
+      - 'services/thandev-runner/**'
+      - 'services/qdrant-fly/**'
+      - 'backend/**'
+      - '.github/workflows/fly-deploy.yml'
+  workflow_dispatch:
+
+jobs:
+  detect-changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      brain: ${{ steps.filter.outputs.brain }}
+      runner: ${{ steps.filter.outputs.runner }}
+      qdrant: ${{ steps.filter.outputs.qdrant }}
+      backend: ${{ steps.filter.outputs.backend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v2
+        id: filter
+        with:
+          filters: |
+            brain:
+              - 'services/thandev-brain/**'
+            runner:
+              - 'services/thandev-runner/**'
+            qdrant:
+              - 'services/qdrant-fly/**'
+            backend:
+              - 'backend/**'
+
+  deploy-brain:
+    name: Deploy thandev-brain
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.brain == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: cd services/thandev-brain && flyctl deploy --remote-only --config fly.toml --app thandev-brain
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-runner:
+    name: Deploy thandev-runner
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: cd services/thandev-runner && flyctl deploy --remote-only --config fly.toml --app thandev-runner
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-qdrant:
+    name: Deploy thandev-qdrant
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.qdrant == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: cd services/qdrant-fly && flyctl deploy --remote-only --config fly.toml --app thandev-qdrant
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-backend:
+    name: Deploy thandev-backend
+    needs: detect-changes
+    if: ${{ needs.detect-changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: cd backend && flyctl deploy --remote-only --config fly.toml --app thandev-backend
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
