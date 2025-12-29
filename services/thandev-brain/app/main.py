@@ -128,6 +128,16 @@ async def health():
     }
 
 
+@app.get("/healthz")
+async def healthz():
+    """Health check endpoint (alias for /health)"""
+    return {
+        "status": "ok",
+        "service": "thandev-brain",
+        "version": "1.0.0",
+    }
+
+
 # Readiness check endpoint
 @app.get("/ready")
 async def ready():
