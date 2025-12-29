@@ -25,6 +25,7 @@ router = APIRouter(prefix="/tenants", tags=["tenants"])
 async def get_current_tenant_info(
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Get current tenant's plan information with limits and usage.
@@ -33,76 +34,89 @@ async def get_current_tenant_info(
         TenantPlanInfo with plan, limits, and current usage statistics
     Requires X-Thandev-Tenant-Id or X-Thandev-User-Id header.
     """
-    
-    # Get plan limits
-    limits_dict = get_plan_limits(tenant)
-    
-    # Map tenant.plan (PlanTier) to PlanName for response
-    from app.models.tenant import PlanTier
-    
-    plan_value = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
-    plan_mapping = {
-        PlanTier.FREE.value: PlanName.FREE.value,
-        PlanTier.BASIC.value: PlanName.INDIVIDUAL.value,
-        PlanTier.PRO.value: PlanName.TEAM.value,
-        PlanTier.ENTERPRISE.value: PlanName.TEAM.value,
-    }
-    plan_name = plan_mapping.get(plan_value, PlanName.FREE.value)
-    
-    # Calculate usage
-    # 1. Projects count
-    projects_count = (
-        db.query(Project)
-        .filter(Project.tenant_id == tenant.id)
-        .count()
-    )
-    
-    # 2. Scans this month (UTC)
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    
-    scans_this_month = (
-        db.query(ScanJob)
-        .join(Project)
-        .filter(Project.tenant_id == tenant.id)
-        .filter(ScanJob.created_at >= month_start)
-        .count()
-    )
-    
-    # 3. Concurrent scans (queued or running)
-    concurrent_scans = (
-        db.query(ScanJob)
-        .join(Project)
-        .filter(Project.tenant_id == tenant.id)
-        .filter(ScanJob.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING]))
-        .count()
-    )
-    
-    # Build usage object
-    usage = TenantPlanUsage(
-        projects_count=projects_count,
-        projects_max=limits_dict["max_projects"],
-        scans_this_month=scans_this_month,
-        scans_monthly_max=limits_dict["max_scans_per_month"],
-        concurrent_scans=concurrent_scans,
-        concurrent_scans_max=limits_dict["max_concurrent_scans"],
-    )
-    
-    # Build limits object
-    limits = PlanLimits(
-        max_projects=limits_dict["max_projects"],
-        max_scans_per_month=limits_dict["max_scans_per_month"],
-        max_concurrent_scans=limits_dict["max_concurrent_scans"],
-        allowed_scan_levels=limits_dict["allowed_scan_levels"],
-    )
-    
-    return TenantPlanInfo(
-        id=tenant.id,
-        name=tenant.name,
-        plan=plan_name,
-        limits=limits,
-        usage=usage,
-    )
+    try:
+        # Get plan limits
+        limits_dict = get_plan_limits(tenant)
+        
+        # Map tenant.plan (PlanTier) to PlanName for response
+        from app.models.tenant import PlanTier
+        
+        plan_value = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
+        plan_mapping = {
+            PlanTier.FREE.value: PlanName.FREE.value,
+            PlanTier.BASIC.value: PlanName.INDIVIDUAL.value,
+            PlanTier.PRO.value: PlanName.TEAM.value,
+            PlanTier.ENTERPRISE.value: PlanName.TEAM.value,
+        }
+        plan_name = plan_mapping.get(plan_value, PlanName.FREE.value)
+        
+        # Calculate usage
+        # 1. Projects count - use verified projects count to match dashboard/list
+        # For usage display, count verified projects (matches what user sees)
+        from app.core.project_utils import get_verified_projects_count
+        try:
+            projects_count = get_verified_projects_count(db, tenant, current_user, include_all_for_admin=False)
+        except Exception as e:
+            logger.error(f"Error counting projects in tenant info: {e}", exc_info=True)
+            # Fallback to simple count if verified count fails
+            projects_count = (
+                db.query(Project)
+                .filter(Project.tenant_id == tenant.id, Project.owner_id == current_user.id)
+                .count()
+            )
+        
+        # 2. Scans this month (UTC)
+        now = datetime.now(timezone.utc)
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        
+        scans_this_month = (
+            db.query(ScanJob)
+            .join(Project)
+            .filter(Project.tenant_id == tenant.id)
+            .filter(ScanJob.created_at >= month_start)
+            .count()
+        )
+        
+        # 3. Concurrent scans (queued or running)
+        concurrent_scans = (
+            db.query(ScanJob)
+            .join(Project)
+            .filter(Project.tenant_id == tenant.id)
+            .filter(ScanJob.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING]))
+            .count()
+        )
+        
+        # Build usage object
+        usage = TenantPlanUsage(
+            projects_count=projects_count,
+            projects_max=limits_dict["max_projects"],
+            scans_this_month=scans_this_month,
+            scans_monthly_max=limits_dict["max_scans_per_month"],
+            concurrent_scans=concurrent_scans,
+            concurrent_scans_max=limits_dict["max_concurrent_scans"],
+        )
+        
+        # Build limits object
+        limits = PlanLimits(
+            max_projects=limits_dict["max_projects"],
+            max_scans_per_month=limits_dict["max_scans_per_month"],
+            max_concurrent_scans=limits_dict["max_concurrent_scans"],
+            allowed_scan_levels=limits_dict["allowed_scan_levels"],
+        )
+        
+        return TenantPlanInfo(
+            id=tenant.id,
+            name=tenant.name,
+            plan=plan_name,
+            limits=limits,
+            usage=usage,
+        )
+    except Exception as e:
+        logger.error(f"Error in get_current_tenant_info: {type(e).__name__}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch tenant plan information: {str(e)}",
+        )
 
 
 @router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
