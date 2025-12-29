@@ -43,8 +43,6 @@ async def get_current_tenant_info(
     try:
         # Get effective limits (considers entitlements)
         from app.core.limits import get_effective_limits
-        from app.models.entitlement import Entitlement
-        from sqlalchemy import or_
         
         limits_dict = get_effective_limits(db, tenant, current_user)
         
