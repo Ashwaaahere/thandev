@@ -36,6 +36,7 @@ class BrainClient:
         default_url = settings.BRAIN_URL if settings.BRAIN_URL else settings.BRAIN_SERVICE_URL
         self.base_url = (base_url or default_url).rstrip("/")
         self.timeout = settings.BRAIN_SERVICE_TIMEOUT
+        logger.info(f"BrainClient initialized with URL: {self.base_url} (BRAIN_URL={settings.BRAIN_URL}, BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL})")
         logger.info(f"BrainClient initialized with URL: {self.base_url}")
     
     async def create_plan(
