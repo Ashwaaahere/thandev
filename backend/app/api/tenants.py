@@ -18,6 +18,7 @@ from app.models.tenant import Tenant, PlanTier
 from app.models.user import User
 from app.models.project import Project
 from app.models.scan import ScanJob, ScanStatus
+from app.models.entitlement import Entitlement
 from app.schemas.tenant import TenantPlanInfo, TenantPlanUsage, PlanLimits, TenantCreate, TenantResponse
 import logging
 
@@ -40,20 +41,47 @@ async def get_current_tenant_info(
     Requires X-Thandev-Tenant-Id or X-Thandev-User-Id header.
     """
     try:
-        # Get plan limits
-        limits_dict = get_plan_limits(tenant)
+        # Get effective limits (considers entitlements)
+        from app.core.limits import get_effective_limits
+        from app.models.entitlement import Entitlement
+        from sqlalchemy import or_
         
-        # Map tenant.plan (PlanTier) to PlanName for response
-        from app.models.tenant import PlanTier
+        limits_dict = get_effective_limits(db, tenant, current_user)
         
-        plan_value = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
-        plan_mapping = {
-            PlanTier.FREE.value: PlanName.FREE.value,
-            PlanTier.BASIC.value: PlanName.INDIVIDUAL.value,
-            PlanTier.PRO.value: PlanName.TEAM.value,
-            PlanTier.ENTERPRISE.value: PlanName.TEAM.value,
-        }
-        plan_name = plan_mapping.get(plan_value, PlanName.FREE.value)
+        # Check for entitlement plan_name first (user-scoped, then tenant-wide)
+        plan_name = None
+        ent = None
+        if current_user:
+            ent = (
+                db.query(Entitlement)
+                .filter(Entitlement.tenant_id == tenant.id, Entitlement.user_id == current_user.id)
+                .order_by(Entitlement.created_at.desc())
+                .first()
+            )
+        
+        if not ent:
+            ent = (
+                db.query(Entitlement)
+                .filter(Entitlement.tenant_id == tenant.id, Entitlement.user_id.is_(None))
+                .order_by(Entitlement.created_at.desc())
+                .first()
+            )
+        
+        if ent and ent.plan_name:
+            # Use entitlement's plan_name if available
+            plan_name = ent.plan_name
+        else:
+            # Fallback to mapping tenant.plan (PlanTier) to PlanName for response
+            from app.models.tenant import PlanTier
+            
+            plan_value = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
+            plan_mapping = {
+                PlanTier.FREE.value: PlanName.FREE.value,
+                PlanTier.BASIC.value: PlanName.INDIVIDUAL.value,
+                PlanTier.PRO.value: PlanName.TEAM.value,
+                PlanTier.ENTERPRISE.value: PlanName.TEAM.value,
+            }
+            plan_name = plan_mapping.get(plan_value, PlanName.FREE.value)
         
         # Calculate usage
         # 1. Projects count - use verified projects count to match dashboard/list
