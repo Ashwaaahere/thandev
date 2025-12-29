@@ -16,33 +16,19 @@ class LocalSubprocessBackend(ExecutionBackend):
     """
     Local subprocess execution backend.
     
-    Uses ToolExecutor from backend/app/services/tools.py
+    Uses ToolExecutor from app.services.tools (self-contained in runner).
     """
     
     def __init__(self):
         """Initialize local backend"""
-        # Use the centralized backend_imports utility
-        from app.backend_imports import ensure_backend_in_path
-        ensure_backend_in_path()
-        
         try:
-            # Now import ToolExecutor from backend
+            # Import ToolExecutor from local runner services (self-contained)
             from app.services.tools import ToolExecutor
             self.executor = ToolExecutor()
-            logger.info("Initialized LocalSubprocessBackend with ToolExecutor")
+            logger.info("Initialized LocalSubprocessBackend with local ToolExecutor")
         except ImportError as e:
             logger.error(f"Failed to import ToolExecutor: {e}")
             logger.error(f"Python path (first 5): {sys.path[:5]}")
-            backend_path = Path(__file__).resolve().parent.parent.parent.parent / "backend"
-            logger.error(f"Backend path: {backend_path}")
-            logger.error(f"Backend path exists: {backend_path.exists()}")
-            if backend_path.exists():
-                app_path = backend_path / "app"
-                services_path = app_path / "services"
-                tools_file_check = services_path / "tools.py"
-                logger.error(f"App path exists: {app_path.exists()}")
-                logger.error(f"Services path exists: {services_path.exists()}")
-                logger.error(f"Tools file exists: {tools_file_check.exists()}")
             raise
     
     async def execute(
@@ -67,12 +53,13 @@ class LocalSubprocessBackend(ExecutionBackend):
         )
         
         try:
-            # Create job directory - use backend's data/jobs directory
-            repo_root = Path(__file__).parent.parent.parent.parent
+            # Create job directory - use configurable jobs directory (default: /tmp/jobs)
+            from app.config import settings
+            jobs_base = Path(settings.JOBS_DIR) if hasattr(settings, 'JOBS_DIR') and settings.JOBS_DIR else Path("/tmp/jobs")
             if scan_job_id:
-                job_dir = repo_root / "backend" / "data" / "jobs" / scan_job_id
+                job_dir = jobs_base / scan_job_id
             else:
-                job_dir = repo_root / "backend" / "data" / "jobs" / session_id
+                job_dir = jobs_base / session_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
             # Execute using ToolExecutor

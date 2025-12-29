@@ -147,13 +147,9 @@ async def get_dashboard_overview(
         scans_query = db.query(ScanJob).filter(False)  # Empty query
     
     # Base query for projects for this tenant and user
-    projects_query = (
-        db.query(Project)
-        .filter(
-            Project.tenant_id == tenant.id,
-            Project.owner_id == current_user.id
-        )
-    )
+    # Use verified projects query to match the filtering logic in list_projects
+    from app.core.project_utils import get_verified_projects_query
+    projects_query = get_verified_projects_query(db, tenant, current_user, include_all_for_admin=True)
     
     try:
         # Base query for findings for this tenant and user

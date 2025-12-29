@@ -54,7 +54,26 @@ def create_project(
 ):
     """
     Create a new project for the current user & tenant.
+    Enforces max_projects limit.
     """
+    # Enforce max_projects limit
+    # Use get_all_projects_count() because projects are created before verification,
+    # so we need to count ALL projects (not just verified) to prevent limit bypass
+    from app.core.limits import get_effective_limits, check_limit_exceeded
+    from app.core.project_utils import get_all_projects_count
+    
+    limits = get_effective_limits(db, tenant, current_user)
+    current_count = get_all_projects_count(db, tenant, current_user)
+    
+    check_limit_exceeded(
+        db=db,
+        tenant=tenant,
+        user=current_user,
+        limit_key="max_projects",
+        current_count=current_count,
+        limit_override=limits.get("max_projects"),
+    )
+    
     # Convert Pydantic HttpUrl to string for database storage
     target_url_str = str(payload.target_url) if payload.target_url else None
     repo_url_str = str(payload.repo_url) if payload.repo_url else None
@@ -113,6 +132,8 @@ def list_projects(
     
     # Check if user is admin
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    if not is_admin:
+        logger.info(f"403 Forbidden: user {current_user.id} is not admin")
     
     # base query: only this tenant + this user
     base_q = (
@@ -593,6 +614,7 @@ def list_project_targets(
         return []
     
     if not is_admin:
+        logger.info(f"403 Forbidden: user {current_user.id} is not admin (project URLs access)")
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa
@@ -719,6 +741,7 @@ def add_project_target(
     # Check domain verification or allowlist
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
     if not is_admin:
+        logger.info(f"403 Forbidden: user {current_user.id} is not admin (domain verification check)")
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa

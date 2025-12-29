@@ -614,14 +614,21 @@ async def quick_scan(
                 .count()
             )
             
-            if current_count >= limits["max_projects"]:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=(
-                        f"Your plan only allows {limits['max_projects']} project(s). "
-                        "Upgrade your plan to create more."
-                    ),
-                )
+            # Enforce max_projects limit using centralized limits utility
+            # Use get_all_projects_count() because projects are created before verification,
+            # so we need to count ALL projects (not just verified) to prevent limit bypass
+            from app.core.limits import check_limit_exceeded
+            from app.core.project_utils import get_all_projects_count
+            
+            current_count = get_all_projects_count(db, tenant, current_user)
+            check_limit_exceeded(
+                db=db,
+                tenant=tenant,
+                user=current_user,
+                limit_key="max_projects",
+                current_count=current_count,
+                limit_override=limits.get("max_projects"),
+            )
             
             # Derive project name from domain
             domain_name = _extract_domain_name(normalized_url)

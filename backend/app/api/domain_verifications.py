@@ -88,21 +88,23 @@ def _get_or_create_project_for_domain(
         return project
     
     # Create new project
-    from app.core.plans import get_plan_limits
-    limits = get_plan_limits(tenant)
+    # Enforce max_projects limit using centralized limits utility
+    # Use get_all_projects_count() because projects are created before verification,
+    # so we need to count ALL projects (not just verified) to prevent limit bypass
+    from app.core.limits import get_effective_limits, check_limit_exceeded
+    from app.core.project_utils import get_all_projects_count
     
-    # Check project count limit
-    current_count = (
-        db.query(Project)
-        .filter(Project.tenant_id == tenant.id)
-        .count()
+    limits = get_effective_limits(db, tenant, user)
+    current_count = get_all_projects_count(db, tenant, user)
+    
+    check_limit_exceeded(
+        db=db,
+        tenant=tenant,
+        user=user,
+        limit_key="max_projects",
+        current_count=current_count,
+        limit_override=limits.get("max_projects"),
     )
-    
-    if current_count >= limits["max_projects"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Your plan only allows {limits['max_projects']} project(s). Upgrade your plan to create more.",
-        )
     
     # Derive project name from domain
     project_name = root_domain.replace(".", "-")

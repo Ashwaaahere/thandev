@@ -3,7 +3,7 @@ Admin endpoints: list users/tenants, approve users, assign entitlements, usage v
 """
 import os
 import uuid
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
@@ -87,6 +87,24 @@ def list_tenants(
     ]
 
 
+@router.get("/plan-templates", response_model=Dict[str, Dict[str, Any]])
+def get_plan_templates(
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Get plan templates for admin UI.
+    Returns a dict mapping plan names to their default limits.
+    """
+    from app.core.plans import PLAN_CONFIG, PlanName
+    
+    templates = {}
+    for plan_name, limits in PLAN_CONFIG.items():
+        plan_key = plan_name.value if hasattr(plan_name, 'value') else str(plan_name)
+        templates[plan_key] = dict(limits)
+    
+    return templates
+
+
 @router.post("/users/{user_id}/approve")
 def approve_user(
     user_id: str,
@@ -116,14 +134,47 @@ def set_entitlement(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
-    ent = Entitlement(
-        id=str(uuid.uuid4()),
-        tenant_id=tenant.id,
-        user_id=user.id if payload.user_scoped else None,
-        plan_name=payload.plan_name,
-        limits_json=payload.limits_json,
-    )
-    db.add(ent)
+    # UPSERT: Check if entitlement already exists
+    ent = None
+    if payload.user_scoped:
+        # User-scoped entitlement
+        ent = (
+            db.query(Entitlement)
+            .filter(
+                Entitlement.tenant_id == tenant.id,
+                Entitlement.user_id == user.id
+            )
+            .first()
+        )
+    else:
+        # Tenant-wide entitlement (user_id is None)
+        ent = (
+            db.query(Entitlement)
+            .filter(
+                Entitlement.tenant_id == tenant.id,
+                Entitlement.user_id.is_(None)
+            )
+            .first()
+        )
+    
+    if ent:
+        # Update existing entitlement
+        ent.plan_name = payload.plan_name
+        ent.limits_json = payload.limits_json
+        # Note: user_id and tenant_id don't change
+        action_metadata = {"limits": payload.limits_json, "plan": payload.plan_name, "action": "updated"}
+    else:
+        # Create new entitlement
+        ent = Entitlement(
+            id=str(uuid.uuid4()),
+            tenant_id=tenant.id,
+            user_id=user.id if payload.user_scoped else None,
+            plan_name=payload.plan_name,
+            limits_json=payload.limits_json,
+        )
+        db.add(ent)
+        action_metadata = {"limits": payload.limits_json, "plan": payload.plan_name, "action": "created"}
+    
     db.commit()
     db.refresh(ent)
 
@@ -132,7 +183,7 @@ def set_entitlement(
         current_user,
         "user_entitlement_assigned",
         target_user_id=user.id,
-        metadata={"limits": payload.limits_json, "plan": payload.plan_name},
+        metadata=action_metadata,
     )
 
     return EntitlementResponse(
@@ -292,4 +343,3 @@ def bootstrap_superadmin(
     )
 
     return {"status": "ok", "user_id": user.id}
-

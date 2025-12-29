@@ -84,7 +84,7 @@ class Settings(BaseSettings):
         if not self.JOBS_DIR:
             self.JOBS_DIR = os.getenv("JOBS_DIR", os.path.join(self.DATA_DIR, "jobs"))
         if not self.WORDLISTS_DIR:
-            self.WORDLISTS_DIR = os.getenv("WORDLISTS_DIR", os.path.join(_repo_root, "wordlists"))
+            self.WORDLISTS_DIR = os.getenv("WORDLISTS_DIR", "/opt/thandev/wordlists")
 
 
 settings = Settings()

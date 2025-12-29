@@ -54,6 +54,8 @@ type AllowedDomainRequest = {
   notes?: string;
 };
 
+type PlanTemplates = Record<string, Record<string, any>>;
+
 interface Props {
   session: Session;
 }
@@ -63,14 +65,12 @@ export default function AdminDashboard({ session }: Props) {
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplates>({});
+  const [jsonError, setJsonError] = useState<string | null>(null);
   const [entitlementForm, setEntitlementForm] = useState<EntitlementRequest>({
     tenant_id: '',
-    plan_name: 'pro',
-    limits_json: {
-      allowed_scan_levels: ['basic', 'pro'],
-      max_scans_per_day: 10,
-      max_concurrent_scans: 2,
-    },
+    plan_name: '',
+    limits_json: {},
     user_scoped: true,
   });
   const [entitlementUserId, setEntitlementUserId] = useState<string>('');
@@ -89,12 +89,14 @@ export default function AdminDashboard({ session }: Props) {
     try {
       setLoading(true);
       setError(null);
-      const [usersData, tenantsData] = await Promise.all([
+      const [usersData, tenantsData, templatesData] = await Promise.all([
         thandevFetchJSON<UserSummary[]>('/api/admin/users', session),
         thandevFetchJSON<TenantSummary[]>('/api/admin/tenants', session),
+        thandevFetchJSON<PlanTemplates>('/api/admin/plan-templates', session),
       ]);
       setUsers(usersData);
       setTenants(tenantsData);
+      setPlanTemplates(templatesData);
       if (!entitlementForm.tenant_id && tenantsData.length > 0) {
         setEntitlementForm((prev) => ({ ...prev, tenant_id: tenantsData[0].id }));
       }
@@ -132,11 +134,64 @@ export default function AdminDashboard({ session }: Props) {
     }
   };
 
+  const handlePlanChange = (planName: string) => {
+    const template = planTemplates[planName];
+    if (template) {
+      setEntitlementForm((prev) => ({
+        ...prev,
+        plan_name: planName,
+        limits_json: { ...template }, // Copy template
+      }));
+      setJsonError(null);
+    } else {
+      setEntitlementForm((prev) => ({
+        ...prev,
+        plan_name: planName,
+      }));
+    }
+  };
+
+  const handleLimitsJsonChange = (value: string) => {
+    setJsonError(null);
+    try {
+      if (!value.trim()) {
+        // Empty string -> empty object
+        setEntitlementForm((prev) => ({ ...prev, limits_json: {} }));
+        return;
+      }
+      const parsed = JSON.parse(value);
+      setEntitlementForm((prev) => ({ ...prev, limits_json: parsed }));
+    } catch (err) {
+      // Invalid JSON - show error but don't crash
+      setJsonError('Invalid JSON format');
+      // Keep the invalid value in textarea so user can fix it
+    }
+  };
+
+  const getLimitsJsonDisplay = (): string => {
+    try {
+      const limits = entitlementForm.limits_json;
+      if (!limits || typeof limits !== 'object') {
+        return '{}';
+      }
+      return JSON.stringify(limits, null, 2);
+    } catch (err) {
+      return '{}';
+    }
+  };
+
   const saveEntitlement = async () => {
     if (!entitlementUserId) {
       alert('Select a user to assign an entitlement');
       return;
     }
+    
+    // Validate JSON before saving
+    if (jsonError) {
+      alert('Please fix the JSON error before saving');
+      return;
+    }
+
     setSavingEntitlement(true);
     try {
       const payload = {
@@ -153,6 +208,8 @@ export default function AdminDashboard({ session }: Props) {
         }
       );
       alert(`Entitlement saved: ${res.plan_name}`);
+      // Refresh data to show updated entitlement
+      loadData();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Failed to save entitlement');
     } finally {
@@ -174,15 +231,11 @@ export default function AdminDashboard({ session }: Props) {
         enabled: allowedForm.enabled,
         notes: allowedForm.notes,
       };
-      const created = await thandevFetchJSON<AllowedDomain>(
-        '/api/admin/allowed-domains',
-        session,
-        {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        }
-      );
-      setAllowedDomains((prev) => [created, ...prev]);
+      const res = await thandevFetchJSON<AllowedDomain>('/api/admin/allowed-domains', session, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+      setAllowedDomains((prev) => [...prev, res]);
       setAllowedForm({
         domain: '',
         scope: 'global',
@@ -190,8 +243,9 @@ export default function AdminDashboard({ session }: Props) {
         enabled: true,
         notes: '',
       });
+      alert('Allowed domain created');
     } catch (e: any) {
-      alert(e?.message || 'Failed to save allowed domain');
+      alert(e?.message || 'Failed to create allowed domain');
     } finally {
       setSavingAllowed(false);
     }
@@ -315,44 +369,69 @@ export default function AdminDashboard({ session }: Props) {
               </select>
             </label>
             <label className="text-sm text-slate-300">
-              Plan name
-              <input
+              Plan
+              <select
                 className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm"
                 value={entitlementForm.plan_name}
-                onChange={(e) =>
-                  setEntitlementForm((prev) => ({ ...prev, plan_name: e.target.value }))
-                }
-              />
+                onChange={(e) => handlePlanChange(e.target.value)}
+              >
+                <option value="">Select plan</option>
+                {Object.keys(planTemplates).map((planName) => (
+                  <option key={planName} value={planName}>
+                    {planName.charAt(0).toUpperCase() + planName.slice(1)}
+                  </option>
+                ))}
+              </select>
             </label>
           </div>
           <label className="text-sm text-slate-300 block">
             Limits JSON
+            {jsonError && (
+              <p className="text-xs text-yellow-400 mt-1">{jsonError}</p>
+            )}
             <textarea
-              className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm font-mono"
-              rows={5}
-              value={JSON.stringify(entitlementForm.limits_json, null, 2)}
-              onChange={(e) => {
-                try {
-                  const parsed = JSON.parse(e.target.value);
-                  setEntitlementForm((prev) => ({ ...prev, limits_json: parsed }));
-                  setError(null);
-                } catch (err) {
-                  setError('Invalid JSON in limits');
-                }
-              }}
+              className={`mt-1 w-full rounded border bg-slate-950 p-2 text-sm font-mono ${
+                jsonError ? 'border-yellow-600' : 'border-slate-700'
+              }`}
+              rows={8}
+              value={getLimitsJsonDisplay()}
+              onChange={(e) => handleLimitsJsonChange(e.target.value)}
             />
           </label>
           <div className="flex items-center gap-2">
             <button
               onClick={saveEntitlement}
-              disabled={savingEntitlement || !entitlementUserId || !entitlementForm.tenant_id}
-              className="px-4 py-2 text-sm rounded bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50"
+              disabled={
+                savingEntitlement ||
+                !entitlementUserId ||
+                !entitlementForm.tenant_id ||
+                !entitlementForm.plan_name ||
+                !!jsonError
+              }
+              className="px-4 py-2 text-sm rounded bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {savingEntitlement ? 'Saving...' : 'Save entitlement'}
             </button>
-            <p className="text-xs text-slate-400">
-              Selected user: {entitlementUserId || 'none'}
-            </p>
+            {!entitlementUserId && (
+              <p className="text-xs text-yellow-400">
+                Please select a user from the table above
+              </p>
+            )}
+            {entitlementUserId && !entitlementForm.tenant_id && (
+              <p className="text-xs text-yellow-400">
+                Please select a tenant ID
+              </p>
+            )}
+            {entitlementUserId && entitlementForm.tenant_id && !entitlementForm.plan_name && (
+              <p className="text-xs text-yellow-400">
+                Please select a plan
+              </p>
+            )}
+            {entitlementUserId && entitlementForm.tenant_id && entitlementForm.plan_name && (
+              <p className="text-xs text-slate-400">
+                Selected user: {entitlementUserId}
+              </p>
+            )}
           </div>
         </div>
 
@@ -382,7 +461,7 @@ export default function AdminDashboard({ session }: Props) {
             </label>
             {allowedForm.scope === 'tenant' && (
               <label className="text-sm text-slate-300">
-                Tenant
+                Tenant ID
                 <select
                   className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm"
                   value={allowedForm.tenant_id}
@@ -398,74 +477,60 @@ export default function AdminDashboard({ session }: Props) {
               </label>
             )}
           </div>
-          <label className="text-sm text-slate-300 block">
-            Notes
-            <input
+          <label className="text-sm text-slate-300">
+            Notes (optional)
+            <textarea
               className="mt-1 w-full rounded border border-slate-700 bg-slate-950 p-2 text-sm"
+              rows={2}
               value={allowedForm.notes}
               onChange={(e) => setAllowedForm((prev) => ({ ...prev, notes: e.target.value }))}
-              placeholder="Training targets, demo, etc."
             />
           </label>
-          <div className="flex items-center gap-3">
-            <label className="text-sm text-slate-300 flex items-center gap-2">
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-2 text-sm text-slate-300">
               <input
                 type="checkbox"
                 checked={allowedForm.enabled}
                 onChange={(e) => setAllowedForm((prev) => ({ ...prev, enabled: e.target.checked }))}
+                className="rounded"
               />
               Enabled
             </label>
             <button
               onClick={saveAllowedDomain}
-              disabled={savingAllowed}
+              disabled={savingAllowed || !allowedForm.domain.trim()}
               className="px-4 py-2 text-sm rounded bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50"
             >
-              {savingAllowed ? 'Saving...' : 'Save allowed domain'}
+              {savingAllowed ? 'Saving...' : 'Create allowed domain'}
             </button>
           </div>
-
-          <div className="mt-4 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-slate-400">
-                <tr>
-                  <th className="py-2 pr-3">Domain</th>
-                  <th className="py-2 pr-3">Scope</th>
-                  <th className="py-2 pr-3">Tenant</th>
-                  <th className="py-2 pr-3">Enabled</th>
-                  <th className="py-2 pr-3">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
+          {allowedDomains.length > 0 && (
+            <div className="mt-4 space-y-2">
+              <h3 className="text-sm font-semibold">Existing Allowed Domains</h3>
+              <div className="space-y-1">
                 {allowedDomains.map((d) => (
-                  <tr key={d.id}>
-                    <td className="py-2 pr-3 font-mono text-slate-200">{d.domain}</td>
-                    <td className="py-2 pr-3 text-slate-200">{d.scope}</td>
-                    <td className="py-2 pr-3 text-xs text-slate-400">{d.tenant_id || '–'}</td>
-                    <td className="py-2 pr-3">{d.enabled ? 'Yes' : 'No'}</td>
-                    <td className="py-2 pr-3">
-                      <button
-                        onClick={() => deleteAllowedDomain(d.id)}
-                        className="px-2 py-1 text-xs rounded border border-red-500 text-red-300 hover:bg-red-500/10"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
+                  <div
+                    key={d.id}
+                    className="flex items-center justify-between p-2 rounded bg-slate-800/50"
+                  >
+                    <div>
+                      <span className="text-sm font-mono">{d.domain}</span>
+                      <span className="text-xs text-slate-400 ml-2">({d.scope})</span>
+                      {!d.enabled && <span className="text-xs text-red-400 ml-2">(disabled)</span>}
+                    </div>
+                    <button
+                      onClick={() => deleteAllowedDomain(d.id)}
+                      className="px-2 py-1 text-xs rounded bg-red-700 hover:bg-red-600"
+                    >
+                      Delete
+                    </button>
+                  </div>
                 ))}
-                {allowedDomains.length === 0 && (
-                  <tr>
-                    <td className="py-2 pr-3 text-slate-400 text-sm" colSpan={5}>
-                      No allowed domains yet.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
   );
 }
-

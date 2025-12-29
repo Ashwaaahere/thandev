@@ -34,6 +34,12 @@ async def health():
     return {"status": "ok", "service": "thandev-brain"}
 
 
+@router.get("/healthz")
+async def healthz():
+    """Health check endpoint for Fly.io (Kubernetes-style naming)"""
+    return {"status": "ok", "service": "thandev-brain"}
+
+
 @router.get("/catalog", response_model=CatalogResponse)
 async def get_catalog():
     """

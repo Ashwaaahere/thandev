@@ -198,8 +198,19 @@ async def ready():
     
     # Check Redis
     try:
+        import os
         import redis
-        redis_client = redis.from_url(settings.REDIS_URL, socket_connect_timeout=2)
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.REDIS_URL)
+        use_tls = parsed.scheme == "rediss"
+        redis_kwargs = {"socket_connect_timeout": 2, "decode_responses": True}
+        if use_tls:
+            redis_kwargs["ssl"] = True
+            if os.getenv("REDIS_TLS_INSECURE", "").lower() in ("true", "1", "yes"):
+                import ssl
+                redis_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+                redis_kwargs["ssl_check_hostname"] = False
+        redis_client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
         redis_client.ping()
         checks["redis"] = "ready"
     except Exception as e:
@@ -213,7 +224,8 @@ async def ready():
         try:
             import httpx
             async with httpx.AsyncClient(timeout=2.0) as client:
-                response = await client.get(f"{settings.BRAIN_SERVICE_URL}/health")
+                brain_url = settings.BRAIN_URL if settings.BRAIN_URL else settings.BRAIN_SERVICE_URL
+                response = await client.get(f"{brain_url}/health")
                 if response.status_code == 200:
                     checks["brain_service"] = "ready"
                 else:

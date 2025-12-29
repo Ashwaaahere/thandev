@@ -82,12 +82,22 @@ def get_redis_client() -> Redis:
     """Get or create Redis client singleton"""
     global _redis_client
     if _redis_client is None:
-        _redis_client = Redis.from_url(
-            settings.REDIS_URL,
-            decode_responses=True,
-            socket_connect_timeout=5,
-            socket_timeout=5,
-        )
+        import os
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.REDIS_URL)
+        use_tls = parsed.scheme == "rediss"
+        redis_kwargs = {
+            "decode_responses": True,
+            "socket_connect_timeout": 5,
+            "socket_timeout": 5,
+        }
+        if use_tls:
+            redis_kwargs["ssl"] = True
+            if os.getenv("REDIS_TLS_INSECURE", "").lower() in ("true", "1", "yes"):
+                import ssl
+                redis_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
+                redis_kwargs["ssl_check_hostname"] = False
+        _redis_client = Redis.from_url(settings.REDIS_URL, **redis_kwargs)
     return _redis_client
 
 

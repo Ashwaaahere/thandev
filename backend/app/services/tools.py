@@ -867,10 +867,11 @@ class ToolExecutor:
             raise ValueError(f"Invalid URL: {target_url}")
         
         # Determine scan intensity based on level
+        # Use -sT (TCP connect scan) instead of default -sS (SYN scan) to avoid requiring root
         scan_map = {
-            "basic": ["--top-ports", "100", "-sV"],
-            "pro": ["-sV", "-sC", "--top-ports", "1000"],
-            "advanced": ["-sV", "-sC", "-A", "-p-"],
+            "basic": ["-sT", "--top-ports", "100", "-sV"],
+            "pro": ["-sT", "-sV", "-sC", "--top-ports", "1000"],
+            "advanced": ["-sT", "-sV", "-sC", "-A", "-p-"],
         }
         
         scan_args = scan_map.get(scan_level, scan_map["basic"])
