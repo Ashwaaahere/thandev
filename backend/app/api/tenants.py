@@ -73,22 +73,24 @@ async def get_current_tenant_info(
         now = datetime.now(timezone.utc)
         month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         
+        # Use func.count to avoid loading all columns (including scan_level which may not exist in DB)
         scans_this_month = (
-            db.query(ScanJob)
+            db.query(func.count(ScanJob.id))
             .join(Project)
             .filter(Project.tenant_id == tenant.id)
             .filter(ScanJob.created_at >= month_start)
-            .count()
-        )
+            .scalar()
+        ) or 0
         
         # 3. Concurrent scans (queued or running)
+        # Use func.count to avoid loading all columns
         concurrent_scans = (
-            db.query(ScanJob)
+            db.query(func.count(ScanJob.id))
             .join(Project)
             .filter(Project.tenant_id == tenant.id)
             .filter(ScanJob.status.in_([ScanStatus.QUEUED, ScanStatus.RUNNING]))
-            .count()
-        )
+            .scalar()
+        ) or 0
         
         # Build usage object
         usage = TenantPlanUsage(
