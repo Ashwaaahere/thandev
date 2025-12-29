@@ -30,10 +30,13 @@ class BrainClient:
         Initialize brain client.
         
         Args:
-            base_url: Base URL of brain service. If None, uses settings.BRAIN_SERVICE_URL.
+            base_url: Base URL of brain service. If None, uses settings.BRAIN_URL (if set) or settings.BRAIN_SERVICE_URL.
         """
-        self.base_url = (base_url or settings.BRAIN_SERVICE_URL).rstrip("/")
+        # BRAIN_URL takes precedence over BRAIN_SERVICE_URL
+        default_url = settings.BRAIN_URL if settings.BRAIN_URL else settings.BRAIN_SERVICE_URL
+        self.base_url = (base_url or default_url).rstrip("/")
         self.timeout = settings.BRAIN_SERVICE_TIMEOUT
+        logger.info(f"BrainClient initialized with URL: {self.base_url}")
     
     async def create_plan(
         self,

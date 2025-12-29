@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     
     # RAG Configuration
     RAG_STORE_TYPE: str = os.getenv("RAG_STORE_TYPE", "qdrant")  # qdrant or pgvector
-    QDRANT_URL: str = os.getenv("QDRANT_URL", "http://localhost:6333")
+    QDRANT_URL: str = os.getenv("QDRANT_URL", "http://thandev-qdrant.flycast:6333")  # Use flycast for private networking
     QDRANT_COLLECTION: str = os.getenv("QDRANT_COLLECTION", "thandev_rag")
     
     # PostgreSQL (for pgvector)

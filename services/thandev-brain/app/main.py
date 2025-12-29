@@ -36,12 +36,16 @@ async def lifespan(app: FastAPI):
     # Initialize RAG store if needed
     try:
         from app.rag.store import get_rag_store
+        from app.core.config import settings
+        logger.info(f"Initializing RAG store (type: {settings.RAG_STORE_TYPE}, url: {settings.QDRANT_URL})")
         rag_store = get_rag_store()
         if hasattr(rag_store, 'initialize'):
             await rag_store.initialize()
-            logger.info("RAG store initialized")
+            logger.info("✅ RAG store initialized successfully")
+        else:
+            logger.warning("RAG store does not have initialize method")
     except Exception as e:
-        logger.warning(f"RAG store initialization skipped: {e}")
+        logger.warning(f"⚠️ RAG store initialization skipped (fallback mode): {e}")
     
     yield
     

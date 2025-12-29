@@ -86,7 +86,8 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: Optional[str] = None
     
     # Brain Service (for RAG-powered planning and report prompts)
-    BRAIN_SERVICE_URL: str = "http://localhost:8001"
+    BRAIN_URL: Optional[str] = None  # Takes precedence over BRAIN_SERVICE_URL if set
+    BRAIN_SERVICE_URL: str = "http://thandev-brain.flycast:8001"  # Default to flycast for private networking
     BRAIN_SERVICE_ENABLED: bool = True  # Set to False to disable brain service and use fallback
     BRAIN_REQUIRED: bool = False  # If True, fail scan if brain is unreachable. Set to False to allow fallback
     BRAIN_SERVICE_TIMEOUT: int = 30  # Timeout in seconds for brain service requests
@@ -164,6 +165,10 @@ class Settings(BaseSettings):
             self.CELERY_BROKER_URL = self.REDIS_URL
         if not self.CELERY_RESULT_BACKEND:
             self.CELERY_RESULT_BACKEND = self.REDIS_URL
+        
+        # BRAIN_URL takes precedence over BRAIN_SERVICE_URL
+        if self.BRAIN_URL:
+            self.BRAIN_SERVICE_URL = self.BRAIN_URL
         
         # Compute TENANT_AUTOCREATE_ENABLED based on environment and env vars
         env_lower = self.ENVIRONMENT.strip().lower()

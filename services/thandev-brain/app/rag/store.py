@@ -49,11 +49,16 @@ class QdrantRagStore(RagStore):
             from qdrant_client import QdrantClient
             from qdrant_client.models import Distance, VectorParams
             
+            logger.info(f"Connecting to Qdrant at {self.url}")
             self._client = QdrantClient(url=self.url)
+            
+            # Test connection
+            collections = self._client.get_collections().collections
+            logger.info(f"✅ Connected to Qdrant at {self.url}, found {len(collections)} collections")
+            
             self._embedding_provider = get_embedding_provider()
             
             # Create collection if it doesn't exist
-            collections = self._client.get_collections().collections
             if not any(c.name == self.collection for c in collections):
                 # Get embedding dimension from provider
                 # Default to 384 for all-MiniLM-L6-v2, 1536 for OpenAI
