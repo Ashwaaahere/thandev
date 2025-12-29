@@ -7,13 +7,11 @@ from typing import Optional, Tuple
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.plans import get_plan_limits
 from app.core.limits import get_effective_limits as get_effective_limits_centralized
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.project import Project
 from app.models.scan import ScanJob, ScanLevel, ScanStatus
-from app.models.entitlement import Entitlement
 from app.services.domain_verification import enforce_domain_verification_for_scan, ensure_project_root_domain
 from app.core.config import settings
 
@@ -28,25 +26,6 @@ class EffectiveLimits:
         self.allowed_scan_levels = allowed_scan_levels
         self.max_scans_per_day = max_scans_per_day
         self.max_concurrent_scans = max_concurrent_scans
-
-
-def _load_entitlement(db: Session, tenant: Tenant, user: User) -> Optional[Entitlement]:
-    ent = (
-        db.query(Entitlement)
-        .filter(Entitlement.tenant_id == tenant.id, Entitlement.user_id == user.id)
-        .order_by(Entitlement.created_at.desc())
-        .first()
-    )
-    if ent:
-        return ent
-    # tenant-wide entitlement
-    ent = (
-        db.query(Entitlement)
-        .filter(Entitlement.tenant_id == tenant.id, Entitlement.user_id == None)
-        .order_by(Entitlement.created_at.desc())
-        .first()
-    )
-    return ent
 
 
 def _effective_limits(db: Session, tenant: Tenant, user: User) -> EffectiveLimits:
