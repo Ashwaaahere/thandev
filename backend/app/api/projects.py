@@ -2,9 +2,12 @@
 Projects API router
 """
 from typing import Optional
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.core.tenant_utils import get_current_user, require_tenant
@@ -614,12 +617,9 @@ def list_project_targets(
         return []
     
     if not is_admin:
-        logger.info(f"403 Forbidden: user {current_user.id} is not admin (project URLs access)")
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa
-        import logging
-        logger = logging.getLogger(__name__)
         
         allowed = (
             db.query(AllowedDomain)
