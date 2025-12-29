@@ -8,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.core.plans import get_plan_limits
+from app.core.limits import get_effective_limits as get_effective_limits_centralized
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.project import Project
@@ -49,18 +50,14 @@ def _load_entitlement(db: Session, tenant: Tenant, user: User) -> Optional[Entit
 
 
 def _effective_limits(db: Session, tenant: Tenant, user: User) -> EffectiveLimits:
-    ent = _load_entitlement(db, tenant, user)
-    if ent and ent.limits_json:
-        limits = ent.limits_json or {}
-        allowed = limits.get("allowed_scan_levels") or ["basic"]
-        max_day = limits.get("max_scans_per_day")
-        max_conc = limits.get("max_concurrent_scans")
-        return EffectiveLimits(allowed, max_day, max_conc)
-    # fallback to plan
-    plan_limits = get_plan_limits(tenant)
-    allowed = plan_limits.get("allowed_scan_levels", ["basic"])
-    max_day = plan_limits.get("max_scans_per_hour", None)  # not exactly per day; fallback None
-    max_conc = plan_limits.get("max_concurrent_scans", None)
+    # Use centralized get_effective_limits to ensure consistency
+    limits_dict = get_effective_limits_centralized(db, tenant, user)
+    
+    # Extract values with defaults
+    allowed = limits_dict.get("allowed_scan_levels", ["basic"])
+    max_day = limits_dict.get("max_scans_per_day") or limits_dict.get("max_scans_per_month")  # Support both per_day and per_month
+    max_conc = limits_dict.get("max_concurrent_scans")
+    
     return EffectiveLimits(allowed, max_day, max_conc)
 
 
