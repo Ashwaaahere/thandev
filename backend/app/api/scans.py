@@ -559,7 +559,8 @@ async def quick_scan(
         )
     
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
-    limits = get_plan_limits(tenant)
+    from app.core.limits import get_effective_limits
+    limits = get_effective_limits(db, tenant, current_user)
 
     # Handle project_id or target_url
     project = None
