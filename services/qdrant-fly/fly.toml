@@ -16,15 +16,18 @@ primary_region = "iad"
 
 [env]
   QDRANT__SERVICE__HTTP_PORT = "6333"
+  QDRANT__SERVICE__HOST = "0.0.0.0"
 
 # PRIVATE service - accessed via .internal DNS only
-# [[services]] required for .internal DNS routing
-# NO [http_service] section (keeps it private, no public access)
+# Using [[services]] for private networking with .internal DNS
 [[services]]
-  internal_port = 6333
   protocol = "tcp"
+  internal_port = 6333
   processes = ["app"]
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 6333
 
 [processes]
   app = "/qdrant/qdrant"
-

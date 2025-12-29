@@ -8,11 +8,15 @@ primary_region = "iad"
   PORT = "8001"
 
 # PRIVATE service - accessed via .internal DNS only
-# No [http_service] section to keep it private
+# Using [[services]] for private networking with .internal DNS
 [[services]]
-  internal_port = 8001
   protocol = "tcp"
+  internal_port = 8001
   processes = ["app"]
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 8001
   
   [[services.http_checks]]
     interval = "15s"
