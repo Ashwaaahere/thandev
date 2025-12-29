@@ -313,8 +313,8 @@ async def create_scan(
         )
     
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
-    limits = get_plan_limits(tenant)
-    limits = get_plan_limits(tenant)
+    from app.core.limits import get_effective_limits
+    limits = get_effective_limits(db, tenant, current_user)
     try:
         ensure_project_root_domain(project, project.target_url, allow_admin_override=True, is_admin=is_admin)
         db.commit()
