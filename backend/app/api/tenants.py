@@ -10,13 +10,17 @@ from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from app.core.database import get_db
-from app.core.tenant_utils import require_tenant, validate_external_id
+from app.core.tenant_utils import require_tenant, validate_external_id, get_current_user
 from app.core.config import settings
 from app.core.plans import get_plan_limits, PlanName
 from app.models.tenant import Tenant, PlanTier
+from app.models.user import User
 from app.models.project import Project
 from app.models.scan import ScanJob, ScanStatus
 from app.schemas.tenant import TenantPlanInfo, TenantPlanUsage, PlanLimits, TenantCreate, TenantResponse
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
