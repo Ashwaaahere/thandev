@@ -783,35 +783,35 @@ async def quick_scan(
         # Check if Celery execution is explicitly enabled
         if settings.USE_CELERY_SCAN_EXECUTION:
             logger.info(f"USE_CELERY_SCAN_EXECUTION=true, using Celery path for quick scan {scan_job.id}")
-        try:
-            from app.services.scan_orchestrator import ScanOrchestrator
-            orchestrator = ScanOrchestrator()
-            scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
-            celery_task_id = await orchestrator.queue_scan(
-                scan_job.id, 
-                project.target_url, 
-                scan_level_str,
-                user_id=current_user.id
-            )
-            
-            # Update scan job with celery task ID
-            scan_job.celery_task_id = celery_task_id
-            scan_job.status = ScanStatus.QUEUED
-            db.commit()
-            db.refresh(scan_job)
-            logger.info(f"Quick scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
-        except Exception as e:
-            # If Celery queueing fails, mark scan as failed but still return the scan job
-            error_msg = f"Failed to queue scan task: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            
-            scan_job.status = ScanStatus.FAILED
-            scan_job.error_message = error_msg
-            db.commit()
-            db.refresh(scan_job)
-            
-            # Still return the scan, but log the error
-            logger.warning(f"Quick scan created but queueing failed: {error_msg}")
+            try:
+                from app.services.scan_orchestrator import ScanOrchestrator
+                orchestrator = ScanOrchestrator()
+                scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
+                celery_task_id = await orchestrator.queue_scan(
+                    scan_job.id, 
+                    project.target_url, 
+                    scan_level_str,
+                    user_id=current_user.id
+                )
+                
+                # Update scan job with celery task ID
+                scan_job.celery_task_id = celery_task_id
+                scan_job.status = ScanStatus.QUEUED
+                db.commit()
+                db.refresh(scan_job)
+                logger.info(f"Quick scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
+            except Exception as e:
+                # If Celery queueing fails, mark scan as failed but still return the scan job
+                error_msg = f"Failed to queue scan task: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = error_msg
+                db.commit()
+                db.refresh(scan_job)
+                
+                # Still return the scan, but log the error
+                logger.warning(f"Quick scan created but queueing failed: {error_msg}")
         else:
             # Default: Use Runner via Redis streams
             logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
