@@ -6,6 +6,7 @@ import uuid
 import os
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
