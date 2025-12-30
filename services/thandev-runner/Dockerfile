@@ -39,13 +39,18 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code (includes wordlists if present)
 COPY . .
 
-# Copy wordlists to final location (/opt/thandev/wordlists)
-# Note: wordlists/ directory should be copied into runner directory before building
-# See DEPLOY.md for deployment instructions
-COPY wordlists /opt/thandev/wordlists
+# Ensure wordlists directory exists and copy if not already copied
+# wordlists should be included in the build context
+RUN mkdir -p /opt/thandev/wordlists
+RUN if [ -d /app/wordlists ] && [ "$(ls -A /app/wordlists)" ]; then \
+        cp -r /app/wordlists/* /opt/thandev/wordlists/; \
+    else \
+        echo "Warning: wordlists directory not found, creating empty directory"; \
+        touch /opt/thandev/wordlists/.gitkeep; \
+    fi
 
 # Copy and set permissions for startup script (before switching user)
 COPY check_tools.sh /app/check_tools.sh
