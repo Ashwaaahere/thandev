@@ -181,7 +181,21 @@ class ToolExecutor:
         
         # Load catalog for tool_id/mode_id mapping
         if catalog_path is None:
-            catalog_path = BASE_DIR / "services" / "thandev-brain" / "catalog" / "catalog.json"
+            # Try multiple possible catalog paths
+            possible_paths = [
+                BASE_DIR / "services" / "thandev-brain" / "catalog" / "catalog.json",
+                Path("/services/thandev-brain/catalog/catalog.json"),
+                Path("/app/services/thandev-brain/catalog/catalog.json"),
+                BASE_DIR / "catalog" / "catalog.json",
+            ]
+            catalog_path = None
+            for path in possible_paths:
+                if path.exists():
+                    catalog_path = path
+                    break
+            if catalog_path is None:
+                # Use first path as default (will log warning if not found)
+                catalog_path = possible_paths[0]
         
         self.catalog_path = catalog_path
         self._catalog = self._load_catalog()

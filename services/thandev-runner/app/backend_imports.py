@@ -29,12 +29,41 @@ def _ensure_backend_path() -> Path:
         # current_file.parent.parent = services/thandev-runner
         # current_file.parent.parent.parent = services
         # current_file.parent.parent.parent.parent = project root (thandev/)
-        project_root = current_file.parent.parent.parent.parent
-        _runner_path = current_file.parent.parent.parent  # services/thandev-runner
-        _backend_path = project_root / "backend"  # thandev/backend/
+        try:
+            project_root = current_file.parent.parent.parent.parent
+            _runner_path = current_file.parent.parent.parent  # services/thandev-runner
+            _backend_path = project_root / "backend"  # thandev/backend/
+        except (IndexError, AttributeError):
+            # Fallback if path structure is different (e.g., in Docker)
+            # Try alternative paths
+            try:
+                project_root = current_file.parent.parent.parent
+                _backend_path = project_root / "backend"
+            except (IndexError, AttributeError):
+                # Last resort: use /app/backend if it exists, otherwise None
+                _backend_path = Path("/app/backend")
         
+        # If backend path doesn't exist, try alternative locations
         if not _backend_path.exists():
-            raise ImportError(f"Backend path does not exist: {_backend_path}")
+            # Try common alternative paths
+            alternatives = [
+                Path("/app/backend"),  # Docker container
+                Path("/backend"),  # Absolute path
+                current_file.parent.parent.parent.parent / "backend" if current_file.parent.parent.parent.parent.exists() else None,
+            ]
+            for alt_path in alternatives:
+                if alt_path and alt_path.exists():
+                    _backend_path = alt_path
+                    logger.info(f"Using alternative backend path: {_backend_path}")
+                    break
+            else:
+                # If no backend path exists, log warning but don't raise error
+                # The code will handle missing backend gracefully
+                logger.warning(f"Backend path does not exist: {_backend_path}. Backend imports will be disabled.")
+                _backend_path = None
+    
+    if _backend_path is None:
+        raise ImportError("Backend path not found. Cannot import backend modules.")
     
     return _backend_path
 

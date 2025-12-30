@@ -341,6 +341,9 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             except Exception:
                 pass
             # #endregion
+            # Initialize tool_name early to avoid UnboundLocalError in exception handlers
+            tool_name = result.get("tool_name", tool_id) if result else tool_id
+            
             try:
                 # Get database session
                 from app.database import get_db_session
@@ -368,12 +371,14 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 
                 try:
                     # Import ToolResult model from backend
-                    from app.backend_imports import ensure_backend_in_path
-                    ensure_backend_in_path()
-                    from app.models.finding import ToolResult
-                    
-                    # Parse tool output to get findings
-                    tool_name = result.get("tool_name", tool_id)
+                    ToolResult = None
+                    try:
+                        from app.backend_imports import ensure_backend_in_path
+                        ensure_backend_in_path()
+                        from app.models.finding import ToolResult
+                    except (ImportError, Exception) as import_err:
+                        logger.warning(f"Could not import backend modules (backend path may not exist): {import_err}. Skipping ToolResult creation.")
+                        ToolResult = None
                     
                     # Create ToolResult record (always save, even if tool failed)
                     # Use actual exit_code from result, default based on success
@@ -418,69 +423,75 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             skip_reason = "rate_limited"
                         if not skip_reason and not result.get("output"):
                             skip_reason = "no_output"
-                    tool_result = ToolResult(
-                        scan_job_id=scan_job_id,
-                        tool_name=tool_name,
-                        output=result.get("output", "")[:10000] if result.get("output") else "",  # Truncate large outputs
-                        exit_code=actual_exit_code,
-                        execution_time=result.get("execution_time", execution_time),
-                        command=result.get("command", ""),
-                        error_message=result.get("error"),
-                        timed_out=1 if result.get("timed_out", False) else 0,
-                        stdout_preview=(result.get("stdout") or "")[:1000] if result else None,
-                        stderr_preview=(result.get("stderr") or "")[:1000] if result else None,
-                        raw_stdout=result.get("stdout") if result else None,
-                        raw_stderr=result.get("stderr") if result else None,
-                        skip_reason=skip_reason,
-                    )
-                    db.add(tool_result)
                     
-                    # #region agent log
-                    log_data = {
-                        "location": "tasks.py:341",
-                        "message": "Added ToolResult to session, about to commit",
-                        "data": {
-                            "scan_job_id": scan_job_id,
-                            "tool_name": tool_name,
-                            "tool_result_id": tool_result.id,
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C"
-                    }
-                    try:
-                        with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
+                    tool_result = None
+                    if ToolResult is not None:
+                        tool_result = ToolResult(
+                            scan_job_id=scan_job_id,
+                            tool_name=tool_name,
+                            output=result.get("output", "")[:10000] if result.get("output") else "",  # Truncate large outputs
+                            exit_code=actual_exit_code,
+                            execution_time=result.get("execution_time", execution_time),
+                            command=result.get("command", ""),
+                            error_message=result.get("error"),
+                            timed_out=1 if result.get("timed_out", False) else 0,
+                            stdout_preview=(result.get("stdout") or "")[:1000] if result else None,
+                            stderr_preview=(result.get("stderr") or "")[:1000] if result else None,
+                            raw_stdout=result.get("stdout") if result else None,
+                            raw_stderr=result.get("stderr") if result else None,
+                            skip_reason=skip_reason,
+                        )
+                        db.add(tool_result)
+                    else:
+                        logger.warning(f"Skipping ToolResult creation - backend modules not available")
                     
-                    db.commit()
-                    
-                    # #region agent log
-                    log_data = {
-                        "location": "tasks.py:342",
-                        "message": "ToolResult committed successfully",
-                        "data": {
-                            "scan_job_id": scan_job_id,
-                            "tool_name": tool_name,
-                            "tool_result_id": tool_result.id,
-                            "exit_code": tool_result.exit_code,
-                        },
-                        "timestamp": int(time.time() * 1000),
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "C"
-                    }
-                    try:
-                        with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
-                            f.write(json.dumps(log_data) + "\n")
-                    except Exception:
-                        pass
-                    # #endregion
-                    
-                    logger.info(f"Saved ToolResult for {tool_name} (scan {scan_job_id}, exit_code={tool_result.exit_code})")
+                    if tool_result is not None:
+                        # #region agent log
+                        log_data = {
+                            "location": "tasks.py:341",
+                            "message": "Added ToolResult to session, about to commit",
+                            "data": {
+                                "scan_job_id": scan_job_id,
+                                "tool_name": tool_name,
+                                "tool_result_id": tool_result.id,
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C"
+                        }
+                        try:
+                            with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                                f.write(json.dumps(log_data) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
+                        
+                        db.commit()
+                        
+                        # #region agent log
+                        log_data = {
+                            "location": "tasks.py:342",
+                            "message": "ToolResult committed successfully",
+                            "data": {
+                                "scan_job_id": scan_job_id,
+                                "tool_name": tool_name,
+                                "tool_result_id": tool_result.id,
+                                "exit_code": tool_result.exit_code,
+                            },
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "C"
+                        }
+                        try:
+                            with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                                f.write(json.dumps(log_data) + "\n")
+                        except Exception:
+                            pass
+                        # #endregion
+                        
+                        logger.info(f"Saved ToolResult for {tool_name} (scan {scan_job_id}, exit_code={tool_result.exit_code})")
                     
                     # Determine output file path (may be from artifact_refs for remote backend)
                     output_file = None
@@ -619,25 +630,50 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         )
 
             # Import parsers from backend
-            from app.backend_imports import ensure_backend_in_path
-            ensure_backend_in_path()
-            
-            from app.services.findings_ingestor import (
-                parse_nuclei_output,
-                parse_nmap_output,
-                parse_sslscan_output,
-                parse_httpx_output,
-                parse_ffuf_output,
-                parse_dalfox_output,
-                parse_sqlmap_output,
-                ingest_nuclei_findings,
-                ingest_nmap_findings,
-                ingest_sslscan_findings,
-                ingest_httpx_findings,
-                ingest_ffuf_findings,
-                ingest_dalfox_findings,
-                ingest_sqlmap_findings,
-            )
+            parse_functions = {}
+            ingest_functions = {}
+            try:
+                from app.backend_imports import ensure_backend_in_path
+                ensure_backend_in_path()
+                
+                from app.services.findings_ingestor import (
+                    parse_nuclei_output,
+                    parse_nmap_output,
+                    parse_sslscan_output,
+                    parse_httpx_output,
+                    parse_ffuf_output,
+                    parse_dalfox_output,
+                    parse_sqlmap_output,
+                    ingest_nuclei_findings,
+                    ingest_nmap_findings,
+                    ingest_sslscan_findings,
+                    ingest_httpx_findings,
+                    ingest_ffuf_findings,
+                    ingest_dalfox_findings,
+                    ingest_sqlmap_findings,
+                )
+                parse_functions = {
+                    "nuclei": parse_nuclei_output,
+                    "nmap": parse_nmap_output,
+                    "sslscan": parse_sslscan_output,
+                    "httpx": parse_httpx_output,
+                    "ffuf": parse_ffuf_output,
+                    "dalfox": parse_dalfox_output,
+                    "sqlmap": parse_sqlmap_output,
+                }
+                ingest_functions = {
+                    "nuclei": ingest_nuclei_findings,
+                    "nmap": ingest_nmap_findings,
+                    "sslscan": ingest_sslscan_findings,
+                    "httpx": ingest_httpx_findings,
+                    "ffuf": ingest_ffuf_findings,
+                    "dalfox": ingest_dalfox_findings,
+                    "sqlmap": ingest_sqlmap_findings,
+                }
+            except (ImportError, Exception) as import_err:
+                logger.warning(f"Could not import findings_ingestor from backend: {import_err}. Findings parsing will be skipped.")
+                parse_functions = {}
+                ingest_functions = {}
             
             baseline_filter = result.get("baseline")  # For ffuf
         
@@ -649,34 +685,47 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 db = get_db_session()
                 
                 tool_name = result.get("tool_name", tool_id)
-                if tool_name == "nuclei":
-                    findings = parse_nuclei_output(output_file)
-                    ingested = ingest_nuclei_findings(db, scan_job_id, findings)
+                
+                # Check if parsing functions are available
+                if not parse_functions or tool_name not in parse_functions:
+                    logger.warning(f"Findings parser not available for {tool_name}. Skipping findings ingestion.")
+                    findings_count = 0
+                elif tool_name == "nuclei":
+                    findings = parse_functions["nuclei"](output_file)
+                    ingested = ingest_functions["nuclei"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "nmap":
-                    findings = parse_nmap_output(output_file)
-                    ingested = ingest_nmap_findings(db, scan_job_id, findings)
+                    findings = parse_functions["nmap"](output_file)
+                    ingested = ingest_functions["nmap"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "sslscan":
-                    findings = parse_sslscan_output(output_file)
-                    ingested = ingest_sslscan_findings(db, scan_job_id, findings)
+                    findings = parse_functions["sslscan"](output_file)
+                    ingested = ingest_functions["sslscan"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "httpx":
-                    findings = parse_httpx_output(output_file)
-                    ingested = ingest_httpx_findings(db, scan_job_id, findings)
+                    findings = parse_functions["httpx"](output_file)
+                    ingested = ingest_functions["httpx"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "ffuf":
-                    findings = parse_ffuf_output(output_file, baseline_filter=baseline_filter)
-                    ingested = ingest_ffuf_findings(db, scan_job_id, findings)
+                    findings = parse_functions["ffuf"](output_file, baseline_filter=baseline_filter)
+                    ingested = ingest_functions["ffuf"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "dalfox":
-                    findings = parse_dalfox_output(output_file)
-                    ingested = ingest_dalfox_findings(db, scan_job_id, findings)
+                    findings = parse_functions["dalfox"](output_file)
+                    ingested = ingest_functions["dalfox"](db, scan_job_id, findings)
                     findings_count = len(ingested or [])
                 elif tool_name == "sqlmap":
                     # sqlmap outputs to a directory, not a single file
                     # Also parse stdout for detection results (sqlmap outputs to stdout)
-                    from app.services.findings_ingestor import parse_sqlmap_stdout
+                    if "sqlmap" not in parse_functions:
+                        logger.warning("SQLMap parser not available. Skipping SQLMap findings ingestion.")
+                        findings_count = 0
+                    else:
+                        try:
+                            from app.services.findings_ingestor import parse_sqlmap_stdout
+                        except ImportError:
+                            logger.warning("parse_sqlmap_stdout not available. Skipping SQLMap stdout parsing.")
+                            parse_sqlmap_stdout = None
                     
                     sqlmap_findings = []
                     
@@ -694,33 +743,39 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     # First, try to parse filesystem artifacts (most reliable)
                     artifacts_found = False
                     if sqlmap_output_dir.exists() and sqlmap_output_dir.is_dir():
-                        dir_findings = parse_sqlmap_output(sqlmap_output_dir)
-                        if dir_findings:
-                            logger.info(f"Parsed {len(dir_findings)} sqlmap findings from output directory for step {step_id}")
-                            sqlmap_findings.extend(dir_findings)
-                            artifacts_found = True
+                        if "sqlmap" in parse_functions:
+                            dir_findings = parse_functions["sqlmap"](sqlmap_output_dir)
+                            if dir_findings:
+                                logger.info(f"Parsed {len(dir_findings)} sqlmap findings from output directory for step {step_id}")
+                                sqlmap_findings.extend(dir_findings)
+                                artifacts_found = True
+                            else:
+                                # Check if directory has any files (for logging)
+                                any_files = list(sqlmap_output_dir.rglob("*"))
+                                logger.debug(f"SQLMap output directory exists but no findings parsed. Files found: {len(any_files)}")
                         else:
-                            # Check if directory has any files (for logging)
-                            any_files = list(sqlmap_output_dir.rglob("*"))
-                            logger.debug(f"SQLMap output directory exists but no findings parsed. Files found: {len(any_files)}")
+                            logger.warning("SQLMap parser not available. Skipping directory parsing.")
                     
                     # Fallback: parse stdout if no artifacts found or artifacts had no findings
-                    if not artifacts_found or not sqlmap_findings:
-                        if result.get("output"):
-                            stdout_findings = parse_sqlmap_stdout(result.get("output"), target_ref or "")
-                            if stdout_findings:
-                                logger.info(f"Parsed {len(stdout_findings)} sqlmap findings from stdout for step {step_id}")
-                                # Deduplicate: only add findings not already in artifacts
-                                existing_params = {(f.get("parameter", ""), f.get("technique", "")) for f in sqlmap_findings}
-                                for finding in stdout_findings:
-                                    key = (finding.get("parameter", ""), finding.get("technique", ""))
-                                    if key not in existing_params:
-                                        sqlmap_findings.append(finding)
-                                        existing_params.add(key)
+                    if (not artifacts_found or not sqlmap_findings) and result.get("output") and parse_sqlmap_stdout:
+                        stdout_findings = parse_sqlmap_stdout(result.get("output"), target_ref or "")
+                        if stdout_findings:
+                            logger.info(f"Parsed {len(stdout_findings)} sqlmap findings from stdout for step {step_id}")
+                            # Deduplicate: only add findings not already in artifacts
+                            existing_params = {(f.get("parameter", ""), f.get("technique", "")) for f in sqlmap_findings}
+                            for finding in stdout_findings:
+                                key = (finding.get("parameter", ""), finding.get("technique", ""))
+                                if key not in existing_params:
+                                    sqlmap_findings.append(finding)
+                                    existing_params.add(key)
                     
                     # Ingest findings (always call, even if empty list)
-                    ingested = ingest_sqlmap_findings(db, scan_job_id, sqlmap_findings)
-                    findings_count = len(ingested or [])
+                    if "sqlmap" in ingest_functions:
+                        ingested = ingest_functions["sqlmap"](db, scan_job_id, sqlmap_findings)
+                        findings_count = len(ingested or [])
+                    else:
+                        findings_count = 0
+                        logger.warning("SQLMap ingest function not available. Skipping ingestion.")
                     
                     if findings_count > 0:
                         logger.info(
