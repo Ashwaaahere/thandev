@@ -177,7 +177,7 @@ async def list_scans(
             scan_level=scan_job.scan_level,
             status=scan_job.status,
             created_at=scan_job.created_at,
-            completed_at=scan_job.completed_at,
+            completed_at=scan_job.completion_time,  # Use effective completion time
             risk_score=risk_score,
             findings_count=findings_count,
         )
@@ -700,8 +700,57 @@ async def quick_scan(
     )
     
     db.add(scan_job)
-    db.commit()
-    db.refresh(scan_job)
+    
+    # Wrap commit in try/except to catch DB errors and return structured JSON response
+    try:
+        db.commit()
+        db.refresh(scan_job)
+    except Exception as e:
+        db.rollback()
+        # Log detailed error information for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        error_details = {
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+        }
+        
+        # If it's a SQLAlchemy DBAPI error, extract more details
+        from sqlalchemy.exc import SQLAlchemyError, DBAPIError
+        if isinstance(e, DBAPIError) and hasattr(e, 'orig'):
+            error_details["db_error_code"] = getattr(e.orig, 'pgcode', None) if hasattr(e.orig, 'pgcode') else None
+            error_details["db_error_message"] = str(e.orig) if e.orig else None
+            logger.error(
+                f"Database error during scan_job commit: {error_details}",
+                exc_info=True,
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_repr": repr(e),
+                    "db_error_code": error_details.get("db_error_code"),
+                    "db_error_message": error_details.get("db_error_message"),
+                }
+            )
+        else:
+            logger.error(
+                f"Error during scan_job commit: {error_details}",
+                exc_info=True,
+                extra={
+                    "error_type": type(e).__name__,
+                    "error_repr": repr(e),
+                }
+            )
+        
+        # Return structured JSON error response
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "DB_COMMIT_FAILED",
+                "message": "Failed to create scan job due to database error",
+                "error_type": error_details["error_type"],
+                "error_message": error_details["error_message"],
+            }
+        )
     
     # PR-4E: Start brain session instead of (or in addition to) Celery task
     from app.services.brain_client import get_brain_client
@@ -1474,7 +1523,7 @@ async def get_scan(
         error_message=scan_job.error_message,
         created_at=scan_job.created_at,
         started_at=scan_job.started_at,
-        completed_at=scan_job.completed_at,
+        completed_at=scan_job.completion_time,  # Use effective completion time
         findings=[],
         tool_statuses=tool_status_models,
         progress_pct=progress_pct,

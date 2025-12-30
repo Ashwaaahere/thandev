@@ -101,17 +101,36 @@ export default function DashboardScanClient({ user, session }: DashboardScanClie
 
       const mappedLevel = mapScanLevel(scanLevel);
       
-      const data = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
-        '/api/scans/quick',
-        session,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            target_url: scanUrl.trim(),
-            scan_level: mappedLevel,
-          }),
+      let data: { project_id: string; scan_id: string };
+      try {
+        data = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
+          '/api/scans/quick',
+          session,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              target_url: scanUrl.trim(),
+              scan_level: mappedLevel,
+            }),
+          }
+        );
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to start scan';
+        console.error('Scan creation error:', error);
+        
+        // Check if it's a structured error from backend
+        let displayMessage = errorMessage;
+        if (errorMessage.includes('DB_COMMIT_FAILED') || errorMessage.includes('database')) {
+          displayMessage = 'Database error: Failed to create scan. Please try again or contact support if the issue persists.';
+        } else if (errorMessage.includes('LIMIT_EXCEEDED') || errorMessage.includes('limit')) {
+          displayMessage = errorMessage; // Show the limit error as-is
+        } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+          displayMessage = errorMessage; // Show permission errors as-is
         }
-      );
+        
+        alert(displayMessage);
+        return;
+      }
       
       // Redirect to scan report page
       router.push(`/projects/${data.project_id}/scans/${data.scan_id}`);

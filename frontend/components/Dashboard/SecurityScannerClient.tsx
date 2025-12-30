@@ -798,14 +798,35 @@ export default function SecurityScannerClient() {
         body.target_url = targetUrl.trim();
       }
 
-      const scan = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
-        '/api/scans/quick',
-        session,
-        {
-          method: 'POST',
-          body: JSON.stringify(body),
+      let scan: { project_id: string; scan_id: string };
+      try {
+        scan = await thandevFetchJSON<{ project_id: string; scan_id: string }>(
+          '/api/scans/quick',
+          session,
+          {
+            method: 'POST',
+            body: JSON.stringify(body),
+          }
+        );
+      } catch (error) {
+        // thandevFetchJSON already throws with a message, but we can enhance it
+        const errorMessage = error instanceof Error ? error.message : 'Failed to start scan';
+        console.error('Scan creation error:', error);
+        
+        // Check if it's a structured error from backend
+        let displayMessage = errorMessage;
+        if (errorMessage.includes('DB_COMMIT_FAILED') || errorMessage.includes('database')) {
+          displayMessage = 'Database error: Failed to create scan. Please try again or contact support if the issue persists.';
+        } else if (errorMessage.includes('LIMIT_EXCEEDED') || errorMessage.includes('limit')) {
+          displayMessage = errorMessage; // Show the limit error as-is
+        } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
+          displayMessage = errorMessage; // Show permission errors as-is
         }
-      );
+        
+        alert(displayMessage);
+        setSubmitting(false);
+        return;
+      }
 
       // On success: go to scan detail
       if (scan?.scan_id && scan?.project_id) {
