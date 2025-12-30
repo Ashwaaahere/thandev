@@ -36,7 +36,7 @@ async def lifespan(app: FastAPI):
     # Initialize RAG store if needed
     try:
         from app.rag.store import get_rag_store
-        from app.core.config import settings
+        # settings already imported at top of file
         logger.info(f"Initializing RAG store (type: {settings.RAG_STORE_TYPE}, url: {settings.QDRANT_URL})")
         rag_store = get_rag_store()
         if hasattr(rag_store, 'initialize'):

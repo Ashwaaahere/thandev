@@ -149,10 +149,14 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 if str(backend_path) not in sys.path:
                     sys.path.insert(0, str(backend_path))
                 
-                # Change working directory to backend for relative imports
+                # Change working directory to backend for relative imports (only if it exists)
                 original_cwd = os.getcwd()
+                backend_path_str = str(backend_path)
                 try:
-                    os.chdir(str(backend_path))
+                    if os.path.exists(backend_path_str) and os.path.isdir(backend_path_str):
+                        os.chdir(backend_path_str)
+                    else:
+                        logger.warning(f"Backend path {backend_path_str} does not exist. Skipping chdir. Proceeding with imports from sys.path.")
 
                     from app.models.scan import ScanJob, ScanStatus
 

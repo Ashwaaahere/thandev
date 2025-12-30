@@ -18,7 +18,15 @@ _local_tools = os.path.join(_home_dir, ".local", "thandev-tools", "bin")
 # Base directory: project root (services/thandev-runner/app/services/tools.py -> project root)
 # parents[0] = services/thandev-runner/app/services, parents[1] = services/thandev-runner/app, 
 # parents[2] = services/thandev-runner, parents[3] = services, parents[4] = project root
-_BASE_DIR = Path(__file__).resolve().parents[4]
+# Try to get project root, fallback if path structure is different
+try:
+    _BASE_DIR = Path(__file__).resolve().parents[4]
+except IndexError:
+    # Fallback: try fewer parents if structure is different
+    try:
+        _BASE_DIR = Path(__file__).resolve().parents[3]
+    except IndexError:
+        _BASE_DIR = Path(__file__).resolve().parents[2]
 _current_path = os.environ.get("PATH", "")
 if _go_bin not in _current_path or _local_tools not in _current_path:
     _new_path = f"{_local_tools}:{_go_bin}:{_current_path}"
@@ -29,7 +37,8 @@ if _go_bin not in _current_path or _local_tools not in _current_path:
 # Base directory: project root (services/thandev-runner/app/services/tools.py -> project root)
 # parents[0] = services/thandev-runner/app/services, parents[1] = services/thandev-runner/app,
 # parents[2] = services/thandev-runner, parents[3] = services, parents[4] = project root
-BASE_DIR = Path(__file__).resolve().parents[4]
+# Use the same _BASE_DIR calculated above
+BASE_DIR = _BASE_DIR
 
 # Initialize logger after PATH setup
 if 'logger' not in locals():
