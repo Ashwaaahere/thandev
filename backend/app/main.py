@@ -19,6 +19,7 @@ from app.api import projects, scans, tenants, users, metrics, findings, performa
 from app.api import findings_batch
 from app.api import auth_bootstrap
 from app.api import domain_verifications
+from app.api import stats
 
 # Load environment variables
 load_dotenv()
@@ -344,6 +345,7 @@ app.include_router(auth_bootstrap.router, prefix=settings.API_V1_PREFIX)
 app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
 app.include_router(access.router, prefix=settings.API_V1_PREFIX)
 app.include_router(domain_verifications.router, prefix=settings.API_V1_PREFIX)
+app.include_router(stats.router, prefix=settings.API_V1_PREFIX)
 
 
 # Custom OpenAPI schema

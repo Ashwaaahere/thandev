@@ -208,7 +208,7 @@ function useLiveStats(): LiveStats {
         let prevented: number | null = null;
 
         try {
-          const s = await fetch(`${API}/stats`).then((r) => (r.ok ? r.json() : null));
+          const s = await fetch(`${API}/api/stats`).then((r) => (r.ok ? r.json() : null));
           if (s) {
             signals = s?.signals_today ?? null;
             exploits = s?.exploits_today ?? null;
