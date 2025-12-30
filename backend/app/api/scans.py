@@ -1058,12 +1058,15 @@ async def get_scan(
                             }
                         )
                         scan_job.status = ScanStatus.COMPLETED
-                        if not scan_job.completed_at:
+                        if not scan_job.completion_time:
                             # Use brain's finished_at if available, otherwise now
+                            completion_time = None
                             if brain_session_response and brain_session_response.finished_at:
-                                scan_job.completed_at = brain_session_response.finished_at
+                                completion_time = brain_session_response.finished_at
                             else:
-                                scan_job.completed_at = datetime.now(timezone.utc)
+                                completion_time = datetime.now(timezone.utc)
+                            # Set both columns to keep them in sync
+                            scan_job.set_completion_time(completion_time)
                         db.commit()
                         status_source = "brain"
                 elif all_tools_done and scan_job.status == ScanStatus.RUNNING:
@@ -1118,13 +1121,13 @@ async def get_scan(
                         else:
                             error_msg = "Brain session failed"
                         scan_job.error_message = error_msg
-                        scan_job.completed_at = datetime.now(timezone.utc)
+                        scan_job.set_completion_time(datetime.now(timezone.utc))
                         db.commit()
                         status_source = "brain"
                 elif brain_status_str and (brain_status_str in ["cancelled", "stopping", "stopped"] or (isinstance(brain_status, SessionStatus) and brain_status in [SessionStatus.CANCELLED, SessionStatus.STOPPING, SessionStatus.STOPPED])):
                     if scan_job.status != ScanStatus.CANCELLED:
                         scan_job.status = ScanStatus.CANCELLED
-                        scan_job.completed_at = datetime.now(timezone.utc)
+                        scan_job.set_completion_time(datetime.now(timezone.utc))
                         db.commit()
                         status_source = "brain"
                 # "running" or "planning" status is already set
@@ -1184,7 +1187,7 @@ async def get_scan(
                 )
                 scan_job.status = ScanStatus.STALLED
                 scan_job.error_message = f"Scan stalled: brain service unreachable for {round(running_duration)} minutes"
-                scan_job.completed_at = datetime.now(timezone.utc)
+                scan_job.set_completion_time(datetime.now(timezone.utc))
                 db.commit()
                 status_reason = "stalled_brain_unreachable"
             elif all_tools_done:
@@ -1197,8 +1200,8 @@ async def get_scan(
                     }
                 )
                 scan_job.status = ScanStatus.COMPLETED
-                if not scan_job.completed_at:
-                    scan_job.completed_at = datetime.now(timezone.utc)
+                if not scan_job.completion_time:
+                    scan_job.set_completion_time(datetime.now(timezone.utc))
                 db.commit()
                 status_source = "db"
                 status_reason = "stalled_all_tools_done"
@@ -1446,8 +1449,8 @@ async def get_scan(
         if scan_job.status == ScanStatus.FAILED and has_only_ffuf_timeout and done_tools >= 1:
             scan_job.status = ScanStatus.COMPLETED
             scan_job.error_message = "Completed with warnings: ffuf timed out after 300s; results may be partial."
-            if not scan_job.completed_at:
-                scan_job.completed_at = datetime.now(timezone.utc)
+            if not scan_job.completion_time:
+                scan_job.set_completion_time(datetime.now(timezone.utc))
             status_source = "db"
             status_reason = "ffuf_timeout_nonfatal"
             # Update progress to 100 since we’re marking completion
@@ -1530,7 +1533,7 @@ async def cancel_scan(
     # Update scan status to cancelled
     from datetime import datetime, timezone
     scan_job.status = ScanStatus.CANCELLED
-    scan_job.completed_at = datetime.now(timezone.utc)
+    scan_job.set_completion_time(datetime.now(timezone.utc))
     scan_job.error_message = "Cancelled by user"
     
     # Try to stop brain session if it exists
