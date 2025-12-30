@@ -726,20 +726,40 @@ async def quick_scan(
         # Extract domain from normalized URL
         domain = _extract_domain_name(normalized_url) if normalized_url else (project.root_domain or None)
         
+        # Map scan_level to tier (tier must match scan_level value)
+        # tier is a legacy column that maps directly to scan_level: 'basic' -> 'basic', 'pro' -> 'pro', 'advanced' -> 'advanced'
+        scan_level_value = scan_level_enum.value  # 'basic', 'pro', or 'advanced'
+        
+        # Validate scan_level_value is valid (defensive check)
+        if scan_level_value not in {'basic', 'pro', 'advanced'}:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "code": "INVALID_SCAN_LEVEL",
+                    "message": f"Invalid scan_level value: '{scan_level_value}'. Must be one of: basic, pro, advanced",
+                    "allowed": ['basic', 'pro', 'advanced'],
+                    "received": scan_level_value,
+                }
+            )
+        
+        # Set tier to match scan_level value
+        tier = scan_level_value  # 'basic', 'pro', or 'advanced'
+        
         # Log scan creation with user_id for debugging
         logger.info(
             f"Quick scan user_id={current_user.id} project_id={project.id} "
-            f"url={normalized_url} scan_level={scan_level_enum.value} domain={domain}"
+            f"url={normalized_url} scan_level={scan_level_value} tier={tier} domain={domain}"
         )
     
         # Create scan job with ALL required fields
-        # CRITICAL: Always set user_id, url, and domain to prevent NotNullViolation errors
+        # CRITICAL: Always set user_id, url, domain, and tier to prevent NotNullViolation errors
         # ScanLevelType.process_bind_param() will extract .value ('basic', 'pro', 'advanced')
         # ensuring database receives lowercase string, not enum name
         scan_job = ScanJob(
             user_id=current_user.id,  # REQUIRED: Always set user_id
             url=normalized_url,  # REQUIRED: Always set url
             domain=domain,  # Set domain (nullable, but set for consistency)
+            tier=tier,  # REQUIRED: Always set tier (maps to scan_level: 'basic', 'pro', or 'advanced')
             project_id=project.id,
             scan_level=scan_level_enum,  # ScanLevel.BASIC, ScanLevel.PRO, or ScanLevel.ADVANCED
             status=ScanStatus.PENDING,

@@ -867,13 +867,16 @@ export default function SecurityScannerClient() {
         // Extract readable error message from nested response structures
         // This ensures we never show "[object Object]"
         const data = (error as any)?.response?.data;
-        const detail = data?.detail;
+        const detail = data?.detail ?? data;
         const msg =
           detail?.message ||
+          detail?.error_message ||
           (typeof detail === 'string' ? detail : null) ||
-          data?.message ||
           (error as any)?.message ||
-          JSON.stringify(data ?? error, null, 2);
+          'Scan failed';
+        
+        // Log detail to console for debugging
+        console.error('Error detail:', detail);
         
         // Ensure msg is always a string, never [object Object]
         const displayMessage = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);

@@ -154,6 +154,7 @@ class ScanJob(Base):
     user_id = Column(Text, nullable=False, index=True)  # User who created the scan
     url = Column(Text, nullable=False)  # Target URL being scanned
     domain = Column(Text, nullable=True)  # Extracted domain from URL
+    tier = Column(String(10), nullable=False, server_default='basic')  # Scan tier: 'basic', 'pro', or 'advanced' (maps to scan_level)
     # New schema columns
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # nullable=True to support migration from old schema
     # CRITICAL: Use ScanLevelType TypeDecorator to ensure enum VALUES are persisted, not enum NAMES

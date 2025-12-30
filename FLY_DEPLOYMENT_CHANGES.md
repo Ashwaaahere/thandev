@@ -127,3 +127,5 @@ nmap -sT --top-ports 100 -sV example.com
 - Configuration defaults work out-of-the-box
 - Production-ready with proper error handling and logging
 
+
+
