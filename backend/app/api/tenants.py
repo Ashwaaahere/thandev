@@ -255,8 +255,8 @@ async def change_plan(
     # Map PlanName to PlanTier enum
     plan_mapping = {
         PlanName.FREE.value: "free",
-        PlanName.INDIVIDUAL.value: "basic",  # Map individual -> basic
-        PlanName.TEAM.value: "pro",  # Map team -> pro
+        PlanName.PRO.value: "basic",  # Map pro -> basic (PlanTier)
+        PlanName.ADVANCED.value: "pro",  # Map advanced -> pro (PlanTier)
     }
     
     # Get the PlanTier enum value
