@@ -42,7 +42,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       
       - name: Deploy Backend
-        run: flyctl deploy --config backend/fly.toml --remote-only
+        run: flyctl deploy --remote-only --config fly.toml --app thandev-backend
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         working-directory: backend
@@ -58,7 +58,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       
       - name: Deploy Brain Service
-        run: flyctl deploy --config services/thandev-brain/fly.toml --remote-only
+        run: flyctl deploy --remote-only --config fly.toml --app thandev-brain
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         working-directory: services/thandev-brain
@@ -74,7 +74,7 @@ jobs:
       - uses: superfly/flyctl-actions/setup-flyctl@master
       
       - name: Deploy Runner Service
-        run: flyctl deploy --config services/thandev-runner/fly.toml --remote-only
+        run: flyctl deploy --remote-only --config fly.toml --app thandev-runner
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
         working-directory: services/thandev-runner
