@@ -21,9 +21,25 @@ def upgrade():
     """
     Fix scanlevel enum to use lowercase canonical values: basic, pro, advanced.
     This is idempotent and safe to run multiple times.
+    
+    CRITICAL: This migration must run on the SAME DATABASE_URL used by runtime.
+    Fly.io release_command ensures migrations run before containers start.
     """
+    import os
+    from urllib.parse import urlparse
+    
     conn = op.get_bind()
     is_postgresql = conn.dialect.name == 'postgresql'
+    
+    # Log database connection info (redact password) for verification
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url:
+        try:
+            parsed = urlparse(db_url)
+            db_display = f"{parsed.scheme}://{parsed.username}:***@{parsed.hostname}:{parsed.port or 'default'}{parsed.path}"
+            print(f"Migration running on database: {db_display}")
+        except Exception:
+            print(f"Migration running on database: {db_url.split('@')[-1] if '@' in db_url else 'configured'}")
     
     if not is_postgresql:
         print("Not PostgreSQL, skipping enum fix (SQLite doesn't use enums)")

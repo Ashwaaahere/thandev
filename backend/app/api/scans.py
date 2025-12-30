@@ -697,14 +697,17 @@ async def quick_scan(
             requested_level=payload.scan_level,
         )
     
-        # Normalize scan_level using helper function
-        # The Pydantic validator already normalized it to lowercase string, but we normalize again
-        # to handle any edge cases
-        from app.core.scan_utils import normalize_scan_level, scan_level_to_enum
+        # Normalize scan_level to ScanLevel enum instance
+        # normalize_scan_level() handles all input variations and returns ScanLevel enum
+        # The TypeDecorator in ScanJob model will extract .value when binding to database
+        from app.core.scan_utils import normalize_scan_level
         
         try:
-            scan_level_normalized = normalize_scan_level(payload.scan_level)
-            logger.info(f"Normalized scan_level: '{payload.scan_level}' -> '{scan_level_normalized}'")
+            scan_level_enum = normalize_scan_level(payload.scan_level)
+            logger.info(
+                f"Normalized scan_level: '{payload.scan_level}' -> {scan_level_enum.name} "
+                f"(value: '{scan_level_enum.value}')"
+            )
         except ValueError as e:
             canonical_values = ['basic', 'pro', 'advanced']
             raise HTTPException(
@@ -716,26 +719,13 @@ async def quick_scan(
                     "received": str(payload.scan_level),
                 }
             )
-        
-        # Convert normalized string to ScanLevel enum for DB storage
-        try:
-            scan_level_enum = scan_level_to_enum(scan_level_normalized)
-        except ValueError as e:
-            canonical_values = ['basic', 'pro', 'advanced']
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail={
-                    "code": "INVALID_SCAN_LEVEL",
-                    "message": f"Could not convert scan_level to enum: {str(e)}",
-                    "allowed": canonical_values,
-                    "received": str(payload.scan_level),
-                }
-            )
     
-        # Create scan job with normalized enum value
+        # Create scan job with ScanLevel enum instance
+        # ScanLevelType.process_bind_param() will extract .value ('basic', 'pro', 'advanced')
+        # ensuring database receives lowercase string, not enum name
         scan_job = ScanJob(
             project_id=project.id,
-            scan_level=scan_level_enum,
+            scan_level=scan_level_enum,  # ScanLevel.BASIC, ScanLevel.PRO, or ScanLevel.ADVANCED
             status=ScanStatus.PENDING,
         )
     

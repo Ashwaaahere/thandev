@@ -2,10 +2,10 @@
 Unit tests for ScanLevel enum normalization and serialization
 
 These tests ensure that:
-1. normalize_scan_level() correctly normalizes various inputs to lowercase strings
-2. scan_level_to_enum() correctly converts strings to ScanLevel enum
+1. normalize_scan_level() correctly normalizes various inputs to ScanLevel enum instances
+2. scan_level_to_enum() correctly converts strings to ScanLevel enum (backward compatibility)
 3. Pydantic schemas serialize ScanLevel enum by value (not name)
-4. SQLAlchemy uses enum values when persisting to database
+4. SQLAlchemy TypeDecorator uses enum values when persisting to database
 """
 import pytest
 from app.core.scan_utils import normalize_scan_level, scan_level_to_enum
@@ -15,43 +15,59 @@ from datetime import datetime
 
 
 class TestNormalizeScanLevel:
-    """Test normalize_scan_level() function"""
+    """Test normalize_scan_level() function - now returns ScanLevel enum instances"""
     
     def test_normalize_lowercase_strings(self):
-        """Test that lowercase strings are returned as-is"""
-        assert normalize_scan_level("basic") == "basic"
-        assert normalize_scan_level("pro") == "pro"
-        assert normalize_scan_level("advanced") == "advanced"
+        """Test that lowercase strings are converted to ScanLevel enum"""
+        assert normalize_scan_level("basic") == ScanLevel.BASIC
+        assert normalize_scan_level("pro") == ScanLevel.PRO
+        assert normalize_scan_level("advanced") == ScanLevel.ADVANCED
+        # Verify enum values are lowercase
+        assert normalize_scan_level("basic").value == "basic"
+        assert normalize_scan_level("pro").value == "pro"
+        assert normalize_scan_level("advanced").value == "advanced"
     
     def test_normalize_uppercase_strings(self):
-        """Test that uppercase strings are normalized to lowercase"""
-        assert normalize_scan_level("BASIC") == "basic"
-        assert normalize_scan_level("PRO") == "pro"
-        assert normalize_scan_level("ADVANCED") == "advanced"
+        """Test that uppercase strings are normalized to ScanLevel enum"""
+        assert normalize_scan_level("BASIC") == ScanLevel.BASIC
+        assert normalize_scan_level("PRO") == ScanLevel.PRO
+        assert normalize_scan_level("ADVANCED") == ScanLevel.ADVANCED
+        # Verify enum values are lowercase
+        assert normalize_scan_level("BASIC").value == "basic"
+        assert normalize_scan_level("PRO").value == "pro"
+        assert normalize_scan_level("ADVANCED").value == "advanced"
     
     def test_normalize_mixed_case_strings(self):
-        """Test that mixed case strings are normalized to lowercase"""
-        assert normalize_scan_level("Basic") == "basic"
-        assert normalize_scan_level("Pro") == "pro"
-        assert normalize_scan_level("Advanced") == "advanced"
-        assert normalize_scan_level("BaSiC") == "basic"
+        """Test that mixed case strings are normalized to ScanLevel enum"""
+        assert normalize_scan_level("Basic") == ScanLevel.BASIC
+        assert normalize_scan_level("Pro") == ScanLevel.PRO
+        assert normalize_scan_level("Advanced") == ScanLevel.ADVANCED
+        assert normalize_scan_level("BaSiC") == ScanLevel.BASIC
+        # Verify enum values are lowercase
+        assert normalize_scan_level("Basic").value == "basic"
     
     def test_normalize_enum_members(self):
-        """Test that ScanLevel enum members are normalized to their values"""
-        assert normalize_scan_level(ScanLevel.BASIC) == "basic"
-        assert normalize_scan_level(ScanLevel.PRO) == "pro"
-        assert normalize_scan_level(ScanLevel.ADVANCED) == "advanced"
+        """Test that ScanLevel enum members are returned as-is"""
+        assert normalize_scan_level(ScanLevel.BASIC) == ScanLevel.BASIC
+        assert normalize_scan_level(ScanLevel.PRO) == ScanLevel.PRO
+        assert normalize_scan_level(ScanLevel.ADVANCED) == ScanLevel.ADVANCED
+        # Verify enum values are lowercase
+        assert normalize_scan_level(ScanLevel.BASIC).value == "basic"
     
     def test_normalize_enum_string_representation(self):
         """Test that enum string representations like 'ScanLevel.BASIC' are handled"""
-        assert normalize_scan_level("ScanLevel.BASIC") == "basic"
-        assert normalize_scan_level("ScanLevel.PRO") == "pro"
-        assert normalize_scan_level("ScanLevel.ADVANCED") == "advanced"
+        assert normalize_scan_level("ScanLevel.BASIC") == ScanLevel.BASIC
+        assert normalize_scan_level("ScanLevel.PRO") == ScanLevel.PRO
+        assert normalize_scan_level("ScanLevel.ADVANCED") == ScanLevel.ADVANCED
+        # Verify enum values are lowercase
+        assert normalize_scan_level("ScanLevel.BASIC").value == "basic"
     
     def test_normalize_whitespace(self):
         """Test that whitespace is stripped"""
-        assert normalize_scan_level("  basic  ") == "basic"
-        assert normalize_scan_level("  PRO  ") == "pro"
+        assert normalize_scan_level("  basic  ") == ScanLevel.BASIC
+        assert normalize_scan_level("  PRO  ") == ScanLevel.PRO
+        # Verify enum values are lowercase
+        assert normalize_scan_level("  basic  ").value == "basic"
     
     def test_normalize_invalid_values(self):
         """Test that invalid values raise ValueError"""

@@ -5,6 +5,7 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { thandevFetchJSON } from '@/lib/thandevApi';
+import { toast } from '@/components/Toast';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
 
@@ -866,22 +867,39 @@ export default function SecurityScannerClient() {
         const errorMessage = await getErrorMessage(error);
         console.error('Scan creation error:', errorMessage, error);
         
-        // Check if it's a structured error from backend
-        let displayMessage = errorMessage;
-        if (errorMessage.includes('DB_COMMIT_FAILED') || errorMessage.includes('database')) {
-          displayMessage = 'Database error: Failed to create scan. Please try again or contact support if the issue persists.';
-        } else if (errorMessage.includes('LIMIT_EXCEEDED') || errorMessage.includes('limit')) {
-          displayMessage = errorMessage; // Show the limit error as-is
-        } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
-          displayMessage = errorMessage; // Show permission errors as-is
+        // Extract readable error message from various error formats
+        // This ensures we never show "[object Object]"
+        let displayMessage: string;
+        if (error && typeof error === 'object' && 'response' in error) {
+          const responseError = error as any;
+          displayMessage =
+            responseError?.response?.data?.detail?.message ||
+            responseError?.response?.data?.message ||
+            (typeof responseError?.response?.data?.detail === 'string' 
+              ? responseError.response.data.detail 
+              : null) ||
+            responseError?.message ||
+            errorMessage;
+        } else {
+          displayMessage = errorMessage;
         }
         
         // Ensure displayMessage is always a string, never [object Object]
         if (typeof displayMessage !== 'string') {
-          displayMessage = String(displayMessage);
+          displayMessage = JSON.stringify(displayMessage, null, 2);
         }
         
-        alert(displayMessage);
+        // Enhance error messages for better UX
+        if (displayMessage.includes('DB_COMMIT_FAILED') || displayMessage.includes('database')) {
+          displayMessage = 'Database error: Failed to create scan. Please try again or contact support if the issue persists.';
+        } else if (displayMessage.includes('LIMIT_EXCEEDED') || displayMessage.includes('limit')) {
+          // Show the limit error as-is
+        } else if (displayMessage.includes('403') || displayMessage.includes('Forbidden')) {
+          // Show permission errors as-is
+        }
+        
+        // Show error toast instead of alert
+        toast.error(displayMessage, 8000); // 8 second duration for errors
         setSubmitting(false);
         return;
       }
@@ -897,16 +915,39 @@ export default function SecurityScannerClient() {
         console.error('Failed to start scan', err);
         // Use error message parser to never show [object Object]
         const { getErrorMessageSync } = await import('@/lib/errorUtils');
-        const errorMessage = getErrorMessageSync(err) || 'Failed to start scan. Please try again.';
+        
+        // Extract readable error message
+        let errorMessage: string;
+        if (err && typeof err === 'object' && 'response' in err) {
+          const responseError = err as any;
+          errorMessage =
+            responseError?.response?.data?.detail?.message ||
+            responseError?.response?.data?.message ||
+            (typeof responseError?.response?.data?.detail === 'string' 
+              ? responseError.response.data.detail 
+              : null) ||
+            responseError?.message ||
+            getErrorMessageSync(err) ||
+            'Failed to start scan. Please try again.';
+        } else {
+          errorMessage = getErrorMessageSync(err) || 'Failed to start scan. Please try again.';
+        }
+        
+        // Ensure errorMessage is always a string
+        if (typeof errorMessage !== 'string') {
+          errorMessage = JSON.stringify(errorMessage, null, 2);
+        }
         
         // Check for DOMAIN_NOT_VERIFIED error
         if (errorMessage.includes('DOMAIN_NOT_VERIFIED') || errorMessage.includes('Verify domain ownership')) {
           setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
           setSelectedMode('new');
+          toast.error('Domain not verified. Please verify domain ownership first.', 8000);
           return;
         }
         
         setError(errorMessage);
+        toast.error(errorMessage, 8000);
     } finally {
       setSubmitting(false);
     }
