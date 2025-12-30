@@ -10,6 +10,11 @@ export const metadata: Metadata = {
     default: 'Thandev - Cybersecurity Intelligence Platform',
     template: '%s | Thandev'
   },
+  icons: {
+    icon: '/favicon.svg',
+    shortcut: '/favicon.svg',
+    apple: '/favicon.svg',
+  },
   description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning. GitHub-authenticated access for developers.',
   keywords: [
     'cybersecurity',
