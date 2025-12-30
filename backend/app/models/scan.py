@@ -80,10 +80,10 @@ class ScanJob(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
     # Migration 0024 renames finished_at -> completed_at in DB
-    # The ORM attribute is completed_at, which will map to completed_at DB column after migration 0024 runs.
-    # Until then, SQLAlchemy will use the column name from the table definition.
-    # Note: After migration 0024, this should work correctly as SQLAlchemy will infer the column name from the attribute.
-    completed_at = Column(DateTime(timezone=True), nullable=True)
+    # We map the ORM attribute 'completed_at' to the DB column 'finished_at' until migration 0024 runs.
+    # After migration 0024, the DB column will be 'completed_at', so we need to update this mapping.
+    # TODO: After migration 0024 is deployed and runs, change this to: completed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column("finished_at", DateTime(timezone=True), nullable=True)
     
     # Relationships
     project = relationship("Project", back_populates="scan_jobs")
