@@ -79,7 +79,7 @@ class ScanJob(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column("finished_at", DateTime(timezone=True), nullable=True)  # DB column is finished_at, ORM uses completed_at
     
     # Relationships
     project = relationship("Project", back_populates="scan_jobs")

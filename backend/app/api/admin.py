@@ -330,12 +330,112 @@ def schema_check(
         from app.models.scan import ScanJob
         inspector = inspect(ScanJob)
         expected_columns = {col.key for col in inspector.columns}
-        actual_columns = {col["name"] for col in result["scan_jobs_columns"]}
-        result["missing_columns"] = list(expected_columns - actual_columns)
+        # Map ORM column names to actual DB column names (handle column renaming)
+        orm_to_db = {
+            'completed_at': 'completed_at'  # ORM uses completed_at, DB should have completed_at (or finished_at before migration)
+        }
+        # Check if finished_at exists but completed_at doesn't (before migration)
+        actual_column_set = {col["name"] for col in result["scan_jobs_columns"]}
+        if 'finished_at' in actual_column_set and 'completed_at' not in actual_column_set:
+            orm_to_db['completed_at'] = 'finished_at'
+        
+        actual_columns = actual_column_set
+        # Map expected ORM columns to DB columns for comparison
+        expected_db_columns = {orm_to_db.get(col, col) for col in expected_columns}
+        result["missing_columns"] = list(expected_columns - {col for col in expected_columns if orm_to_db.get(col, col) in actual_columns})
         
     except Exception as e:
         result["error"] = str(e)
         logger.error(f"Schema check failed: {e}", exc_info=True)
+    
+    return result
+
+
+@router.get("/db/alembic-versions", response_model=Dict[str, Any])
+def alembic_versions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Admin-only diagnostic endpoint to list ALL alembic_version tables across schemas.
+    Helps diagnose multiple alembic_version table issues.
+    """
+    from sqlalchemy import text
+    
+    result = {
+        "alembic_version_tables": [],
+        "error": None,
+    }
+    
+    try:
+        conn = db.bind
+        is_postgresql = conn.dialect.name == 'postgresql'
+        
+        if is_postgresql:
+            # Find all alembic_version tables across all schemas
+            tables_result = conn.execute(text("""
+                SELECT 
+                    table_schema,
+                    table_name,
+                    (SELECT version_num FROM information_schema.tables t2 
+                     JOIN alembic_version av ON true
+                     WHERE t2.table_schema = t.table_schema 
+                     AND t2.table_name = t.table_name 
+                     LIMIT 1) as version_num
+                FROM information_schema.tables t
+                WHERE table_name = 'alembic_version'
+                ORDER BY table_schema
+            """))
+            
+            # Actually, we need to query each schema's alembic_version table
+            schemas_result = conn.execute(text("""
+                SELECT DISTINCT table_schema
+                FROM information_schema.tables
+                WHERE table_name = 'alembic_version'
+            """))
+            schemas = [row[0] for row in schemas_result.fetchall()]
+            
+            for schema in schemas:
+                try:
+                    version_result = conn.execute(text(f"""
+                        SELECT version_num 
+                        FROM {schema}.alembic_version 
+                        LIMIT 1
+                    """))
+                    version = version_result.scalar()
+                    result["alembic_version_tables"].append({
+                        "schema": schema,
+                        "table_name": "alembic_version",
+                        "version_num": version,
+                    })
+                except Exception as e:
+                    result["alembic_version_tables"].append({
+                        "schema": schema,
+                        "table_name": "alembic_version",
+                        "error": str(e),
+                    })
+        else:
+            # SQLite - check if alembic_version exists
+            table_exists = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM sqlite_master 
+                    WHERE type='table' 
+                    AND name='alembic_version'
+                )
+            """)).scalar()
+            
+            if table_exists:
+                version_result = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+                version = version_result.scalar()
+                result["alembic_version_tables"].append({
+                    "schema": "main",
+                    "table_name": "alembic_version",
+                    "version_num": version,
+                })
+        
+    except Exception as e:
+        result["error"] = str(e)
+        logger.error(f"Alembic versions check failed: {e}", exc_info=True)
     
     return result
 
