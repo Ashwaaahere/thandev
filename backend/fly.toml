@@ -35,6 +35,18 @@ primary_region = "iad"
     method = "GET"
     path = "/health"
 
+# Add private networking to allow communication with brain service
+# This enables .internal DNS resolution for private service communication
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+  processes = ["app"]
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+    force_https = true
+
 [[vm]]
   cpu_kind = "shared"
   cpus = 1
