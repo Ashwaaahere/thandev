@@ -75,9 +75,9 @@ async def get_current_tenant_info(
             plan_value = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
             plan_mapping = {
                 PlanTier.FREE.value: PlanName.FREE.value,
-                PlanTier.BASIC.value: PlanName.INDIVIDUAL.value,
-                PlanTier.PRO.value: PlanName.TEAM.value,
-                PlanTier.ENTERPRISE.value: PlanName.TEAM.value,
+                PlanTier.BASIC.value: PlanName.PRO.value,
+                PlanTier.PRO.value: PlanName.ADVANCED.value,
+                PlanTier.ENTERPRISE.value: PlanName.ADVANCED.value,
             }
             plan_name = plan_mapping.get(plan_value, PlanName.FREE.value)
         

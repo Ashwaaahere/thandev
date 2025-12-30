@@ -76,9 +76,9 @@ def get_plan_limits(tenant) -> PlanLimits:
     # Map PlanTier enum values to PlanName enum values
     plan_mapping = {
         PlanTier.FREE.value: PlanName.FREE,
-        PlanTier.BASIC.value: PlanName.INDIVIDUAL,
-        PlanTier.PRO.value: PlanName.TEAM,
-        PlanTier.ENTERPRISE.value: PlanName.TEAM,
+        PlanTier.BASIC.value: PlanName.PRO,
+        PlanTier.PRO.value: PlanName.ADVANCED,
+        PlanTier.ENTERPRISE.value: PlanName.ADVANCED,
     }
     
     # Get the mapped plan name, default to FREE if unknown
