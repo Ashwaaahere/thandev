@@ -861,9 +861,9 @@ export default function SecurityScannerClient() {
           }
         );
       } catch (error) {
-        // Use error message parser to never show [object Object]
-        const { getErrorMessageSync } = await import('@/lib/errorUtils');
-        const errorMessage = getErrorMessageSync(error);
+        // Use async error message parser to properly handle Response objects
+        const { getErrorMessage } = await import('@/lib/errorUtils');
+        const errorMessage = await getErrorMessage(error);
         console.error('Scan creation error:', errorMessage, error);
         
         // Check if it's a structured error from backend
@@ -874,6 +874,11 @@ export default function SecurityScannerClient() {
           displayMessage = errorMessage; // Show the limit error as-is
         } else if (errorMessage.includes('403') || errorMessage.includes('Forbidden')) {
           displayMessage = errorMessage; // Show permission errors as-is
+        }
+        
+        // Ensure displayMessage is always a string, never [object Object]
+        if (typeof displayMessage !== 'string') {
+          displayMessage = String(displayMessage);
         }
         
         alert(displayMessage);

@@ -140,8 +140,19 @@ class QuickScanRequest(BaseModel):
     """Schema for quick scan request"""
     project_id: Optional[str] = Field(None, description="Project ID to scan (optional)")
     target_url: Optional[HttpUrl] = Field(None, description="Target URL to scan (optional)")
-    scan_level: ScanLevel
+    scan_level: Union[str, ScanLevel] = Field(..., description="Scan level: basic, pro, or advanced (case-insensitive)")
     description: Optional[str] = None
+    
+    @field_validator('scan_level', mode='before')
+    @classmethod
+    def normalize_scan_level(cls, v):
+        """Normalize scan_level to lowercase string"""
+        from app.core.scan_utils import normalize_scan_level
+        try:
+            return normalize_scan_level(v)
+        except ValueError as e:
+            # Re-raise with clearer message for Pydantic
+            raise ValueError(str(e))
     
     @model_validator(mode='after')
     def validate_at_least_one(self):

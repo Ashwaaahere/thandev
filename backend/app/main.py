@@ -163,12 +163,13 @@ app = FastAPI(
 # In development, the Next.js frontend at http://localhost:3000 calls this FastAPI backend at :8000.
 # In production, configure CORS_ORIGINS to allow your production frontend domain.
 # Must explicitly include OPTIONS in allow_methods for preflight requests
+# CORS middleware must be added BEFORE routers are included
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"],
-    allow_headers=["Authorization", "Content-Type", "X-Thandev-User-Id", "X-Thandev-Tenant-Id", "Accept"],
+    allow_headers=["*"],  # Allow all headers for CORS preflight
 )
 
 # Response compression middleware

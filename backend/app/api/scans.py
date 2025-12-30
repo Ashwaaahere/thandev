@@ -697,49 +697,38 @@ async def quick_scan(
             requested_level=payload.scan_level,
         )
     
-        # Normalize scan_level to canonical lowercase values
-        # Accept case-insensitive input but store as lowercase: basic, pro, advanced
-        scan_level_input = payload.scan_level
-        if isinstance(scan_level_input, str):
-            scan_level_normalized = scan_level_input.strip().lower()
-        elif hasattr(scan_level_input, 'value'):
-            scan_level_normalized = scan_level_input.value.strip().lower()
-        else:
-            scan_level_normalized = str(scan_level_input).strip().lower()
-    
-        # Validate normalized value
-        canonical_values = {'basic', 'pro', 'advanced'}
-        if scan_level_normalized not in canonical_values:
+        # Normalize scan_level using helper function
+        # The Pydantic validator already normalized it to lowercase string, but we normalize again
+        # to handle any edge cases
+        from app.core.scan_utils import normalize_scan_level, scan_level_to_enum
+        
+        try:
+            scan_level_normalized = normalize_scan_level(payload.scan_level)
+            logger.info(f"Normalized scan_level: '{payload.scan_level}' -> '{scan_level_normalized}'")
+        except ValueError as e:
+            canonical_values = ['basic', 'pro', 'advanced']
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "code": "INVALID_SCAN_LEVEL",
-                    "message": f"Invalid scan_level: '{scan_level_input}'. Must be one of: {', '.join(canonical_values)}",
-                    "allowed": list(canonical_values),
-                    "received": str(scan_level_input),
+                    "message": str(e),
+                    "allowed": canonical_values,
+                    "received": str(payload.scan_level),
                 }
             )
-    
-        # Map to ScanLevel enum
-        # ScanLevel enum values are already lowercase: BASIC='basic', PRO='pro', ADVANCED='advanced'
-        scan_level_enum = None
+        
+        # Convert normalized string to ScanLevel enum for DB storage
         try:
-            # Try to get enum by value (case-insensitive matching)
-            for level in ScanLevel:
-                if level.value.lower() == scan_level_normalized:
-                    scan_level_enum = level
-                    break
-        except Exception:
-            pass
-    
-        if scan_level_enum is None:
+            scan_level_enum = scan_level_to_enum(scan_level_normalized)
+        except ValueError as e:
+            canonical_values = ['basic', 'pro', 'advanced']
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "code": "INVALID_SCAN_LEVEL",
-                    "message": f"Could not map scan_level '{scan_level_input}' to enum. Must be one of: {', '.join(canonical_values)}",
-                    "allowed": list(canonical_values),
-                    "received": str(scan_level_input),
+                    "message": f"Could not convert scan_level to enum: {str(e)}",
+                    "allowed": canonical_values,
+                    "received": str(payload.scan_level),
                 }
             )
     
