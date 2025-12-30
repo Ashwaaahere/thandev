@@ -60,6 +60,60 @@ interface Props {
   session: Session;
 }
 
+// Tenant Plan Row Component
+function TenantPlanRow({
+  tenant,
+  session,
+  onUpdate,
+}: {
+  tenant: TenantSummary;
+  session: Session;
+  onUpdate: () => void;
+}) {
+  const [updating, setUpdating] = useState(false);
+  const [currentPlan, setCurrentPlan] = useState(tenant.plan);
+
+  const handlePlanChange = async (newPlan: string) => {
+    if (newPlan === currentPlan) return;
+    
+    setUpdating(true);
+    try {
+      await thandevFetchJSON(`/api/admin/tenants/${tenant.id}/plan`, session, {
+        method: 'PATCH',
+        body: JSON.stringify({ plan: newPlan }),
+      });
+      setCurrentPlan(newPlan);
+      onUpdate();
+      alert(`Plan updated to ${newPlan}`);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Failed to update plan');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  return (
+    <tr>
+      <td className="py-2 pr-3 text-slate-200">{tenant.name}</td>
+      <td className="py-2 pr-3">
+        <select
+          className="rounded border border-slate-700 bg-slate-950 p-1.5 text-sm"
+          value={currentPlan}
+          onChange={(e) => handlePlanChange(e.target.value)}
+          disabled={updating}
+        >
+          <option value="free">Free</option>
+          <option value="pro">Pro</option>
+          <option value="advanced">Advanced</option>
+        </select>
+      </td>
+      <td className="py-2 pr-3 text-xs text-slate-400">
+        {updating ? 'Updating...' : 'Plan updated'}
+      </td>
+    </tr>
+  );
+}
+
 export default function AdminDashboard({ session }: Props) {
   const [users, setUsers] = useState<UserSummary[]>([]);
   const [tenants, setTenants] = useState<TenantSummary[]>([]);
@@ -171,11 +225,17 @@ export default function AdminDashboard({ session }: Props) {
   const getLimitsJsonDisplay = (): string => {
     try {
       const limits = entitlementForm.limits_json;
-      if (!limits || typeof limits !== 'object') {
+      // Handle null, undefined, or invalid values
+      if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
         return '{}';
       }
-      return JSON.stringify(limits, null, 2);
+      // Ensure it's a plain object before stringifying
+      if (limits && typeof limits === 'object') {
+        return JSON.stringify(limits, null, 2);
+      }
+      return '{}';
     } catch (err) {
+      console.warn('Error stringifying limits_json:', err);
       return '{}';
     }
   };

@@ -195,6 +195,151 @@ def set_entitlement(
     )
 
 
+@router.get("/tenants/{tenant_id}/plan", response_model=Dict[str, Any])
+def get_tenant_plan(
+    tenant_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Get tenant's current plan information.
+    Admin-only endpoint.
+    """
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "plan": tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan),
+    }
+
+
+@router.patch("/tenants/{tenant_id}/plan", response_model=Dict[str, Any])
+def update_tenant_plan(
+    tenant_id: str,
+    payload: Dict[str, Any],
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Update tenant's plan.
+    Admin-only endpoint.
+    
+    Body: { "plan": "free" | "pro" | "advanced" }
+    """
+    from app.models.tenant import PlanTier
+    
+    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
+    if not tenant:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    
+    new_plan_str = payload.get("plan")
+    if not new_plan_str:
+        raise HTTPException(status_code=400, detail="Missing 'plan' in request body")
+    
+    # Map plan string to PlanTier enum
+    # PlanName (free/pro/advanced) -> PlanTier (free/basic/pro/enterprise)
+    plan_mapping = {
+        "free": PlanTier.FREE,
+        "pro": PlanTier.BASIC,  # Map pro -> basic (PlanTier)
+        "advanced": PlanTier.PRO,  # Map advanced -> pro (PlanTier)
+    }
+    
+    if new_plan_str not in plan_mapping:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid plan: {new_plan_str}. Must be one of: free, pro, advanced"
+        )
+    
+    old_plan = tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan)
+    tenant.plan = plan_mapping[new_plan_str]
+    db.commit()
+    db.refresh(tenant)
+    
+    _log_admin_action(
+        db,
+        current_user,
+        "tenant_plan_updated",
+        target_user_id=None,
+        metadata={"tenant_id": tenant.id, "old_plan": old_plan, "new_plan": new_plan_str},
+    )
+    
+    return {
+        "id": tenant.id,
+        "name": tenant.name,
+        "plan": tenant.plan.value if hasattr(tenant.plan, 'value') else str(tenant.plan),
+    }
+
+
+@router.get("/db/schema-check", response_model=Dict[str, Any])
+def schema_check(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_admin_user),
+):
+    """
+    Admin-only diagnostic endpoint to check database schema consistency.
+    Returns current Alembic version and missing columns in scan_jobs table.
+    """
+    from sqlalchemy import text, inspect
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+    
+    result = {
+        "alembic_version": None,
+        "expected_head": None,
+        "scan_jobs_columns": [],
+        "missing_columns": [],
+    }
+    
+    try:
+        # Get current Alembic version
+        conn = db.bind
+        table_exists = conn.execute(text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = 'public' 
+                AND table_name = 'alembic_version'
+            )
+        """)).scalar()
+        
+        if table_exists:
+            version_result = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            result["alembic_version"] = version_result.scalar()
+        
+        # Get expected head
+        try:
+            alembic_cfg = Config("alembic.ini")
+            script = ScriptDirectory.from_config(alembic_cfg)
+            result["expected_head"] = script.get_current_head()
+        except Exception as e:
+            result["expected_head_error"] = str(e)
+        
+        # Get actual columns in scan_jobs
+        columns_result = conn.execute(text("""
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns 
+            WHERE table_schema = 'public' 
+            AND table_name = 'scan_jobs'
+            ORDER BY ordinal_position
+        """))
+        result["scan_jobs_columns"] = [{"name": row[0], "type": row[1], "nullable": row[2]} for row in columns_result.fetchall()]
+        
+        # Compare with expected columns from ORM
+        from app.models.scan import ScanJob
+        inspector = inspect(ScanJob)
+        expected_columns = {col.key for col in inspector.columns}
+        actual_columns = {col["name"] for col in result["scan_jobs_columns"]}
+        result["missing_columns"] = list(expected_columns - actual_columns)
+        
+    except Exception as e:
+        result["error"] = str(e)
+        logger.error(f"Schema check failed: {e}", exc_info=True)
+    
+    return result
+
+
 @router.get("/allowed-domains", response_model=List[AllowedDomainResponse])
 def list_allowed_domains(
     db: Session = Depends(get_db),

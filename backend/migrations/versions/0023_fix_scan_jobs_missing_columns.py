@@ -87,6 +87,48 @@ def upgrade():
             conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN stack_info TEXT"))
         print("Added column: stack_info")
     
+    # Add error_message (Text, nullable=True)
+    if 'error_message' not in existing_column_names:
+        if is_postgresql:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN error_message TEXT"))
+        else:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN error_message TEXT"))
+        print("Added column: error_message")
+    
+    # Add brain_session_id (String(36), nullable=True, index=True) if missing
+    if 'brain_session_id' not in existing_column_names:
+        if is_postgresql:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN brain_session_id VARCHAR(36)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scan_jobs_brain_session_id ON scan_jobs(brain_session_id)"))
+        else:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN brain_session_id VARCHAR(36)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_scan_jobs_brain_session_id ON scan_jobs(brain_session_id)"))
+        print("Added column: brain_session_id")
+    
+    # Add summary (JSONB for PostgreSQL, JSON for SQLite) if missing
+    if 'summary' not in existing_column_names:
+        if is_postgresql:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN summary JSONB"))
+        else:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN summary TEXT"))
+        print("Added column: summary")
+    
+    # Add ai_plan (JSONB for PostgreSQL, JSON for SQLite) if missing
+    if 'ai_plan' not in existing_column_names:
+        if is_postgresql:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN ai_plan JSONB"))
+        else:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN ai_plan TEXT"))
+        print("Added column: ai_plan")
+    
+    # Add ai_status (String(20), nullable=True) if missing
+    if 'ai_status' not in existing_column_names:
+        if is_postgresql:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN ai_status VARCHAR(20)"))
+        else:
+            conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN ai_status VARCHAR(20)"))
+        print("Added column: ai_status")
+    
     # Commit the transaction
     conn.commit()
 
