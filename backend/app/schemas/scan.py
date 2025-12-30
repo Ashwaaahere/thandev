@@ -82,7 +82,8 @@ class ScanResponse(BaseModel):
     status_source: Optional[str] = Field(None, description="Source of status: 'brain' or 'db'")
     status_reason: Optional[str] = Field(None, description="Reason for status (e.g., 'stalled', 'brain_unreachable')")
     
-    model_config = ConfigDict(from_attributes=True)
+    # Configure Pydantic to serialize enums by VALUE (not name) to ensure lowercase strings in JSON
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class ScanSummary(BaseModel):
@@ -127,7 +128,8 @@ class ScanJobListItem(BaseModel):
     risk_score: Optional[float] = None
     findings_count: Optional[int] = None
     
-    model_config = ConfigDict(from_attributes=True)
+    # Configure Pydantic to serialize enums by VALUE (not name) to ensure lowercase strings in JSON
+    model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
 
 class ScanJobListResponse(BaseModel):

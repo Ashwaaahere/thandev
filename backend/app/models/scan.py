@@ -18,7 +18,11 @@ from app.core.database import Base
 
 
 class ScanLevel(str, enum.Enum):
-    """Scan level enumeration"""
+    """Scan level enumeration
+    
+    Values are lowercase strings to match PostgreSQL enum type 'scanlevel'.
+    SQLAlchemy will use these values (not names) when persisting to the database.
+    """
     BASIC = "basic"
     PRO = "pro"
     ADVANCED = "advanced"
@@ -50,7 +54,22 @@ class ScanJob(Base):
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # nullable=True to support migration from old schema
-    scan_level = Column(SQLEnum(ScanLevel), nullable=False)
+    # Configure SQLAlchemy Enum to use enum VALUES (not names) for PostgreSQL
+    # The 'scanlevel' enum type exists in the database (created by migration 0022)
+    # For str, enum.Enum, SQLAlchemy automatically uses .value when persisting to DB
+    # native_enum=True ensures PostgreSQL native enum type is used (not VARCHAR)
+    # create_type=False because the enum type already exists in the database
+    scan_level = Column(
+        SQLEnum(
+            ScanLevel,
+            name="scanlevel",
+            native_enum=True,
+            create_type=False,  # Enum type already exists in DB (created by migration 0022)
+        ),
+        nullable=False
+    )
+    # Status is stored as String(20) in the database, not as an enum type
+    # SQLAlchemy will automatically use enum values for str, enum.Enum
     status = Column(SQLEnum(ScanStatus), default=ScanStatus.PENDING, nullable=False, index=True)
     
     # Celery task tracking
