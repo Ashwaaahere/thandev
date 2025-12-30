@@ -757,8 +757,6 @@ async def quick_scan(
     except Exception as e:
         db.rollback()
         # Log detailed error information for debugging
-        import logging
-        logger = logging.getLogger(__name__)
         
         error_details = {
             "error_type": type(e).__name__,
@@ -1971,8 +1969,6 @@ async def get_scan_findings(
         
         # Debug logging for first finding
         if len(items) == 0:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.info(f"DEBUG Finding extraction - ID: {finding.id}, Title: {finding.title}")
             logger.info(f"  DB fields - url: {finding.url}, http_method: {finding.http_method}, parameter: {finding.parameter}")
             logger.info(f"  Extracted - url: {location_data['url']}, http_method: {location_data['http_method']}, parameter: {location_data['parameter']}")

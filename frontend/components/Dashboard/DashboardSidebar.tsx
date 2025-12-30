@@ -1,15 +1,32 @@
 'use client';
 
+import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 interface DashboardSidebarProps {
-  isOpen: boolean;
-  onClose: () => void;
+  isOpen?: boolean;
+  onClose?: () => void;
+  sidebarOpen?: boolean;
+  setSidebarOpen?: React.Dispatch<React.SetStateAction<boolean>>;
   showLogo?: boolean;
 }
 
-export default function DashboardSidebar({ isOpen, onClose, showLogo = true }: DashboardSidebarProps) {
+export default function DashboardSidebar({ 
+  isOpen: propIsOpen, 
+  onClose: propOnClose, 
+  sidebarOpen: propSidebarOpen,
+  setSidebarOpen: propSetSidebarOpen,
+  showLogo = true 
+}: DashboardSidebarProps) {
+  // Support both prop patterns: isOpen/onClose and sidebarOpen/setSidebarOpen
+  const [internalOpen, setInternalOpen] = React.useState(false);
+  
+  // Determine which props to use
+  const isOpen = propSidebarOpen ?? propIsOpen ?? internalOpen;
+  const handleClose = propSetSidebarOpen 
+    ? () => propSetSidebarOpen(false)
+    : (propOnClose ?? (() => setInternalOpen(false)));
   const pathname = usePathname();
 
   const navigation = [
@@ -36,7 +53,7 @@ export default function DashboardSidebar({ isOpen, onClose, showLogo = true }: D
       {isOpen && (
         <div 
           className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden"
-          onClick={onClose}
+          onClick={handleClose}
         />
       )}
 
@@ -75,7 +92,7 @@ export default function DashboardSidebar({ isOpen, onClose, showLogo = true }: D
                       background: isActive ? 'var(--brand)' : 'transparent',
                       color: isActive ? 'white' : 'var(--fg)'
                     }}
-                    onClick={() => onClose()}
+                    onClick={() => handleClose()}
                     aria-current={isActive ? 'page' : undefined}
                   >
                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -107,7 +124,7 @@ export default function DashboardSidebar({ isOpen, onClose, showLogo = true }: D
                         background: isActive ? 'var(--brand)' : 'transparent',
                         color: isActive ? 'white' : 'var(--fg)'
                       }}
-                      onClick={() => onClose()}
+                      onClick={() => handleClose()}
                     >
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
