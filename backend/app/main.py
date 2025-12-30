@@ -84,7 +84,6 @@ async def lifespan(app: FastAPI):
                     )
             except Exception as e:
                 logger.debug(f"Could not determine Alembic head revision: {e}")
-        engine.dispose()
     except Exception as e:
         logger.warning(f"Could not check Alembic version: {e}")
     
@@ -187,6 +186,49 @@ async def log_requests(request: Request, call_next):
                 }
             )
         raise
+
+
+# Database ProgrammingError handler (catch schema mismatches)
+@app.exception_handler(ProgrammingError)
+async def database_programming_error_handler(request: Request, exc: ProgrammingError):
+    """
+    Catch database ProgrammingError (like UndefinedColumn) and return clear error message.
+    This prevents 500 errors from schema mismatches from crashing the entire request.
+    """
+    try:
+        from psycopg2.errors import UndefinedColumn
+        # Check if it's an UndefinedColumn error
+        orig = getattr(exc, 'orig', None)
+        if orig and isinstance(orig, UndefinedColumn):
+            error_detail = str(orig)
+            logger.error(
+                f"Database schema mismatch: {error_detail}. "
+                f"Request: {request.method} {request.url.path}. "
+                f"Run 'alembic upgrade head' to update database schema."
+            )
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Database schema error",
+                    "message": "The database schema is out of sync with the application code. "
+                              "Please contact support or run database migrations.",
+                    "detail": "A required database column is missing. This usually indicates "
+                             "that migrations need to be run."
+                }
+            )
+    except ImportError:
+        # psycopg2 not available, can't check for UndefinedColumn
+        pass
+    
+    # For other ProgrammingErrors, log and return generic error
+    logger.error(f"Database ProgrammingError: {exc}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "Database error",
+            "message": "A database error occurred. Please contact support."
+        }
+    )
 
 
 # Global exception handler
