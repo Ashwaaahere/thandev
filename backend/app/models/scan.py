@@ -79,7 +79,11 @@ class ScanJob(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column("finished_at", DateTime(timezone=True), nullable=True)  # DB column is finished_at, ORM uses completed_at
+    # Migration 0024 renames finished_at -> completed_at in DB
+    # The ORM attribute is completed_at, which will map to completed_at DB column after migration 0024 runs.
+    # Until then, SQLAlchemy will use the column name from the table definition.
+    # Note: After migration 0024, this should work correctly as SQLAlchemy will infer the column name from the attribute.
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     
     # Relationships
     project = relationship("Project", back_populates="scan_jobs")
