@@ -57,18 +57,19 @@ def upgrade():
     print(f"Current tier default: {current_default}")
     
     # Set DEFAULT 'basic' if not already set
+    # NOTE: Do not call conn.commit() - Alembic handles transactions automatically
     if current_default != "'basic'":
         try:
             conn.execute(text("ALTER TABLE scan_jobs ALTER COLUMN tier SET DEFAULT 'basic'"))
-            conn.commit()
             print("Set tier default to 'basic'")
         except Exception as e:
             print(f"Warning: Could not set tier default: {e}")
-            conn.rollback()
+            # Alembic will handle rollback on exception
     else:
         print("tier default already set to 'basic'")
     
     # Backfill any existing NULL values
+    # NOTE: Do not call conn.commit() - Alembic handles transactions automatically
     try:
         result = conn.execute(text("""
             UPDATE scan_jobs 
@@ -76,14 +77,13 @@ def upgrade():
             WHERE tier IS NULL
         """))
         rows_updated = result.rowcount
-        conn.commit()
         if rows_updated > 0:
             print(f"Backfilled {rows_updated} rows with tier='basic'")
         else:
             print("No NULL tier values to backfill")
     except Exception as e:
         print(f"Warning: Could not backfill NULL tier values: {e}")
-        conn.rollback()
+        # Alembic will handle rollback on exception
     
     print("Completed tier default migration")
 
@@ -102,9 +102,9 @@ def downgrade():
     
     try:
         conn.execute(text("ALTER TABLE scan_jobs ALTER COLUMN tier DROP DEFAULT"))
-        conn.commit()
+        # NOTE: Do not call conn.commit() - Alembic handles transactions automatically
         print("Removed tier default")
     except Exception as e:
         print(f"Warning: Could not remove tier default: {e}")
-        conn.rollback()
+        # Alembic will handle rollback on exception
 
