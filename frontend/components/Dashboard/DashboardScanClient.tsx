@@ -136,7 +136,28 @@ export default function DashboardScanClient({ user, session }: DashboardScanClie
       router.push(`/projects/${data.project_id}/scans/${data.scan_id}`);
     } catch (e) {
       console.error('Error starting scan:', e);
-      const errorMessage = e instanceof Error ? e.message : 'Failed to start scan';
+      // Safely extract error message - never show [object Object]
+      let errorMessage = 'Failed to start scan';
+      if (e instanceof Error) {
+        errorMessage = e.message;
+      } else if (typeof e === 'string') {
+        errorMessage = e;
+      } else if (e && typeof e === 'object') {
+        // Handle structured error response
+        if (e.message && typeof e.message === 'string') {
+          errorMessage = e.message;
+        } else if (e.detail) {
+          if (typeof e.detail === 'string') {
+            errorMessage = e.detail;
+          } else if (typeof e.detail === 'object' && e.detail.message) {
+            errorMessage = e.detail.message;
+          } else {
+            errorMessage = JSON.stringify(e.detail);
+          }
+        } else {
+          errorMessage = JSON.stringify(e);
+        }
+      }
       setError(errorMessage);
       setScanStatus('');
       toast.error(errorMessage);

@@ -692,10 +692,56 @@ async def quick_scan(
         requested_level=payload.scan_level,
     )
     
-    # Create scan job
+    # Normalize scan_level to canonical lowercase values
+    # Accept case-insensitive input but store as lowercase: basic, pro, advanced
+    scan_level_input = payload.scan_level
+    if isinstance(scan_level_input, str):
+        scan_level_normalized = scan_level_input.strip().lower()
+    elif hasattr(scan_level_input, 'value'):
+        scan_level_normalized = scan_level_input.value.strip().lower()
+    else:
+        scan_level_normalized = str(scan_level_input).strip().lower()
+    
+    # Validate normalized value
+    canonical_values = {'basic', 'pro', 'advanced'}
+    if scan_level_normalized not in canonical_values:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_SCAN_LEVEL",
+                "message": f"Invalid scan_level: '{scan_level_input}'. Must be one of: {', '.join(canonical_values)}",
+                "allowed": list(canonical_values),
+                "received": str(scan_level_input),
+            }
+        )
+    
+    # Map to ScanLevel enum
+    # ScanLevel enum values are already lowercase: BASIC='basic', PRO='pro', ADVANCED='advanced'
+    scan_level_enum = None
+    try:
+        # Try to get enum by value (case-insensitive matching)
+        for level in ScanLevel:
+            if level.value.lower() == scan_level_normalized:
+                scan_level_enum = level
+                break
+    except Exception:
+        pass
+    
+    if scan_level_enum is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "INVALID_SCAN_LEVEL",
+                "message": f"Could not map scan_level '{scan_level_input}' to enum. Must be one of: {', '.join(canonical_values)}",
+                "allowed": list(canonical_values),
+                "received": str(scan_level_input),
+            }
+        )
+    
+    # Create scan job with normalized enum value
     scan_job = ScanJob(
         project_id=project.id,
-        scan_level=payload.scan_level,
+        scan_level=scan_level_enum,
         status=ScanStatus.PENDING,
     )
     

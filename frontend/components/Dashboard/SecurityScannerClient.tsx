@@ -835,31 +835,46 @@ export default function SecurityScannerClient() {
         // fallback: go to scan history
         router.push('/dashboard/history');
       }
-    } catch (err: any) {
-      console.error('Failed to start scan', err);
-      // Safely extract error message
-      let errorMessage = 'Failed to start scan. Please try again.';
-      if (err) {
-        if (typeof err === 'string') {
-          errorMessage = err;
-        } else if (err?.message && typeof err.message === 'string') {
-          errorMessage = err.message;
-          // Check for DOMAIN_NOT_VERIFIED error
-          if (err.message.includes('DOMAIN_NOT_VERIFIED') || err.message.includes('Verify domain ownership')) {
-            // Show error and suggest going to new target tab
-            setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
-            setSelectedMode('new');
-            return;
-          }
-        } else if (err?.error && typeof err.error === 'string') {
-          errorMessage = err.error;
-        } else if (typeof err === 'object') {
-          // Check for structured error response
-          if (err.detail && typeof err.detail === 'object' && err.detail.code === 'DOMAIN_NOT_VERIFIED') {
-            setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
-            setSelectedMode('new');
-            return;
-          }
+      } catch (err: any) {
+        console.error('Failed to start scan', err);
+        // Safely extract error message - never show [object Object]
+        let errorMessage = 'Failed to start scan. Please try again.';
+        if (err) {
+          if (typeof err === 'string') {
+            errorMessage = err;
+          } else if (err?.message && typeof err.message === 'string') {
+            errorMessage = err.message;
+            // Check for DOMAIN_NOT_VERIFIED error
+            if (err.message.includes('DOMAIN_NOT_VERIFIED') || err.message.includes('Verify domain ownership')) {
+              // Show error and suggest going to new target tab
+              setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+              setSelectedMode('new');
+              return;
+            }
+          } else if (err?.error && typeof err.error === 'string') {
+            errorMessage = err.error;
+          } else if (err?.detail) {
+            // Handle structured error response from backend
+            if (typeof err.detail === 'string') {
+              errorMessage = err.detail;
+            } else if (typeof err.detail === 'object') {
+              // Extract message from structured error
+              errorMessage = err.detail.message || err.detail.code || JSON.stringify(err.detail);
+              if (err.detail.code === 'DOMAIN_NOT_VERIFIED') {
+                setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+                setSelectedMode('new');
+                return;
+              }
+            }
+          } else if (typeof err === 'object') {
+            // Check for structured error response
+            if (err.detail && typeof err.detail === 'object' && err.detail.code === 'DOMAIN_NOT_VERIFIED') {
+              setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+              setSelectedMode('new');
+              return;
+            }
+            // Last resort: try to stringify, but prefer message field
+            errorMessage = err.message || JSON.stringify(err);
           // Try to stringify if it's an object, but limit length
           try {
             const errorStr = JSON.stringify(err);
