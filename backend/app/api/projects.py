@@ -136,7 +136,7 @@ def list_projects(
     # Check if user is admin
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
     if not is_admin:
-        logger.info(f"403 Forbidden: user {current_user.id} is not admin")
+        logger.debug(f"403 Forbidden: user {current_user.id} is not admin")
     
     # base query: only this tenant + this user
     base_q = (
@@ -871,7 +871,7 @@ def add_project_target(
     # Check domain verification or allowlist
     is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
     if not is_admin:
-        logger.info(f"403 Forbidden: user {current_user.id} is not admin (domain verification check)")
+        logger.debug(f"403 Forbidden: user {current_user.id} is not admin (domain verification check)")
         # Check allowlist
         from app.models.allowed_domain import AllowedDomain
         import sqlalchemy as sa

@@ -393,7 +393,16 @@ async def create_scan(
             scan_level_str = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level)
             
             # Start brain session
-            brain_client = get_brain_client()
+            try:
+                from app.services.brain_client import get_brain_client
+                brain_client = get_brain_client()
+            except ImportError as e:
+                logger.warning(f"Could not import brain_client: {e}. Skipping brain session.")
+                brain_client = None
+            
+            if not brain_client:
+                raise ValueError("Brain client is not available. Cannot start brain session.")
+            
             session_response = await brain_client.start_session(
                 scan_job_id=scan_job.id,
                 target_url=project.target_url,
@@ -833,9 +842,14 @@ async def quick_scan(
             )
     
         # PR-4E: Start brain session instead of (or in addition to) Celery task
-        from app.services.brain_client import get_brain_client
-    
         if settings.BRAIN_SERVICE_ENABLED:
+            try:
+                from app.services.brain_client import get_brain_client
+            except ImportError as e:
+                logger.warning(f"Could not import brain_client: {e}. Brain service features will be disabled.")
+                get_brain_client = None
+        
+        if settings.BRAIN_SERVICE_ENABLED and get_brain_client:
             try:
                 # Use target_url from payload if provided, otherwise use project.target_url
                 scan_target_url = normalized_url if normalized_url else project.target_url
@@ -1041,20 +1055,25 @@ async def get_scan(
         brain_fetch_start = datetime.now(timezone.utc)
         try:
             if settings.BRAIN_SERVICE_ENABLED:
-                from app.services.brain_client import get_brain_client
-                brain_client = get_brain_client()
+                try:
+                    from app.services.brain_client import get_brain_client
+                    brain_client = get_brain_client()
+                except ImportError as e:
+                    logger.warning(f"Could not import brain_client: {e}. Skipping brain session status fetch.")
+                    brain_client = None
                 
-                logger.info(
-                    "Fetching brain session status",
-                    extra={
-                        "scan_id": scan_id,
-                        "brain_session_id": scan_job.brain_session_id,
-                        "org_id": tenant.id,
-                        "project_id": scan_job.project_id,
-                    }
-                )
-                
-                session_status_raw = await brain_client.get_session(
+                if brain_client:
+                    logger.info(
+                        "Fetching brain session status",
+                        extra={
+                            "scan_id": scan_id,
+                            "brain_session_id": scan_job.brain_session_id,
+                            "org_id": tenant.id,
+                            "project_id": scan_job.project_id,
+                        }
+                    )
+                    
+                    session_status_raw = await brain_client.get_session(
                     session_id=scan_job.brain_session_id,
                     org_id=tenant.id,
                     project_id=scan_job.project_id,
@@ -1677,14 +1696,20 @@ async def cancel_scan(
     # Try to stop brain session if it exists
     if scan_job.brain_session_id:
         try:
-            from app.services.brain_client import get_brain_client
-            brain_client = get_brain_client()
-            await brain_client.stop_session(
-                session_id=scan_job.brain_session_id,
-                org_id=tenant.id,
-                project_id=scan_job.project_id,
-            )
-            logger.info(f"Stopped brain session {scan_job.brain_session_id} for cancelled scan {scan_id}")
+            try:
+                from app.services.brain_client import get_brain_client
+                brain_client = get_brain_client()
+            except ImportError as e:
+                logger.warning(f"Could not import brain_client: {e}. Skipping brain session stop.")
+                brain_client = None
+            
+            if brain_client:
+                await brain_client.stop_session(
+                    session_id=scan_job.brain_session_id,
+                    org_id=tenant.id,
+                    project_id=scan_job.project_id,
+                )
+                logger.info(f"Stopped brain session {scan_job.brain_session_id} for cancelled scan {scan_id}")
         except Exception as e:
             logger.warning(f"Failed to stop brain session {scan_job.brain_session_id}: {e}")
             # Don't fail the cancellation if we can't stop the brain session
@@ -1702,31 +1727,37 @@ async def cancel_scan(
     # Try to stop the brain session if it exists
     if scan_job.brain_session_id:
         try:
-            from app.services.brain_client import get_brain_client
-            import asyncio
-            
-            brain_client = get_brain_client()
-            org_id = None
-            project_id = scan_job.project_id
-            if scan_job.project and scan_job.project.tenant:
-                org_id = scan_job.project.tenant.id
-            
-            # Get or create event loop
             try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+                from app.services.brain_client import get_brain_client
+                brain_client = get_brain_client()
+            except ImportError as e:
+                logger.warning(f"Could not import brain_client: {e}. Skipping brain session stop.")
+                brain_client = None
             
-            # Call brain service to stop the session
-            stop_response = loop.run_until_complete(
-                brain_client.stop_session(
-                    session_id=scan_job.brain_session_id,
-                    org_id=org_id,
-                    project_id=project_id,
+            if brain_client:
+                import asyncio
+                
+                org_id = None
+                project_id = scan_job.project_id
+                if scan_job.project and scan_job.project.tenant:
+                    org_id = scan_job.project.tenant.id
+                
+                # Get or create event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Call brain service to stop the session
+                stop_response = loop.run_until_complete(
+                    brain_client.stop_session(
+                        session_id=scan_job.brain_session_id,
+                        org_id=org_id,
+                        project_id=project_id,
+                    )
                 )
-            )
-            logger.info(f"Stopped brain session {scan_job.brain_session_id} for cancelled scan {scan_id}: {stop_response.get('status')}")
+                logger.info(f"Stopped brain session {scan_job.brain_session_id} for cancelled scan {scan_id}: {stop_response.get('status')}")
         except Exception as e:
             logger.warning(f"Failed to stop brain session {scan_job.brain_session_id}: {e}")
             # Don't fail the cancellation if we can't stop the brain session

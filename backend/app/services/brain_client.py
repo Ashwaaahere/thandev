@@ -12,14 +12,44 @@ from app.core.config import settings
 import sys
 from pathlib import Path
 
-# Add packages to path
-packages_path = Path(__file__).parent.parent.parent.parent / "packages"
-if str(packages_path) not in sys.path:
-    sys.path.insert(0, str(packages_path))
-
-from thandev_schemas.planning import PlanScanRequest, PlanScanResponse
-
 logger = logging.getLogger(__name__)
+
+# Add packages to path
+# Try multiple possible paths for packages directory
+packages_paths = [
+    Path(__file__).parent.parent.parent.parent / "packages",  # From repo root
+    Path(__file__).parent.parent.parent / "packages",  # Alternative path
+    Path("/app/packages"),  # Absolute path in Docker
+]
+
+for packages_path in packages_paths:
+    if packages_path.exists() and str(packages_path) not in sys.path:
+        sys.path.insert(0, str(packages_path))
+        break
+
+# Import thandev_schemas with graceful fallback
+try:
+    from thandev_schemas.planning import PlanScanRequest, PlanScanResponse
+    THANDEV_SCHEMAS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"thandev_schemas.planning not available: {e}. Brain service features will be limited.")
+    THANDEV_SCHEMAS_AVAILABLE = False
+    # Create dummy classes to prevent import errors
+    class PlanScanRequest:
+        pass
+    class PlanScanResponse:
+        pass
+
+# Import reporting schemas with graceful fallback
+try:
+    from thandev_schemas.reporting import BuildReportPromptRequest
+    THANDEV_SCHEMAS_REPORTING_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"thandev_schemas.reporting not available: {e}. Report prompt features will be limited.")
+    THANDEV_SCHEMAS_REPORTING_AVAILABLE = False
+    # Create dummy class to prevent import errors
+    class BuildReportPromptRequest:
+        pass
 
 
 class BrainClient:
@@ -63,7 +93,11 @@ class BrainClient:
         Raises:
             httpx.HTTPError: If request fails
             ValueError: If response is invalid
+            ImportError: If thandev_schemas is not available
         """
+        if not THANDEV_SCHEMAS_AVAILABLE:
+            raise ImportError("thandev_schemas.planning is not available. Cannot create scan plan.")
+        
         endpoint = f"{self.base_url}/v1/plan-scan"
         
         request_data = PlanScanRequest(
@@ -132,8 +166,10 @@ class BrainClient:
         Raises:
             httpx.HTTPError: If request fails
         """
-        from thandev_schemas.reporting import BuildReportPromptRequest
+        if not THANDEV_SCHEMAS_REPORTING_AVAILABLE:
+            raise ImportError("thandev_schemas.reporting is not available. Cannot build report prompt.")
         
+        # BuildReportPromptRequest is already imported at module level
         endpoint = f"{self.base_url}/v1/build-report-prompt"
         
         request_data = BuildReportPromptRequest(
