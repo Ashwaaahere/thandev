@@ -555,14 +555,17 @@ async def quick_scan(
     # Log incoming payload for debugging (sanitized)
     logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
+    # Defensive check: ensure current_user and user_id are valid BEFORE any processing
+    if not current_user or not current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "UNAUTHENTICATED",
+                "message": "Login required"
+            }
+        )
+    
     try:
-    
-        if not current_user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="X-Thandev-User-Id header is required"
-            )
-    
         is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
         from app.core.limits import get_effective_limits
         limits = get_effective_limits(db, tenant, current_user)
@@ -719,11 +722,24 @@ async def quick_scan(
                     "received": str(payload.scan_level),
                 }
             )
+        
+        # Extract domain from normalized URL
+        domain = _extract_domain_name(normalized_url) if normalized_url else (project.root_domain or None)
+        
+        # Log scan creation with user_id for debugging
+        logger.info(
+            f"Quick scan user_id={current_user.id} project_id={project.id} "
+            f"url={normalized_url} scan_level={scan_level_enum.value} domain={domain}"
+        )
     
-        # Create scan job with ScanLevel enum instance
+        # Create scan job with ALL required fields
+        # CRITICAL: Always set user_id, url, and domain to prevent NotNullViolation errors
         # ScanLevelType.process_bind_param() will extract .value ('basic', 'pro', 'advanced')
         # ensuring database receives lowercase string, not enum name
         scan_job = ScanJob(
+            user_id=current_user.id,  # REQUIRED: Always set user_id
+            url=normalized_url,  # REQUIRED: Always set url
+            domain=domain,  # Set domain (nullable, but set for consistency)
             project_id=project.id,
             scan_level=scan_level_enum,  # ScanLevel.BASIC, ScanLevel.PRO, or ScanLevel.ADVANCED
             status=ScanStatus.PENDING,

@@ -862,43 +862,23 @@ export default function SecurityScannerClient() {
           }
         );
       } catch (error) {
-        // Use async error message parser to properly handle Response objects
-        const { getErrorMessage } = await import('@/lib/errorUtils');
-        const errorMessage = await getErrorMessage(error);
-        console.error('Scan creation error:', errorMessage, error);
+        console.error('Scan creation error:', error);
         
-        // Extract readable error message from various error formats
+        // Extract readable error message from nested response structures
         // This ensures we never show "[object Object]"
-        let displayMessage: string;
-        if (error && typeof error === 'object' && 'response' in error) {
-          const responseError = error as any;
-          displayMessage =
-            responseError?.response?.data?.detail?.message ||
-            responseError?.response?.data?.message ||
-            (typeof responseError?.response?.data?.detail === 'string' 
-              ? responseError.response.data.detail 
-              : null) ||
-            responseError?.message ||
-            errorMessage;
-        } else {
-          displayMessage = errorMessage;
-        }
+        const data = (error as any)?.response?.data;
+        const detail = data?.detail;
+        const msg =
+          detail?.message ||
+          (typeof detail === 'string' ? detail : null) ||
+          data?.message ||
+          (error as any)?.message ||
+          JSON.stringify(data ?? error, null, 2);
         
-        // Ensure displayMessage is always a string, never [object Object]
-        if (typeof displayMessage !== 'string') {
-          displayMessage = JSON.stringify(displayMessage, null, 2);
-        }
+        // Ensure msg is always a string, never [object Object]
+        const displayMessage = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
         
-        // Enhance error messages for better UX
-        if (displayMessage.includes('DB_COMMIT_FAILED') || displayMessage.includes('database')) {
-          displayMessage = 'Database error: Failed to create scan. Please try again or contact support if the issue persists.';
-        } else if (displayMessage.includes('LIMIT_EXCEEDED') || displayMessage.includes('limit')) {
-          // Show the limit error as-is
-        } else if (displayMessage.includes('403') || displayMessage.includes('Forbidden')) {
-          // Show permission errors as-is
-        }
-        
-        // Show error toast instead of alert
+        // Show error toast
         toast.error(displayMessage, 8000); // 8 second duration for errors
         setSubmitting(false);
         return;
@@ -913,30 +893,19 @@ export default function SecurityScannerClient() {
       }
       } catch (err: any) {
         console.error('Failed to start scan', err);
-        // Use error message parser to never show [object Object]
-        const { getErrorMessageSync } = await import('@/lib/errorUtils');
         
-        // Extract readable error message
-        let errorMessage: string;
-        if (err && typeof err === 'object' && 'response' in err) {
-          const responseError = err as any;
-          errorMessage =
-            responseError?.response?.data?.detail?.message ||
-            responseError?.response?.data?.message ||
-            (typeof responseError?.response?.data?.detail === 'string' 
-              ? responseError.response.data.detail 
-              : null) ||
-            responseError?.message ||
-            getErrorMessageSync(err) ||
-            'Failed to start scan. Please try again.';
-        } else {
-          errorMessage = getErrorMessageSync(err) || 'Failed to start scan. Please try again.';
-        }
+        // Extract readable error message from nested response structures
+        const data = err?.response?.data;
+        const detail = data?.detail;
+        const msg =
+          detail?.message ||
+          (typeof detail === 'string' ? detail : null) ||
+          data?.message ||
+          err?.message ||
+          JSON.stringify(data ?? err, null, 2);
         
-        // Ensure errorMessage is always a string
-        if (typeof errorMessage !== 'string') {
-          errorMessage = JSON.stringify(errorMessage, null, 2);
-        }
+        // Ensure msg is always a string
+        const errorMessage = typeof msg === 'string' ? msg : JSON.stringify(msg, null, 2);
         
         // Check for DOMAIN_NOT_VERIFIED error
         if (errorMessage.includes('DOMAIN_NOT_VERIFIED') || errorMessage.includes('Verify domain ownership')) {

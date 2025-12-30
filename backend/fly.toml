@@ -6,9 +6,10 @@ primary_region = "iad"
 
 [deploy]
   # Run migrations once per deploy via release_command
-  # Fix alembic_version column first, then run migrations
   # This ensures migrations run on the same database as the app, before containers start
-  release_command = "python fix_alembic_version_column.py && alembic upgrade head"
+  # Migrations run in a separate release container that exits after completion
+  # Runtime containers (entrypoint.sh) do NOT run migrations - they only start uvicorn
+  release_command = "alembic upgrade head"
 
 [env]
   PORT = "8000"

@@ -150,6 +150,11 @@ class ScanJob(Base):
     __tablename__ = "scan_jobs"
     
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    # Legacy columns (from original schema) - required for backward compatibility
+    user_id = Column(Text, nullable=False, index=True)  # User who created the scan
+    url = Column(Text, nullable=False)  # Target URL being scanned
+    domain = Column(Text, nullable=True)  # Extracted domain from URL
+    # New schema columns
     project_id = Column(String(36), ForeignKey("projects.id"), nullable=True, index=True)  # nullable=True to support migration from old schema
     # CRITICAL: Use ScanLevelType TypeDecorator to ensure enum VALUES are persisted, not enum NAMES
     # This prevents PostgreSQL errors like "invalid input value for enum scanlevel: 'BASIC'"
