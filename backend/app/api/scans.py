@@ -344,11 +344,25 @@ async def create_scan(
     
     # TODO: Add authorization check (verify project belongs to current_user)
     
-    # Create scan job
+    # Map scan_level to tier (tier must match scan_level value)
+    scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
+    tier = scan_level_value  # 'basic', 'pro', or 'advanced'
+    
+    # Extract domain from project target_url
+    domain = _extract_domain_name(project.target_url) if project.target_url else (project.root_domain or None)
+    
+    # Create scan job with ALL required fields
+    # CRITICAL: Always set user_id, url, domain, tier, and created_at to prevent NotNullViolation errors
+    from datetime import datetime, timezone
     scan_job = ScanJob(
+        user_id=current_user.id,  # REQUIRED: Always set user_id
+        url=project.target_url,  # REQUIRED: Always set url
+        domain=domain,  # Set domain (nullable, but set for consistency)
+        tier=tier,  # REQUIRED: Always set tier (maps to scan_level: 'basic', 'pro', or 'advanced')
         project_id=scan.project_id,
         scan_level=scan.scan_level,
         status=ScanStatus.PENDING,
+        created_at=datetime.now(timezone.utc),  # REQUIRED: Explicitly set created_at to prevent NotNullViolation
     )
     
     db.add(scan_job)
@@ -752,9 +766,10 @@ async def quick_scan(
         )
     
         # Create scan job with ALL required fields
-        # CRITICAL: Always set user_id, url, domain, and tier to prevent NotNullViolation errors
+        # CRITICAL: Always set user_id, url, domain, tier, and created_at to prevent NotNullViolation errors
         # ScanLevelType.process_bind_param() will extract .value ('basic', 'pro', 'advanced')
         # ensuring database receives lowercase string, not enum name
+        from datetime import datetime, timezone
         scan_job = ScanJob(
             user_id=current_user.id,  # REQUIRED: Always set user_id
             url=normalized_url,  # REQUIRED: Always set url
@@ -763,6 +778,7 @@ async def quick_scan(
             project_id=project.id,
             scan_level=scan_level_enum,  # ScanLevel.BASIC, ScanLevel.PRO, or ScanLevel.ADVANCED
             status=ScanStatus.PENDING,
+            created_at=datetime.now(timezone.utc),  # REQUIRED: Explicitly set created_at to prevent NotNullViolation
         )
     
         db.add(scan_job)
