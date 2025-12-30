@@ -17,13 +17,14 @@ class DomainVerificationStatusResponse(BaseModel):
     project_id: str
     domain: str
     status: str
-    token: str
-    record_name: str
-    record_value: str
+    token: str = Field(default="", description="Verification token (empty for allowlisted domains)")
+    record_name: str = Field(default="", description="DNS record name (empty for allowlisted domains)")
+    record_value: str = Field(default="", description="DNS record value (empty for allowlisted domains)")
     last_checked_at: Optional[datetime] = None
     verified_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
     last_error: Optional[str] = None
+    method: Optional[str] = Field(None, description="Verification method: 'dns' or 'allowlist'")
 
 
 class DomainVerificationVerifyResponse(DomainVerificationStatusResponse):

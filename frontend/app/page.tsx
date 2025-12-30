@@ -225,7 +225,7 @@ function useLiveStats(): LiveStats {
           // news
           let news: any[] = [];
           try {
-            const n = await fetch(`${API}/news?limit=400`).then((r) =>
+            const n = await fetch(`${API}/api/news?limit=400`).then((r) =>
               r.ok ? r.json() : []
             );
             if (Array.isArray(n)) news = n;
@@ -238,16 +238,16 @@ function useLiveStats(): LiveStats {
           // try dedicated exploits endpoint(s)
           let exp: any[] | null = null;
           try {
-            const e = await fetch(`${API}/exploits/daily`).then((r) =>
+            const e = await fetch(`${API}/api/exploits?period=today&limit=100`).then((r) =>
               r.ok ? r.json() : null
             );
             if (Array.isArray(e)) exp = e;
           } catch {}
           if (exp == null) {
             try {
-              const e2 = await fetch(`${API}/exploits?period=today`).then((r) =>
-                r.ok ? r.json() : null
-              );
+            const e2 = await fetch(`${API}/api/exploits?period=today&limit=100`).then((r) =>
+              r.ok ? r.json() : null
+            );
               if (Array.isArray(e2)) exp = e2;
             } catch {}
           }

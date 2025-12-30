@@ -563,6 +563,7 @@ def _domain_verification_response(project: Project, dv: DomainVerification) -> D
         verified_at=dv.verified_at,
         expires_at=dv.expires_at,
         last_error=dv.last_error,
+        method="dns",  # DNS verification method
     )
 
 
@@ -643,8 +644,10 @@ def get_domain_verification_status(
     """
     Get domain verification status for a project.
     
-    Returns existing verification if found, or 404 if not found.
-    Does NOT auto-create verification - use /request endpoint for that.
+    Returns:
+    - 200 with verified=true, method='allowlist' if project.root_domain is allowlisted
+    - 200 with verification details if DV record exists
+    - 200 with verified=false if no DV record and not allowlisted (never 404)
     """
     if not current_user:
         raise HTTPException(
@@ -653,6 +656,30 @@ def get_domain_verification_status(
         )
 
     project = _project_for_tenant_user(db, project_id, tenant, current_user)
+    
+    # Check if domain is allowlisted
+    if project.root_domain:
+        from app.models.allowed_domain import AllowedDomain
+        is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+        allowed_domain = (
+            db.query(AllowedDomain)
+            .filter(
+                AllowedDomain.tenant_id == tenant.id,
+                func.lower(AllowedDomain.domain) == func.lower(project.root_domain),
+            )
+            .first()
+        )
+        
+        if allowed_domain or is_admin:
+            # Domain is allowlisted or user is admin - return verified status
+            return DomainVerificationStatusResponse(
+                id="allowlist",
+                project_id=project.id,
+                domain=project.root_domain,
+                status=DomainVerificationStatus.VERIFIED.value,
+                verified_at=None,  # Allowlist doesn't have a verification timestamp
+                method="allowlist",
+            )
     domain = project.root_domain
     if not domain:
         raise HTTPException(
@@ -674,9 +701,16 @@ def get_domain_verification_status(
     )
     
     if not dv:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No domain verification found for this project. Use /request endpoint to create one.",
+        # Return 200 with verified=false instead of 404 for non-allowlisted domains
+        return DomainVerificationStatusResponse(
+            id="none",
+            project_id=project.id,
+            domain=domain,
+            status=DomainVerificationStatus.PENDING.value,
+            token="",
+            record_name="",
+            record_value="",
+            method=None,
         )
 
     return _domain_verification_response(project, dv)

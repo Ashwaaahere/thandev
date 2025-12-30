@@ -267,6 +267,29 @@ export default function SecurityScannerClient() {
       setDvStatus(null);
       return;
     }
+    
+    // Check if domain is allowlisted before making API call
+    const project = projects.find(p => p.id === projectId);
+    const isAdmin = Boolean(session.user?.isAdmin);
+    const isAllowed = project?.root_domain && allowedDomains.some(ad => 
+      ad.domain === project.root_domain.toLowerCase()
+    );
+    
+    // If allowlisted or admin, treat as verified without API call
+    if (isAllowed || isAdmin) {
+      setDvStatus({
+        id: 'allowlist',
+        project_id: projectId,
+        domain: project?.root_domain || '',
+        status: 'verified',
+        token: '',
+        record_name: '',
+        record_value: '',
+      });
+      setDvLoading(false);
+      return;
+    }
+    
     setDvLoading(true);
     setError(null);
     try {
@@ -303,7 +326,7 @@ export default function SecurityScannerClient() {
     } finally {
       setDvLoading(false);
     }
-  }, [session]);
+  }, [session, projects, allowedDomains]);
 
   useEffect(() => {
     if (sessionStatus === 'unauthenticated') {
