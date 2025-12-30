@@ -556,15 +556,16 @@ async def quick_scan(
     logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
     try:
-            if not current_user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="X-Thandev-User-Id header is required"
-                )
-        
-            is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
-            from app.core.limits import get_effective_limits
-            limits = get_effective_limits(db, tenant, current_user)
+    
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="X-Thandev-User-Id header is required"
+            )
+    
+        is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+        from app.core.limits import get_effective_limits
+        limits = get_effective_limits(db, tenant, current_user)
 
         # Handle project_id or target_url
         project = None
@@ -948,10 +949,10 @@ async def quick_scan(
                     logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
     
             return QuickScanResponse(
-                project_id=project.id,
-                scan_id=scan_job.id
-            )
-        except HTTPException as e:
+            project_id=project.id,
+            scan_id=scan_job.id
+        )
+    except HTTPException as e:
         # Log 4xx errors with detail before re-raising
         detail_str = str(e.detail) if e.detail else "No detail provided"
         logger.warning(f"Quick scan 4xx: status={e.status_code} detail={detail_str}")
