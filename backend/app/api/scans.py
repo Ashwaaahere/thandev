@@ -555,6 +555,8 @@ async def quick_scan(
     # Log incoming payload for debugging (sanitized)
     logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
+    try:
+    
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -946,10 +948,19 @@ async def quick_scan(
                 db.refresh(scan_job)
                 logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
     
-    return QuickScanResponse(
-        project_id=project.id,
-        scan_id=scan_job.id
-    )
+        return QuickScanResponse(
+            project_id=project.id,
+            scan_id=scan_job.id
+        )
+    except HTTPException as e:
+        # Log 4xx errors with detail before re-raising
+        detail_str = str(e.detail) if e.detail else "No detail provided"
+        logger.warning(f"Quick scan 4xx: status={e.status_code} detail={detail_str}")
+        raise
+    except Exception as e:
+        # Log unexpected errors before re-raising
+        logger.exception(f"Quick scan crashed: {type(e).__name__}: {str(e)}")
+        raise
 
 
 @router.get("/{scan_id}", response_model=ScanResponse)
