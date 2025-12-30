@@ -50,8 +50,6 @@ async def lifespan(app: FastAPI):
     # Log Alembic version and database schema for debugging migration issues
     try:
         from sqlalchemy import text
-        from urllib.parse import urlparse
-        import logging
         startup_logger = logging.getLogger(__name__)
         
         # Log DATABASE_URL (redacted password)
