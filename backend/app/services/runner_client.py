@@ -5,6 +5,7 @@ Used when brain is disabled to route scans through Runner service
 import logging
 import json
 import uuid
+import time
 from typing import Dict, Any, List, Optional
 from redis import Redis
 from redis.exceptions import RedisError
@@ -97,7 +98,6 @@ async def publish_step_request(
             "hypothesisId": "A"
         }
         try:
-            import time
             with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
                 f.write(json_module.dumps(log_data) + "\n")
         except Exception:
