@@ -37,6 +37,6 @@ fi
 # Default runtime behavior: start uvicorn ONLY
 # Migrations should have run via Fly.io release_command before containers start
 # This ensures fast startup and reliable health checks
-echo "Starting application server..."
+echo "Runtime mode: Starting application server (migrations should have run via release_command)"
 exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
 

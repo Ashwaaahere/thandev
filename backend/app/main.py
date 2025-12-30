@@ -53,10 +53,11 @@ async def lifespan(app: FastAPI):
         from sqlalchemy import text
         startup_logger = logging.getLogger(__name__)
         
-        # Log DATABASE_URL (redacted password)
+        # Log DATABASE_URL (redacted password) - show hostname/dbname for verification
         db_url_parsed = urlparse(settings.DATABASE_URL)
-        db_url_display = f"{db_url_parsed.scheme}://{db_url_parsed.username}:***@{db_url_parsed.hostname}:{db_url_parsed.port or 'default'}{db_url_parsed.path}"
-        startup_logger.info(f"Database connection: {db_url_display}")
+        # Log only hostname, port, and database name (mask username and password)
+        db_url_display = f"{db_url_parsed.scheme}://***:***@{db_url_parsed.hostname}:{db_url_parsed.port or 'default'}{db_url_parsed.path}"
+        startup_logger.info(f"Runtime DATABASE_URL: {db_url_display}")
         
         with engine.connect() as conn:
             # Check if alembic_version table exists
