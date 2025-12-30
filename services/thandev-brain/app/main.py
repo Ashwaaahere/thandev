@@ -45,7 +45,8 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("RAG store does not have initialize method")
     except Exception as e:
-        logger.warning(f"⚠️ RAG store initialization skipped (fallback mode): {e}")
+        logger.error(f"⚠️ RAG store initialization failed (will retry on first use): {e}", exc_info=True)
+        # Don't fail startup - collection will be created on first query if needed
     
     yield
     

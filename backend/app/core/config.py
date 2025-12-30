@@ -90,7 +90,7 @@ class Settings(BaseSettings):
     BRAIN_SERVICE_URL: str = "http://thandev-brain.flycast:8001"  # Default to flycast for private networking
     BRAIN_SERVICE_ENABLED: bool = True  # Set to False to disable brain service and use fallback
     BRAIN_REQUIRED: bool = False  # If True, fail scan if brain is unreachable. Set to False to allow fallback
-    BRAIN_SERVICE_TIMEOUT: int = 30  # Timeout in seconds for brain service requests
+    BRAIN_SERVICE_TIMEOUT: int = 60  # Timeout in seconds for brain service requests (increased for slow RAG queries)
     
     # Scan Execution Path Configuration
     USE_CELERY_SCAN_EXECUTION: bool = False  # If True, use Celery for scan execution (legacy). Default: False (use Runner via Redis streams)

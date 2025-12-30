@@ -177,9 +177,33 @@ class QdrantRagStore(RagStore):
             await self.initialize()
         
         try:
-            from qdrant_client.models import Filter, FieldCondition, MatchValue
+            from qdrant_client.models import Filter, FieldCondition, MatchValue, Distance, VectorParams
+            from qdrant_client.http.exceptions import UnexpectedResponse
+            
+            # Ensure collection exists - create if missing
+            try:
+                collections = self._client.get_collections().collections
+                collection_exists = any(c.name == self.collection for c in collections)
+                
+                if not collection_exists:
+                    logger.info(f"Collection {self.collection} does not exist, creating it...")
+                    if not self._embedding_provider:
+                        self._embedding_provider = get_embedding_provider()
+                    # Get embedding dimension from provider
+                    test_embedding = await self._embedding_provider.embed(["test"])
+                    dimension = len(test_embedding[0])
+                    
+                    self._client.create_collection(
+                        collection_name=self.collection,
+                        vectors_config=VectorParams(size=dimension, distance=Distance.COSINE),
+                    )
+                    logger.info(f"Created Qdrant collection: {self.collection} (dimension: {dimension})")
+            except Exception as e:
+                logger.warning(f"Failed to ensure collection exists: {e}. Will attempt query anyway.")
             
             # Generate query embedding
+            if not self._embedding_provider:
+                self._embedding_provider = get_embedding_provider()
             query_embedding = await self._embedding_provider.embed([query_text])
             
             # Build filter if provided
@@ -235,6 +259,11 @@ class QdrantRagStore(RagStore):
             logger.debug(f"Qdrant query returned {len(formatted_results)} results")
             return formatted_results
         except Exception as e:
+            # Handle 404 (collection not found) gracefully - return empty results
+            error_str = str(e)
+            if "404" in error_str or "Not Found" in error_str or "not found" in error_str.lower():
+                logger.debug(f"Qdrant collection {self.collection} not found, returning empty results")
+                return []
             logger.error(f"Failed to query Qdrant: {e}", exc_info=True)
             return []
 
