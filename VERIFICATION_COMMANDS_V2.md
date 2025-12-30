@@ -18,11 +18,44 @@ After deploying the fixes, run these commands to verify everything works.
 ## Quick Verification
 
 ### 1. Check Both Time Columns Exist
+
+**Option A: One-liner command:**
+```bash
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && python3 << \"PYEOF\"
+import os
+from sqlalchemy import create_engine, text
+engine = create_engine(os.environ[\"DATABASE_URL\"])
+with engine.connect() as conn:
+    result = conn.execute(text(\"\"\"
+        SELECT column_name 
+        FROM information_schema.columns
+        WHERE table_schema = '\''public'\'' AND table_name = '\''scan_jobs'\''
+        AND column_name IN ('\''finished_at'\'', '\''completed_at'\'')
+        ORDER BY column_name
+    \"\"\"))
+    columns = [row[0] for row in result.fetchall()]
+    print('\''Time columns in scan_jobs:'\'')
+    for col in columns:
+        print(f'\''  ✓ {col}'\'')
+    if '\''finished_at'\'' not in columns:
+        print('\''  ✗ finished_at missing!'\'')
+    if '\''completed_at'\'' not in columns:
+        print('\''  ✗ completed_at missing!'\'')
+    if len(columns) == 2:
+        print('\''\n✓ Both columns exist'\'')
+PYEOF
+'"
+```
+
+**Option B: Interactive shell (easier to read):**
 ```bash
 fly ssh console -a thandev-backend
 # Then inside the shell:
 cd /app
-python3 << 'EOF'
+python3
+# Paste the following Python code:
+```
+```python
 import os
 from sqlalchemy import create_engine, text
 engine = create_engine(os.environ['DATABASE_URL'])
@@ -44,7 +77,11 @@ with engine.connect() as conn:
         print('  ✗ completed_at missing!')
     if len(columns) == 2:
         print('\n✓ Both columns exist')
-EOF
+```
+
+**Option C: Use the provided script:**
+```bash
+bash QUICK_VERIFY.sh
 ```
 
 ### 2. Check Alembic Version
