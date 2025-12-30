@@ -39,7 +39,7 @@ jobs:
   deploy-brain:
     name: Deploy thandev-brain
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.brain == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.detect-changes.outputs.brain == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, '[deploy brain]') || contains(github.event.head_commit.message, 'deploy') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
   deploy-runner:
     name: Deploy thandev-runner
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.detect-changes.outputs.runner == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, '[deploy runner]') || contains(github.event.head_commit.message, 'deploy') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -63,7 +63,7 @@ jobs:
   deploy-qdrant:
     name: Deploy thandev-qdrant
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.qdrant == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.detect-changes.outputs.qdrant == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, '[deploy qdrant]') || contains(github.event.head_commit.message, 'deploy') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -75,7 +75,7 @@ jobs:
   deploy-backend:
     name: Deploy thandev-backend
     needs: detect-changes
-    if: ${{ needs.detect-changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.detect-changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, '[deploy backend]') || contains(github.event.head_commit.message, 'deploy') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
