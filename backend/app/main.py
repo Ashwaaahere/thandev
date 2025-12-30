@@ -4,6 +4,7 @@ Thandev v2 - Main FastAPI application
 import os
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, Request
