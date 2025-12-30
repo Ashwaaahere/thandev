@@ -19,7 +19,14 @@ After deploying the fixes, run these commands to verify everything works.
 
 ### Check Current Alembic Version
 ```bash
-fly ssh console -a thandev-backend -C "cd /app && alembic current"
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && alembic current'"
+```
+
+Or use an interactive shell:
+```bash
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app && alembic current
 ```
 
 Expected output after migration:
@@ -29,7 +36,7 @@ Expected output after migration:
 
 ### Check Alembic Version Directly in DB
 ```bash
-fly ssh console -a thandev-backend -C "python3 -c \"
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && python3 -c \"
 import os
 from sqlalchemy import create_engine, text
 engine = create_engine(os.environ['DATABASE_URL'])
@@ -37,35 +44,82 @@ with engine.connect() as conn:
     result = conn.execute(text('SELECT version_num FROM alembic_version LIMIT 1'))
     version = result.scalar()
     print(f'Current alembic_version: {version}')
-\""
+\"'"
 ```
 
-### Check scan_jobs Table Columns
+Or use an interactive shell:
 ```bash
-fly ssh console -a thandev-backend -C "python3 -c \"
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app
+python3 -c "
 import os
 from sqlalchemy import create_engine, text
 engine = create_engine(os.environ['DATABASE_URL'])
 with engine.connect() as conn:
-    result = conn.execute(text('''
+    result = conn.execute(text('SELECT version_num FROM alembic_version LIMIT 1'))
+    version = result.scalar()
+    print(f'Current alembic_version: {version}')
+"
+```
+
+### Check scan_jobs Table Columns
+```bash
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && python3 << \"EOF\"
+import os
+from sqlalchemy import create_engine, text
+engine = create_engine(os.environ[\"DATABASE_URL\"])
+with engine.connect() as conn:
+    result = conn.execute(text(\"\"\"
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_schema = \\'public\\' AND table_name = \\'scan_jobs\\'
+        WHERE table_schema = '\''public'\'' AND table_name = '\''scan_jobs'\''
         ORDER BY ordinal_position
-    '''))
+    \"\"\"))
+    columns = result.fetchall()
+    print(\"scan_jobs columns:\")
+    for col in columns:
+        print(f\"  - {col[0]}: {col[1]}\")
+    # Check specifically for completed_at vs finished_at
+    col_names = {col[0] for col in columns}
+    if \"completed_at\" in col_names:
+        print(\"\\n✓ completed_at column exists\")
+    elif \"finished_at\" in col_names:
+        print(\"\\n⚠ finished_at exists (migration 0024 not run yet)\")
+    else:
+        print(\"\\n✗ Neither completed_at nor finished_at found!\")
+EOF
+'"
+```
+
+Or use an interactive shell (easier):
+```bash
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app
+python3 << 'EOF'
+import os
+from sqlalchemy import create_engine, text
+engine = create_engine(os.environ['DATABASE_URL'])
+with engine.connect() as conn:
+    result = conn.execute(text("""
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'scan_jobs'
+        ORDER BY ordinal_position
+    """))
     columns = result.fetchall()
     print('scan_jobs columns:')
     for col in columns:
         print(f'  - {col[0]}: {col[1]}')
-    # Check specifically for completed_at vs finished_at
     col_names = {col[0] for col in columns}
     if 'completed_at' in col_names:
-        print('\\n✓ completed_at column exists')
+        print('\n✓ completed_at column exists')
     elif 'finished_at' in col_names:
-        print('\\n⚠ finished_at exists (migration 0024 not run yet)')
+        print('\n⚠ finished_at exists (migration 0024 not run yet)')
     else:
-        print('\\n✗ Neither completed_at nor finished_at found!')
-\""
+        print('\n✗ Neither completed_at nor finished_at found!')
+EOF
 ```
 
 Expected: Should show `completed_at` after migration 0024 runs.
@@ -82,18 +136,20 @@ curl -H "X-Thandev-User-Id: <admin_user_id>" \
 
 Or from within the backend:
 ```bash
-fly ssh console -a thandev-backend -C "python3 -c \"
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app
+python3 << 'EOF'
 import os
 import requests
 import json
-# You'll need to set admin user/tenant IDs
 headers = {
     'X-Thandev-User-Id': '<admin_user_id>',
     'X-Thandev-Tenant-Id': '<admin_tenant_id>'
 }
 resp = requests.get('http://localhost:8000/api/admin/db/schema-check', headers=headers)
 print(json.dumps(resp.json(), indent=2))
-\""
+EOF
 ```
 
 Expected response:
@@ -164,7 +220,15 @@ Should NOT see:
 If migrations didn't run automatically:
 
 ```bash
-fly ssh console -a thandev-backend -C "cd /app && alembic upgrade head"
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && alembic upgrade head'"
+```
+
+Or use an interactive shell:
+```bash
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app
+alembic upgrade head
 ```
 
 Expected output:
@@ -181,7 +245,10 @@ INFO  [alembic.runtime.migration] Running upgrade 0024_rename_finished_at -> 002
 Run this all-in-one check:
 
 ```bash
-fly ssh console -a thandev-backend -C "python3 << 'EOF'
+fly ssh console -a thandev-backend
+# Then inside the shell:
+cd /app
+python3 << 'EOF'
 import os
 from sqlalchemy import create_engine, text
 
@@ -227,7 +294,57 @@ with engine.connect() as conn:
     else:
         print('✓ All required columns present')
 EOF
-"
+```
+
+Or as a one-liner (more complex):
+```bash
+fly ssh console -a thandev-backend -C "sh -c 'cd /app && python3 << \"PYEOF\"
+import os
+from sqlalchemy import create_engine, text
+
+db_url = os.environ.get(\"DATABASE_URL\")
+if not db_url:
+    print(\"✗ DATABASE_URL not found\")
+    exit(1)
+
+engine = create_engine(db_url)
+
+print(\"=== Alembic Version ===\")
+with engine.connect() as conn:
+    result = conn.execute(text(\"SELECT version_num FROM alembic_version LIMIT 1\"))
+    version = result.scalar()
+    print(f\"Current: {version}\")
+    print(f\"Expected: 0025_stamp_version (or 0024_rename_finished_at)\")
+    if version in [\"0024_rename_finished_at\", \"0025_stamp_version\"]:
+        print(\"✓ Version looks good\")
+    else:
+        print(f\"⚠ Version mismatch - may need to run migrations\")
+
+print(\"\\n=== scan_jobs Columns ===\")
+with engine.connect() as conn:
+    result = conn.execute(text(\"\"\"
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = '\''public'\'' AND table_name = '\''scan_jobs'\''
+        ORDER BY column_name
+    \"\"\"))
+    columns = {row[0] for row in result.fetchall()}
+    
+    required = [\"completed_at\", \"scan_level\", \"stack_info\", \"celery_task_id\", \"error_message\"]
+    missing = [col for col in required if col not in columns]
+    
+    if \"completed_at\" in columns:
+        print(\"✓ completed_at exists\")
+    elif \"finished_at\" in columns:
+        print(\"⚠ finished_at exists (migration 0024 not run)\")
+    else:
+        print(\"✗ Neither completed_at nor finished_at found!\")
+    
+    if missing:
+        print(f\"✗ Missing required columns: {missing}\")
+    else:
+        print(\"✓ All required columns present\")
+PYEOF
+'"
 ```
 
 Expected output:
