@@ -556,8 +556,7 @@ async def quick_scan(
     logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
     try:
-    
-    if not current_user:
+        if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="X-Thandev-User-Id header is required"
