@@ -427,14 +427,20 @@ async def create_scan(
                 f"Brain will own the closed-loop scanning process."
             )
         except Exception as e:
+            # Log the error with full details for debugging
+            error_detail = str(e) if str(e) else repr(e)
+            if not error_detail:
+                error_detail = f"Unknown error: {type(e).__name__}"
+            
+            logger.error(
+                f"Failed to start brain session for scan {scan_job.id}: {error_detail}. "
+                f"BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL}, BRAIN_URL={settings.BRAIN_URL}",
+                exc_info=True
+            )
+            
             # If brain session fails and BRAIN_REQUIRED=true, fail the scan
             if settings.BRAIN_REQUIRED:
-                # Get more detailed error message
-                error_detail = str(e) if str(e) else repr(e)
-                if not error_detail:
-                    error_detail = f"Unknown error: {type(e).__name__}"
                 error_msg = f"Failed to start brain session: {error_detail}. Brain service is required (BRAIN_REQUIRED=true)."
-                logger.error(error_msg, exc_info=True)
                 scan_job.status = ScanStatus.FAILED
                 scan_job.error_message = error_msg
                 db.commit()
@@ -445,7 +451,10 @@ async def create_scan(
                 )
             else:
                 # Brain not required, fall back to legacy Celery orchestrator
-                logger.warning(f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery: {e}")
+                logger.warning(
+                    f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery/Runner. "
+                    f"Error: {error_detail}"
+                )
                 # Fall through to Celery queueing below
     else:
         logger.info("Brain service disabled, using Runner-based execution path")
