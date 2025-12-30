@@ -79,11 +79,28 @@ class ScanJob(Base):
     # Timestamps
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
     started_at = Column(DateTime(timezone=True), nullable=True)
-    # Migration 0024 renames finished_at -> completed_at in DB
-    # We map the ORM attribute 'completed_at' to the DB column 'finished_at' until migration 0024 runs.
-    # After migration 0024, the DB column will be 'completed_at', so we need to update this mapping.
-    # TODO: After migration 0024 is deployed and runs, change this to: completed_at = Column(DateTime(timezone=True), nullable=True)
-    completed_at = Column("finished_at", DateTime(timezone=True), nullable=True)
+    
+    # Completion timestamps - both columns exist for backward/forward compatibility
+    # Migration 0024 ensures both columns exist and are kept in sync
+    # Use completed_at in application code (preferred), but finished_at is available for compatibility
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    def set_completion_time(self, completion_time):
+        """
+        Set completion time on both columns to keep them in sync.
+        Use this method instead of setting completed_at or finished_at directly.
+        """
+        self.finished_at = completion_time
+        self.completed_at = completion_time
+    
+    @property
+    def completion_time(self):
+        """
+        Get the effective completion time from either column.
+        Prefers completed_at, falls back to finished_at.
+        """
+        return self.completed_at if self.completed_at is not None else self.finished_at
     
     # Relationships
     project = relationship("Project", back_populates="scan_jobs")
