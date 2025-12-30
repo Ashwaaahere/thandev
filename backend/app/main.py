@@ -47,9 +47,18 @@ async def lifespan(app: FastAPI):
     logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'configured'}")
     logger.info(f"Redis: {settings.REDIS_URL.split('@')[-1] if '@' in settings.REDIS_URL else 'configured'}")
     
-    # Log Alembic version for debugging migration issues
+    # Log Alembic version and database schema for debugging migration issues
     try:
         from sqlalchemy import text
+        from urllib.parse import urlparse
+        import logging
+        startup_logger = logging.getLogger(__name__)
+        
+        # Log DATABASE_URL (redacted password)
+        db_url_parsed = urlparse(settings.DATABASE_URL)
+        db_url_display = f"{db_url_parsed.scheme}://{db_url_parsed.username}:***@{db_url_parsed.hostname}:{db_url_parsed.port or 'default'}{db_url_parsed.path}"
+        startup_logger.info(f"Database connection: {db_url_display}")
+        
         with engine.connect() as conn:
             # Check if alembic_version table exists
             result = conn.execute(text("""
@@ -83,6 +92,31 @@ async def lifespan(app: FastAPI):
                     )
             except Exception as e:
                 logger.debug(f"Could not determine Alembic head revision: {e}")
+            
+            # Log actual columns in scan_jobs table (one-time diagnostic)
+            try:
+                columns_result = conn.execute(text("""
+                    SELECT column_name, data_type, is_nullable
+                    FROM information_schema.columns 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'scan_jobs'
+                    ORDER BY ordinal_position
+                """))
+                columns = columns_result.fetchall()
+                if columns:
+                    startup_logger.info(f"scan_jobs table columns ({len(columns)} total): {', '.join([col[0] for col in columns])}")
+                    # Log critical columns specifically
+                    column_names = {col[0] for col in columns}
+                    critical_columns = ['celery_task_id', 'scan_level', 'stack_info', 'project_id', 'brain_session_id']
+                    missing = [col for col in critical_columns if col not in column_names]
+                    if missing:
+                        startup_logger.warning(f"Missing critical columns in scan_jobs: {', '.join(missing)}")
+                    else:
+                        startup_logger.info("All critical columns present in scan_jobs table")
+                else:
+                    startup_logger.warning("scan_jobs table has no columns (table may not exist)")
+            except Exception as e:
+                startup_logger.warning(f"Could not check scan_jobs columns: {e}")
     except Exception as e:
         logger.warning(f"Could not check Alembic version: {e}")
     
