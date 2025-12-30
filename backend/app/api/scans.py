@@ -1104,8 +1104,8 @@ async def get_scan(
                             }
                         )
                         scan_job.status = ScanStatus.COMPLETED
-                        if not scan_job.completed_at:
-                            scan_job.completed_at = datetime.now(timezone.utc)
+                        if not scan_job.completion_time:
+                            scan_job.set_completion_time(datetime.now(timezone.utc))
                         db.commit()
                         db.refresh(scan_job)
                         status_source = "db"
