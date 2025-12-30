@@ -277,6 +277,102 @@ async def get_project(
     return project
 
 
+@router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project(
+    project_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a project and all related records.
+    
+    This performs cascade deletion of:
+    - domain_verifications (explicitly deleted to free up slots)
+    - scan_jobs (cascade via relationship)
+    - findings (cascade via scan_jobs relationship)
+    - tool_results (cascade via scan_jobs relationship)
+    - performance_scans (if table exists)
+    
+    All deletions happen in a transaction.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required",
+        )
+
+    logger.info(
+        f"Delete project request: project_id={project_id}, tenant_id={tenant.id}, user_id={current_user.id}"
+    )
+
+    # Get project
+    project = _project_for_tenant_user(db, project_id, tenant, current_user)
+
+    try:
+        # Delete related domain_verifications first (to free up slots)
+        domain_verifications_deleted = (
+            db.query(DomainVerification)
+            .filter(DomainVerification.project_id == project.id)
+            .delete(synchronize_session=False)
+        )
+        logger.info(
+            f"Deleted {domain_verifications_deleted} domain_verifications for project {project_id}"
+        )
+
+        # Delete related scan_jobs (this will cascade to findings and tool_results via relationships)
+        # Note: SQLAlchemy relationships have cascade="all, delete-orphan" on scan_jobs -> findings/tool_results
+        scan_jobs_deleted = (
+            db.query(ScanJob).filter(ScanJob.project_id == project.id).delete(synchronize_session=False)
+        )
+        logger.info(
+            f"Deleted {scan_jobs_deleted} scan_jobs for project {project_id}"
+        )
+
+        # Also explicitly delete findings to be safe (in case cascade doesn't work)
+        findings_deleted = (
+            db.query(Finding)
+            .filter(Finding.project_id == project.id)
+            .delete(synchronize_session=False)
+        )
+        logger.info(f"Deleted {findings_deleted} findings for project {project_id}")
+
+        # Delete performance scans if they exist
+        try:
+            from app.models.performance_scan import PerformanceScan
+            performance_scans_deleted = (
+                db.query(PerformanceScan)
+                .filter(PerformanceScan.project_id == project.id)
+                .delete(synchronize_session=False)
+            )
+            logger.info(
+                f"Deleted {performance_scans_deleted} performance_scans for project {project_id}"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Could not delete performance_scans (table may not exist): {e}"
+            )
+
+        # Finally, delete the project itself
+        db.delete(project)
+        db.commit()
+
+        logger.info(
+            f"Successfully deleted project {project_id} and all related records for tenant_id={tenant.id}, user_id={current_user.id}"
+        )
+
+    except Exception as e:
+        db.rollback()
+        logger.error(
+            f"Error deleting project {project_id}: {type(e).__name__}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete project: {str(e)}",
+        )
+
+
 @router.get("/{project_id}/overview", response_model=ProjectOverviewResponse)
 def get_project_overview(
     project_id: str,

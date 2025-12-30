@@ -60,3 +60,29 @@ All migrations are designed to be:
 - **Idempotent**: Safe to run multiple times
 - **Non-destructive**: Use `IF NOT EXISTS` checks where possible
 - **Backward compatible**: Add nullable columns with safe defaults when needed
+
+## Troubleshooting "Failed to fetch" / CORS Issues
+
+### If you see "Failed to fetch" when scanning or loading dashboard:
+
+1. **Check CORS preflight** - Ensure OPTIONS requests return 200:
+   ```bash
+   curl -X OPTIONS https://thandev-backend.fly.dev/api/stats \
+     -H "Origin: https://thandev.vercel.app" \
+     -H "Access-Control-Request-Method: GET" \
+     -v
+   ```
+   Should return 200 with `Access-Control-Allow-Origin` header.
+
+2. **Verify frontend calls correct endpoint**:
+   - Dashboard metrics: `/api/metrics/overview`
+   - Stats endpoint: `/api/stats` (not `/stats`)
+   - Projects list: `/api/projects`
+
+3. **Check CORS configuration** in `backend/app/core/config.py`:
+   - `CORS_ORIGINS` must include `https://thandev.vercel.app`
+   - Backend uses FastAPI `CORSMiddleware` with `allow_methods=["*"]` and `allow_headers=["*"]`
+
+4. **Backend logs** will show:
+   - `OPTIONS /api/stats -> 200` (success)
+   - `OPTIONS /api/stats -> 400` (failure - check CORS config)

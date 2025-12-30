@@ -9,8 +9,8 @@ from typing import Dict, List, TypedDict
 class PlanName(str, Enum):
     """Subscription plan names"""
     FREE = "free"
-    INDIVIDUAL = "individual"
-    TEAM = "team"
+    PRO = "pro"
+    ADVANCED = "advanced"
 
 
 class PlanLimits(TypedDict, total=False):
@@ -28,18 +28,21 @@ PLAN_CONFIG: Dict[PlanName, PlanLimits] = {
     PlanName.FREE: {
         "max_projects": 1,
         "max_scans_per_month": 20,
+        "max_scans_per_day": 3,
         "max_concurrent_scans": 1,
         "allowed_scan_levels": ["basic"],
     },
-    PlanName.INDIVIDUAL: {
+    PlanName.PRO: {
         "max_projects": 5,
         "max_scans_per_month": 200,
+        "max_scans_per_day": 25,
         "max_concurrent_scans": 2,
         "allowed_scan_levels": ["basic", "pro"],
     },
-    PlanName.TEAM: {
-        "max_projects": 20,
+    PlanName.ADVANCED: {
+        "max_projects": 25,
         "max_scans_per_month": 2000,
+        "max_scans_per_day": 200,
         "max_concurrent_scans": 5,
         "allowed_scan_levels": ["basic", "pro", "advanced"],
     },
