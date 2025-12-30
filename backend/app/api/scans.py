@@ -552,6 +552,9 @@ async def quick_scan(
     """
     from datetime import datetime, timezone
     
+    # Log incoming payload for debugging (sanitized)
+    logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
+    
     if not current_user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

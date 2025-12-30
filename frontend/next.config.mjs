@@ -140,7 +140,7 @@ const nextConfig = {
               "default-src 'self'",
               "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://vercel.live",
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-              "font-src 'self' https://fonts.gstatic.com https://r2cdn.perplexity.ai",
+              "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https: blob:",
               "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://127.0.0.1:7242 https://thandev-backend.fly.dev https://api.github.com https://github.com https://github.com/login https://github.com/login/oauth https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
               "frame-src 'none'",

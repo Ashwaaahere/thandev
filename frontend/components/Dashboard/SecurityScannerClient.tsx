@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -111,6 +111,11 @@ export default function SecurityScannerClient() {
   const [urlSelectionMode, setUrlSelectionMode] = useState<'existing' | 'new'>('existing');
   const [selectedUrl, setSelectedUrl] = useState<string>('');
   const [newUrlForProject, setNewUrlForProject] = useState<string>('');
+  
+  // Refs to prevent repeated fetches
+  const lastLoadedProjectIdRef = useRef<string>('');
+  const lastLoadedDvProjectIdRef = useRef<string>('');
+  const loadUrlsAbortControllerRef = useRef<AbortController | null>(null);
 
   const loadProjects = useCallback(async () => {
     if (!session) return;
@@ -142,6 +147,19 @@ export default function SecurityScannerClient() {
       setSelectedUrl('');
       return;
     }
+    
+    // Prevent repeated fetches for the same project
+    if (lastLoadedProjectIdRef.current === projectId && existingUrls.length > 0) {
+      return;
+    }
+    
+    // Abort any in-flight request
+    if (loadUrlsAbortControllerRef.current) {
+      loadUrlsAbortControllerRef.current.abort();
+    }
+    
+    lastLoadedProjectIdRef.current = projectId;
+    loadUrlsAbortControllerRef.current = new AbortController();
 
     setLoadingUrls(true);
     try {
@@ -181,7 +199,8 @@ export default function SecurityScannerClient() {
       // Use the new targets endpoint (backend will also filter)
       const urls = await thandevFetchJSON<string[]>(
         `/api/projects/${projectId}/targets`,
-        session
+        session,
+        { signal: loadUrlsAbortControllerRef.current?.signal }
       );
       
       console.log('Loaded URLs for project:', projectId, 'URLs:', urls);
@@ -246,7 +265,7 @@ export default function SecurityScannerClient() {
       setNewUrlForProject('');
       setUrlSelectionMode('existing');
     }
-  }, [selectedProjectId, selectedMode, loadExistingUrls, dvStatus, session, allowedDomains, projects, existingUrls.length]);
+  }, [selectedProjectId, selectedMode, session?.user?.isAdmin, dvStatus?.status]);
 
   const loadAllowedDomains = useCallback(async () => {
     if (!session) return;
@@ -268,6 +287,11 @@ export default function SecurityScannerClient() {
       return;
     }
     
+    // Prevent repeated fetches for the same project
+    if (lastLoadedDvProjectIdRef.current === projectId && dvStatus) {
+      return;
+    }
+    
     // Check if domain is allowlisted before making API call
     const project = projects.find(p => p.id === projectId);
     const isAdmin = Boolean(session.user?.isAdmin);
@@ -286,10 +310,12 @@ export default function SecurityScannerClient() {
         record_name: '',
         record_value: '',
       });
+      lastLoadedDvProjectIdRef.current = projectId;
       setDvLoading(false);
       return;
     }
     
+    lastLoadedDvProjectIdRef.current = projectId;
     setDvLoading(true);
     setError(null);
     try {
@@ -298,6 +324,7 @@ export default function SecurityScannerClient() {
         session
       );
       setDvStatus(res);
+      lastLoadedDvProjectIdRef.current = projectId;
     } catch (err: any) {
       // If not found (404), only auto-create if requested (not after deletion)
       if (err?.message?.includes('404') || err?.message?.includes('not found')) {
@@ -310,6 +337,7 @@ export default function SecurityScannerClient() {
               { method: 'POST' }
             );
             setDvStatus(req);
+            lastLoadedDvProjectIdRef.current = projectId;
           } catch (e) {
             console.log('No domain verification found (expected after deletion)');
             setDvStatus(null);
@@ -339,12 +367,13 @@ export default function SecurityScannerClient() {
   }, [sessionStatus, loadProjects, loadAllowedDomains, router]);
 
   useEffect(() => {
-    if (selectedProjectId) {
+    if (selectedProjectId && lastLoadedDvProjectIdRef.current !== selectedProjectId) {
       loadDomainVerification(selectedProjectId);
-    } else {
+    } else if (!selectedProjectId) {
       setDvStatus(null);
+      lastLoadedDvProjectIdRef.current = '';
     }
-  }, [selectedProjectId, loadDomainVerification]);
+  }, [selectedProjectId]);
   
   // Clear URLs when verification status changes to unverified or deleted
   useEffect(() => {
@@ -832,9 +861,10 @@ export default function SecurityScannerClient() {
           }
         );
       } catch (error) {
-        // thandevFetchJSON already throws with a message, but we can enhance it
-        const errorMessage = error instanceof Error ? error.message : 'Failed to start scan';
-        console.error('Scan creation error:', error);
+        // Use error message parser to never show [object Object]
+        const { getErrorMessageSync } = await import('@/lib/errorUtils');
+        const errorMessage = getErrorMessageSync(error);
+        console.error('Scan creation error:', errorMessage, error);
         
         // Check if it's a structured error from backend
         let displayMessage = errorMessage;
@@ -860,54 +890,18 @@ export default function SecurityScannerClient() {
       }
       } catch (err: any) {
         console.error('Failed to start scan', err);
-        // Safely extract error message - never show [object Object]
-        let errorMessage = 'Failed to start scan. Please try again.';
-        if (err) {
-          if (typeof err === 'string') {
-            errorMessage = err;
-          } else if (err?.message && typeof err.message === 'string') {
-            errorMessage = err.message;
-            // Check for DOMAIN_NOT_VERIFIED error
-            if (err.message.includes('DOMAIN_NOT_VERIFIED') || err.message.includes('Verify domain ownership')) {
-              // Show error and suggest going to new target tab
-              setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
-              setSelectedMode('new');
-              return;
-            }
-          } else if (err?.error && typeof err.error === 'string') {
-            errorMessage = err.error;
-          } else if (err?.detail) {
-            // Handle structured error response from backend
-            if (typeof err.detail === 'string') {
-              errorMessage = err.detail;
-            } else if (typeof err.detail === 'object') {
-              // Extract message from structured error
-              errorMessage = err.detail.message || err.detail.code || JSON.stringify(err.detail);
-              if (err.detail.code === 'DOMAIN_NOT_VERIFIED') {
-                setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
-                setSelectedMode('new');
-                return;
-              }
-            }
-          } else if (typeof err === 'object') {
-            // Check for structured error response
-            if (err.detail && typeof err.detail === 'object' && err.detail.code === 'DOMAIN_NOT_VERIFIED') {
-              setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
-              setSelectedMode('new');
-              return;
-            }
-            // Last resort: try to stringify, but prefer message field
-            errorMessage = err.message || JSON.stringify(err);
-          // Try to stringify if it's an object, but limit length
-          try {
-            const errorStr = JSON.stringify(err);
-            errorMessage = errorStr.length > 200 ? errorStr.substring(0, 200) + '...' : errorStr;
-          } catch {
-            errorMessage = 'Failed to start scan. Please try again.';
-          }
+        // Use error message parser to never show [object Object]
+        const { getErrorMessageSync } = await import('@/lib/errorUtils');
+        const errorMessage = getErrorMessageSync(err) || 'Failed to start scan. Please try again.';
+        
+        // Check for DOMAIN_NOT_VERIFIED error
+        if (errorMessage.includes('DOMAIN_NOT_VERIFIED') || errorMessage.includes('Verify domain ownership')) {
+          setError('Domain not verified. Please verify domain ownership in the "New target" tab first.');
+          setSelectedMode('new');
+          return;
         }
-      }
-      setError(errorMessage);
+        
+        setError(errorMessage);
     } finally {
       setSubmitting(false);
     }
