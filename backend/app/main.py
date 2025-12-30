@@ -48,9 +48,7 @@ async def lifespan(app: FastAPI):
     
     # Log Alembic version for debugging migration issues
     try:
-        from sqlalchemy import create_engine, text
-        from app.core.config import settings
-        engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        from sqlalchemy import text
         with engine.connect() as conn:
             # Check if alembic_version table exists
             result = conn.execute(text("""
