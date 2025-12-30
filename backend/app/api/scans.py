@@ -556,402 +556,402 @@ async def quick_scan(
     logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
     try:
-        if not current_user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-Thandev-User-Id header is required"
-        )
-    
-    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
-    from app.core.limits import get_effective_limits
-    limits = get_effective_limits(db, tenant, current_user)
+            if not current_user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="X-Thandev-User-Id header is required"
+                )
+        
+            is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+        from app.core.limits import get_effective_limits
+        limits = get_effective_limits(db, tenant, current_user)
 
-    # Handle project_id or target_url
-    project = None
-    normalized_url = None
+        # Handle project_id or target_url
+        project = None
+        normalized_url = None
     
-    if payload.project_id:
-        # Use existing project
-        project = (
-            db.query(Project)
-            .filter(
-                Project.id == payload.project_id,
-                Project.tenant_id == tenant.id,
-                Project.owner_id == current_user.id,
-            )
-            .first()
-        )
-        
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Project not found or access denied"
-            )
-        
-        normalized_url = project.target_url
-    else:
-        # New target URL provided - find or create project
-        if not payload.target_url:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either project_id or target_url must be provided"
-            )
-        
-        normalized_url = _normalize_url(str(payload.target_url))
-        
-        # Try to find existing project for this tenant with the same target_url
-        existing_project = (
-            db.query(Project)
-            .filter(
-                Project.tenant_id == tenant.id,
-                Project.target_url == normalized_url
-            )
-            .first()
-        )
-        
-        if existing_project:
-            project = existing_project
-        else:
-            # Check project count limit before creating new project
-            current_count = (
+        if payload.project_id:
+            # Use existing project
+            project = (
                 db.query(Project)
-                .filter(Project.tenant_id == tenant.id)
-                .count()
+                .filter(
+                    Project.id == payload.project_id,
+                    Project.tenant_id == tenant.id,
+                    Project.owner_id == current_user.id,
+                )
+                .first()
             )
-            
-            # Enforce max_projects limit using centralized limits utility
-            # Use get_all_projects_count() because projects are created before verification,
-            # so we need to count ALL projects (not just verified) to prevent limit bypass
-            from app.core.limits import check_limit_exceeded
-            from app.core.project_utils import get_all_projects_count
-            
-            current_count = get_all_projects_count(db, tenant, current_user)
-            check_limit_exceeded(
-                db=db,
-                tenant=tenant,
-                user=current_user,
-                limit_key="max_projects",
-                current_count=current_count,
-                limit_override=limits.get("max_projects"),
-            )
-            
-            # Derive project name from domain
-            domain_name = _extract_domain_name(normalized_url)
-            base_name = domain_name
-            
-            # Ensure uniqueness per tenant
-            project_name = base_name
-            counter = 1
-            while (
+        
+            if not project:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Project not found or access denied"
+                )
+        
+            normalized_url = project.target_url
+        else:
+            # New target URL provided - find or create project
+            if not payload.target_url:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Either project_id or target_url must be provided"
+                )
+        
+            normalized_url = _normalize_url(str(payload.target_url))
+        
+            # Try to find existing project for this tenant with the same target_url
+            existing_project = (
                 db.query(Project)
                 .filter(
                     Project.tenant_id == tenant.id,
-                    Project.name == project_name
+                    Project.target_url == normalized_url
                 )
                 .first()
-            ):
-                counter += 1
-                project_name = f"{base_name}-{counter}"
-            
-            # Create new project
-            project = Project(
-                name=project_name,
-                target_url=normalized_url,
-                repo_url=None,
-                description=payload.description or f"Quick scan for {normalized_url}",
-                owner_id=current_user.id,
-                tenant_id=tenant.id,
             )
+        
+            if existing_project:
+                project = existing_project
+            else:
+                # Check project count limit before creating new project
+                current_count = (
+                    db.query(Project)
+                    .filter(Project.tenant_id == tenant.id)
+                    .count()
+                )
             
-            db.add(project)
+                # Enforce max_projects limit using centralized limits utility
+                # Use get_all_projects_count() because projects are created before verification,
+                # so we need to count ALL projects (not just verified) to prevent limit bypass
+                from app.core.limits import check_limit_exceeded
+                from app.core.project_utils import get_all_projects_count
+            
+                current_count = get_all_projects_count(db, tenant, current_user)
+                check_limit_exceeded(
+                    db=db,
+                    tenant=tenant,
+                    user=current_user,
+                    limit_key="max_projects",
+                    current_count=current_count,
+                    limit_override=limits.get("max_projects"),
+                )
+            
+                # Derive project name from domain
+                domain_name = _extract_domain_name(normalized_url)
+                base_name = domain_name
+            
+                # Ensure uniqueness per tenant
+                project_name = base_name
+                counter = 1
+                while (
+                    db.query(Project)
+                    .filter(
+                        Project.tenant_id == tenant.id,
+                        Project.name == project_name
+                    )
+                    .first()
+                ):
+                    counter += 1
+                    project_name = f"{base_name}-{counter}"
+            
+                # Create new project
+                project = Project(
+                    name=project_name,
+                    target_url=normalized_url,
+                    repo_url=None,
+                    description=payload.description or f"Quick scan for {normalized_url}",
+                    owner_id=current_user.id,
+                    tenant_id=tenant.id,
+                )
+            
+                db.add(project)
+                db.commit()
+                db.refresh(project)
+    
+        # Lock/ensure root_domain
+        try:
+            ensure_project_root_domain(project, normalized_url, allow_admin_override=True, is_admin=is_admin)
             db.commit()
             db.refresh(project)
-    
-    # Lock/ensure root_domain
-    try:
-        ensure_project_root_domain(project, normalized_url, allow_admin_override=True, is_admin=is_admin)
-        db.commit()
-        db.refresh(project)
-    except PermissionError as e:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
-    except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except PermissionError as e:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    # Domain verification / allowlist enforcement
-    enforce_domain_verification_for_scan(
-        db,
-        project,
-        normalized_url,
-        is_admin=is_admin,
-        user_id=current_user.id,
-    )
-    
-    # Central enforcement (approval, plan/limits, domain lock/verification, quotas)
-    enforce_scan_permissions(
-        db=db,
-        tenant=tenant,
-        user=current_user,
-        project=project,
-        target_url=normalized_url,
-        requested_level=payload.scan_level,
-    )
-    
-    # Normalize scan_level to canonical lowercase values
-    # Accept case-insensitive input but store as lowercase: basic, pro, advanced
-    scan_level_input = payload.scan_level
-    if isinstance(scan_level_input, str):
-        scan_level_normalized = scan_level_input.strip().lower()
-    elif hasattr(scan_level_input, 'value'):
-        scan_level_normalized = scan_level_input.value.strip().lower()
-    else:
-        scan_level_normalized = str(scan_level_input).strip().lower()
-    
-    # Validate normalized value
-    canonical_values = {'basic', 'pro', 'advanced'}
-    if scan_level_normalized not in canonical_values:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVALID_SCAN_LEVEL",
-                "message": f"Invalid scan_level: '{scan_level_input}'. Must be one of: {', '.join(canonical_values)}",
-                "allowed": list(canonical_values),
-                "received": str(scan_level_input),
-            }
+        # Domain verification / allowlist enforcement
+        enforce_domain_verification_for_scan(
+            db,
+            project,
+            normalized_url,
+            is_admin=is_admin,
+            user_id=current_user.id,
         )
     
-    # Map to ScanLevel enum
-    # ScanLevel enum values are already lowercase: BASIC='basic', PRO='pro', ADVANCED='advanced'
-    scan_level_enum = None
-    try:
-        # Try to get enum by value (case-insensitive matching)
-        for level in ScanLevel:
-            if level.value.lower() == scan_level_normalized:
-                scan_level_enum = level
-                break
-    except Exception:
-        pass
-    
-    if scan_level_enum is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "code": "INVALID_SCAN_LEVEL",
-                "message": f"Could not map scan_level '{scan_level_input}' to enum. Must be one of: {', '.join(canonical_values)}",
-                "allowed": list(canonical_values),
-                "received": str(scan_level_input),
-            }
+        # Central enforcement (approval, plan/limits, domain lock/verification, quotas)
+        enforce_scan_permissions(
+            db=db,
+            tenant=tenant,
+            user=current_user,
+            project=project,
+            target_url=normalized_url,
+            requested_level=payload.scan_level,
         )
     
-    # Create scan job with normalized enum value
-    scan_job = ScanJob(
-        project_id=project.id,
-        scan_level=scan_level_enum,
-        status=ScanStatus.PENDING,
-    )
-    
-    db.add(scan_job)
-    
-    # Wrap commit in try/except to catch DB errors and return structured JSON response
-    try:
-        db.commit()
-        db.refresh(scan_job)
-    except Exception as e:
-        db.rollback()
-        # Log detailed error information for debugging
-        
-        error_details = {
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-        }
-        
-        # If it's a SQLAlchemy DBAPI error, extract more details
-        from sqlalchemy.exc import SQLAlchemyError, DBAPIError
-        if isinstance(e, DBAPIError) and hasattr(e, 'orig'):
-            error_details["db_error_code"] = getattr(e.orig, 'pgcode', None) if hasattr(e.orig, 'pgcode') else None
-            error_details["db_error_message"] = str(e.orig) if e.orig else None
-            logger.error(
-                f"Database error during scan_job commit: {error_details}",
-                exc_info=True,
-                extra={
-                    "error_type": type(e).__name__,
-                    "error_repr": repr(e),
-                    "db_error_code": error_details.get("db_error_code"),
-                    "db_error_message": error_details.get("db_error_message"),
-                }
-            )
+        # Normalize scan_level to canonical lowercase values
+        # Accept case-insensitive input but store as lowercase: basic, pro, advanced
+        scan_level_input = payload.scan_level
+        if isinstance(scan_level_input, str):
+            scan_level_normalized = scan_level_input.strip().lower()
+        elif hasattr(scan_level_input, 'value'):
+            scan_level_normalized = scan_level_input.value.strip().lower()
         else:
-            logger.error(
-                f"Error during scan_job commit: {error_details}",
-                exc_info=True,
-                extra={
-                    "error_type": type(e).__name__,
-                    "error_repr": repr(e),
+            scan_level_normalized = str(scan_level_input).strip().lower()
+    
+        # Validate normalized value
+        canonical_values = {'basic', 'pro', 'advanced'}
+        if scan_level_normalized not in canonical_values:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_SCAN_LEVEL",
+                    "message": f"Invalid scan_level: '{scan_level_input}'. Must be one of: {', '.join(canonical_values)}",
+                    "allowed": list(canonical_values),
+                    "received": str(scan_level_input),
                 }
             )
-        
-        # Return structured JSON error response
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "code": "DB_COMMIT_FAILED",
-                "message": "Failed to create scan job due to database error",
-                "error_type": error_details["error_type"],
-                "error_message": error_details["error_message"],
-            }
+    
+        # Map to ScanLevel enum
+        # ScanLevel enum values are already lowercase: BASIC='basic', PRO='pro', ADVANCED='advanced'
+        scan_level_enum = None
+        try:
+            # Try to get enum by value (case-insensitive matching)
+            for level in ScanLevel:
+                if level.value.lower() == scan_level_normalized:
+                    scan_level_enum = level
+                    break
+        except Exception:
+            pass
+    
+        if scan_level_enum is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "code": "INVALID_SCAN_LEVEL",
+                    "message": f"Could not map scan_level '{scan_level_input}' to enum. Must be one of: {', '.join(canonical_values)}",
+                    "allowed": list(canonical_values),
+                    "received": str(scan_level_input),
+                }
+            )
+    
+        # Create scan job with normalized enum value
+        scan_job = ScanJob(
+            project_id=project.id,
+            scan_level=scan_level_enum,
+            status=ScanStatus.PENDING,
         )
     
-    # PR-4E: Start brain session instead of (or in addition to) Celery task
-    from app.services.brain_client import get_brain_client
+        db.add(scan_job)
     
-    if settings.BRAIN_SERVICE_ENABLED:
+        # Wrap commit in try/except to catch DB errors and return structured JSON response
         try:
-            # Use target_url from payload if provided, otherwise use project.target_url
-            scan_target_url = normalized_url if normalized_url else project.target_url
-            
-            # Get stack_info (lightweight HTTP probe)
-            stack_info = {}
-            try:
-                import requests
-                resp = requests.head(scan_target_url, timeout=5, allow_redirects=True)
-                stack_info["http"] = {
-                    "status_code": resp.status_code,
-                    "headers": {
-                        "server": resp.headers.get("Server"),
-                        "content_type": resp.headers.get("Content-Type"),
-                    },
-                }
-            except Exception:
-                pass  # stack_info can be empty
-            
-            # Store target_url in stack_info for tracking
-            stack_info["target_url"] = scan_target_url
-            
-            # Convert enum to string value
-            scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
-            
-            # Start brain session
-            brain_client = get_brain_client()
-            session_response = await brain_client.start_session(
-                scan_job_id=scan_job.id,
-                target_url=scan_target_url,
-                scan_level=scan_level_str,
-                org_id=tenant.id,
-                project_id=project.id,
-                stack_info=stack_info,
-                policy={
-                    "max_steps": 20,
-                    "max_runtime_sec": 3600,
-                },
-            )
-            
-            # Store session_id in scan_job
-            scan_job.brain_session_id = session_response.get("session_id")
-            scan_job.status = ScanStatus.RUNNING  # Brain owns the loop now
             db.commit()
             db.refresh(scan_job)
-            
-            logger.info(
-                f"Started brain session {scan_job.brain_session_id} for quick scan {scan_job.id}. "
-                f"Brain will own the closed-loop scanning process."
-            )
         except Exception as e:
-            # If brain session fails and BRAIN_REQUIRED=true, fail the scan
-            if settings.BRAIN_REQUIRED:
-                # Get more detailed error message
-                error_detail = str(e) if str(e) else repr(e)
-                if not error_detail:
-                    error_detail = f"Unknown error: {type(e).__name__}"
-                error_msg = f"Failed to start brain session: {error_detail}. Brain service is required (BRAIN_REQUIRED=true)."
-                logger.error(error_msg, exc_info=True)
-                scan_job.status = ScanStatus.FAILED
-                scan_job.error_message = error_msg
-                db.commit()
-                db.refresh(scan_job)
-            else:
-                # Brain not required, fall back to legacy Celery orchestrator
-                logger.warning(f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery: {e}")
-                # Fall through to Celery queueing below
-    else:
-        logger.info("Brain service disabled, using Runner-based execution path")
-        # Fall through to Runner path below
-    
-    # Default path: Use Runner via Redis streams (when brain is disabled or not required)
-    if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
-        # Check if Celery execution is explicitly enabled
-        if settings.USE_CELERY_SCAN_EXECUTION:
-            logger.info(f"USE_CELERY_SCAN_EXECUTION=true, using Celery path for quick scan {scan_job.id}")
-            try:
-                from app.services.scan_orchestrator import ScanOrchestrator
-                orchestrator = ScanOrchestrator()
-                scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
-                celery_task_id = await orchestrator.queue_scan(
-                    scan_job.id, 
-                    project.target_url, 
-                    scan_level_str,
-                    user_id=current_user.id
+            db.rollback()
+            # Log detailed error information for debugging
+        
+            error_details = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+            }
+        
+            # If it's a SQLAlchemy DBAPI error, extract more details
+            from sqlalchemy.exc import SQLAlchemyError, DBAPIError
+            if isinstance(e, DBAPIError) and hasattr(e, 'orig'):
+                error_details["db_error_code"] = getattr(e.orig, 'pgcode', None) if hasattr(e.orig, 'pgcode') else None
+                error_details["db_error_message"] = str(e.orig) if e.orig else None
+                logger.error(
+                    f"Database error during scan_job commit: {error_details}",
+                    exc_info=True,
+                    extra={
+                        "error_type": type(e).__name__,
+                        "error_repr": repr(e),
+                        "db_error_code": error_details.get("db_error_code"),
+                        "db_error_message": error_details.get("db_error_message"),
+                    }
                 )
-                
-                # Update scan job with celery task ID
-                scan_job.celery_task_id = celery_task_id
-                scan_job.status = ScanStatus.QUEUED
-                db.commit()
-                db.refresh(scan_job)
-                logger.info(f"Quick scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
-            except Exception as e:
-                # If Celery queueing fails, mark scan as failed but still return the scan job
-                error_msg = f"Failed to queue scan task: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                
-                scan_job.status = ScanStatus.FAILED
-                scan_job.error_message = error_msg
-                db.commit()
-                db.refresh(scan_job)
-                
-                # Still return the scan, but log the error
-                logger.warning(f"Quick scan created but queueing failed: {error_msg}")
-        else:
-            # Default: Use Runner via Redis streams
-            logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
+            else:
+                logger.error(
+                    f"Error during scan_job commit: {error_details}",
+                    exc_info=True,
+                    extra={
+                        "error_type": type(e).__name__,
+                        "error_repr": repr(e),
+                    }
+                )
+        
+            # Return structured JSON error response
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "DB_COMMIT_FAILED",
+                    "message": "Failed to create scan job due to database error",
+                    "error_type": error_details["error_type"],
+                    "error_message": error_details["error_message"],
+                }
+            )
+    
+        # PR-4E: Start brain session instead of (or in addition to) Celery task
+        from app.services.brain_client import get_brain_client
+    
+        if settings.BRAIN_SERVICE_ENABLED:
             try:
-                from app.services.runner_client import publish_scan_steps_to_runner
-                
-                # Publish step requests to Runner
-                success = await publish_scan_steps_to_runner(
+                # Use target_url from payload if provided, otherwise use project.target_url
+                scan_target_url = normalized_url if normalized_url else project.target_url
+            
+                # Get stack_info (lightweight HTTP probe)
+                stack_info = {}
+                try:
+                    import requests
+                    resp = requests.head(scan_target_url, timeout=5, allow_redirects=True)
+                    stack_info["http"] = {
+                        "status_code": resp.status_code,
+                        "headers": {
+                            "server": resp.headers.get("Server"),
+                            "content_type": resp.headers.get("Content-Type"),
+                        },
+                    }
+                except Exception:
+                    pass  # stack_info can be empty
+            
+                # Store target_url in stack_info for tracking
+                stack_info["target_url"] = scan_target_url
+            
+                # Convert enum to string value
+                scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
+            
+                # Start brain session
+                brain_client = get_brain_client()
+                session_response = await brain_client.start_session(
                     scan_job_id=scan_job.id,
-                    target_url=project.target_url,
-                    scan_level=payload.scan_level,
+                    target_url=scan_target_url,
+                    scan_level=scan_level_str,
                     org_id=tenant.id,
                     project_id=project.id,
+                    stack_info=stack_info,
+                    policy={
+                        "max_steps": 20,
+                        "max_runtime_sec": 3600,
+                    },
                 )
-                
-                if success:
-                    scan_job.status = ScanStatus.RUNNING
-                    scan_job.started_at = datetime.now(timezone.utc)
+            
+                # Store session_id in scan_job
+                scan_job.brain_session_id = session_response.get("session_id")
+                scan_job.status = ScanStatus.RUNNING  # Brain owns the loop now
+                db.commit()
+                db.refresh(scan_job)
+            
+                logger.info(
+                    f"Started brain session {scan_job.brain_session_id} for quick scan {scan_job.id}. "
+                    f"Brain will own the closed-loop scanning process."
+                )
+            except Exception as e:
+                # If brain session fails and BRAIN_REQUIRED=true, fail the scan
+                if settings.BRAIN_REQUIRED:
+                    # Get more detailed error message
+                    error_detail = str(e) if str(e) else repr(e)
+                    if not error_detail:
+                        error_detail = f"Unknown error: {type(e).__name__}"
+                    error_msg = f"Failed to start brain session: {error_detail}. Brain service is required (BRAIN_REQUIRED=true)."
+                    logger.error(error_msg, exc_info=True)
+                    scan_job.status = ScanStatus.FAILED
+                    scan_job.error_message = error_msg
                     db.commit()
                     db.refresh(scan_job)
-                    logger.info(f"Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
                 else:
-                    error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
-                    logger.error(error_msg)
+                    # Brain not required, fall back to legacy Celery orchestrator
+                    logger.warning(f"Brain session failed but BRAIN_REQUIRED=false, falling back to Celery: {e}")
+                    # Fall through to Celery queueing below
+        else:
+            logger.info("Brain service disabled, using Runner-based execution path")
+            # Fall through to Runner path below
+    
+        # Default path: Use Runner via Redis streams (when brain is disabled or not required)
+        if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
+            # Check if Celery execution is explicitly enabled
+            if settings.USE_CELERY_SCAN_EXECUTION:
+                logger.info(f"USE_CELERY_SCAN_EXECUTION=true, using Celery path for quick scan {scan_job.id}")
+                try:
+                    from app.services.scan_orchestrator import ScanOrchestrator
+                    orchestrator = ScanOrchestrator()
+                    scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
+                    celery_task_id = await orchestrator.queue_scan(
+                        scan_job.id, 
+                        project.target_url, 
+                        scan_level_str,
+                        user_id=current_user.id
+                    )
+                
+                    # Update scan job with celery task ID
+                    scan_job.celery_task_id = celery_task_id
+                    scan_job.status = ScanStatus.QUEUED
+                    db.commit()
+                    db.refresh(scan_job)
+                    logger.info(f"Quick scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
+                except Exception as e:
+                    # If Celery queueing fails, mark scan as failed but still return the scan job
+                    error_msg = f"Failed to queue scan task: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
+                
+                    scan_job.status = ScanStatus.FAILED
+                    scan_job.error_message = error_msg
+                    db.commit()
+                    db.refresh(scan_job)
+                
+                    # Still return the scan, but log the error
+                    logger.warning(f"Quick scan created but queueing failed: {error_msg}")
+            else:
+                # Default: Use Runner via Redis streams
+                logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
+                try:
+                    from app.services.runner_client import publish_scan_steps_to_runner
+                
+                    # Publish step requests to Runner
+                    success = await publish_scan_steps_to_runner(
+                        scan_job_id=scan_job.id,
+                        target_url=project.target_url,
+                        scan_level=payload.scan_level,
+                        org_id=tenant.id,
+                        project_id=project.id,
+                    )
+                
+                    if success:
+                        scan_job.status = ScanStatus.RUNNING
+                        scan_job.started_at = datetime.now(timezone.utc)
+                        db.commit()
+                        db.refresh(scan_job)
+                        logger.info(f"Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
+                    else:
+                        error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
+                        logger.error(error_msg)
+                        scan_job.status = ScanStatus.FAILED
+                        scan_job.error_message = error_msg
+                        db.commit()
+                        db.refresh(scan_job)
+                        logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
+                except Exception as e:
+                    error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
+                    logger.error(error_msg, exc_info=True)
                     scan_job.status = ScanStatus.FAILED
                     scan_job.error_message = error_msg
                     db.commit()
                     db.refresh(scan_job)
                     logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
-            except Exception as e:
-                error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
-                logger.error(error_msg, exc_info=True)
-                scan_job.status = ScanStatus.FAILED
-                scan_job.error_message = error_msg
-                db.commit()
-                db.refresh(scan_job)
-                logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
     
-        return QuickScanResponse(
-            project_id=project.id,
-            scan_id=scan_job.id
-        )
-    except HTTPException as e:
+            return QuickScanResponse(
+                project_id=project.id,
+                scan_id=scan_job.id
+            )
+        except HTTPException as e:
         # Log 4xx errors with detail before re-raising
         detail_str = str(e.detail) if e.detail else "No detail provided"
         logger.warning(f"Quick scan 4xx: status={e.status_code} detail={detail_str}")
