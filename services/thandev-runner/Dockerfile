@@ -42,14 +42,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code (includes wordlists if present)
 COPY . .
 
-# Ensure wordlists directory exists and copy if not already copied
-# wordlists should be included in the build context
-RUN mkdir -p /opt/thandev/wordlists
-RUN if [ -d /app/wordlists ] && [ "$(ls -A /app/wordlists)" ]; then \
-        cp -r /app/wordlists/* /opt/thandev/wordlists/; \
-    else \
-        echo "Warning: wordlists directory not found, creating empty directory"; \
-        touch /opt/thandev/wordlists/.gitkeep; \
+# Move wordlists to final location if they exist
+# wordlists are copied via COPY . . above, now move to /opt/thandev/wordlists
+RUN mkdir -p /opt/thandev/wordlists && \
+    if [ -d wordlists ] && [ "$(ls -A wordlists 2>/dev/null)" ]; then \
+        cp -r wordlists/* /opt/thandev/wordlists/ 2>/dev/null || true; \
     fi
 
 # Copy and set permissions for startup script (before switching user)
