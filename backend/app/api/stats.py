@@ -11,7 +11,6 @@ router = APIRouter(
 
 
 @router.get("", response_class=JSONResponse)
-@router.options("", response_class=JSONResponse)
 async def get_stats():
     """
     Legacy stats endpoint for homepage compatibility.

@@ -76,7 +76,7 @@ def upgrade():
             conn.execute(text("ALTER TABLE scan_jobs ALTER COLUMN scan_level DROP DEFAULT"))
         else:
             conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN scan_level VARCHAR(20) NOT NULL DEFAULT 'basic'"))
-            conn.execute(text("ALTER TABLE scan_jobs ALTER COLUMN scan_level DROP DEFAULT"))
+            # Note: SQLite doesn't support ALTER COLUMN DROP DEFAULT, so we keep the default
         print("Added column: scan_level")
     
     # Add stack_info (JSONB for PostgreSQL, JSON for SQLite)
