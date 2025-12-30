@@ -11,6 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.openapi.utils import get_openapi
+from sqlalchemy.exc import ProgrammingError
 
 from app.core.config import settings
 from app.core.database import engine, Base
@@ -44,6 +45,48 @@ async def lifespan(app: FastAPI):
     logger.info(f"Environment: {settings.ENVIRONMENT}")
     logger.info(f"Database: {settings.DATABASE_URL.split('@')[-1] if '@' in settings.DATABASE_URL else 'configured'}")
     logger.info(f"Redis: {settings.REDIS_URL.split('@')[-1] if '@' in settings.REDIS_URL else 'configured'}")
+    
+    # Log Alembic version for debugging migration issues
+    try:
+        from sqlalchemy import create_engine, text
+        from app.core.config import settings
+        engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+        with engine.connect() as conn:
+            # Check if alembic_version table exists
+            result = conn.execute(text("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_schema = 'public' 
+                    AND table_name = 'alembic_version'
+                )
+            """))
+            table_exists = result.scalar()
+            
+            if table_exists:
+                result = conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+                current_version = result.scalar()
+                logger.info(f"Alembic DB version: {current_version}")
+            else:
+                logger.warning("alembic_version table does not exist - migrations may not have run")
+            
+            # Get expected head revision
+            try:
+                from alembic.config import Config
+                from alembic.script import ScriptDirectory
+                alembic_cfg = Config("alembic.ini")
+                script = ScriptDirectory.from_config(alembic_cfg)
+                head_revision = script.get_current_head()
+                logger.info(f"Alembic expected head: {head_revision}")
+                if table_exists and current_version != head_revision:
+                    logger.warning(
+                        f"Alembic version mismatch! DB has {current_version}, "
+                        f"expected {head_revision}. Run 'alembic upgrade head'"
+                    )
+            except Exception as e:
+                logger.debug(f"Could not determine Alembic head revision: {e}")
+        engine.dispose()
+    except Exception as e:
+        logger.warning(f"Could not check Alembic version: {e}")
     
     # Create database tables (in production, use Alembic migrations)
     # Only auto-create tables in development with SQLite
