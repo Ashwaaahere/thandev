@@ -152,9 +152,11 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 # Change working directory to backend for relative imports (only if it exists)
                 original_cwd = os.getcwd()
                 backend_path_str = str(backend_path)
+                changed_dir = False
                 try:
                     if os.path.exists(backend_path_str) and os.path.isdir(backend_path_str):
                         os.chdir(backend_path_str)
+                        changed_dir = True
                     else:
                         logger.warning(f"Backend path {backend_path_str} does not exist. Skipping chdir. Proceeding with imports from sys.path.")
 
@@ -178,7 +180,11 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         exc_info=True,
                     )
                 finally:
-                    os.chdir(original_cwd)
+                    if changed_dir:
+                        try:
+                            os.chdir(original_cwd)
+                        except Exception:
+                            pass  # Ignore errors when restoring directory
             finally:
                 db.close()
         except Exception as e:
