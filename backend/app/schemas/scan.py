@@ -1,8 +1,8 @@
 """
 Pydantic schemas for Scan API
 """
-from pydantic import BaseModel, Field, HttpUrl, model_validator, ConfigDict
-from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, Field, HttpUrl, model_validator, field_validator, ConfigDict
+from typing import Optional, Dict, Any, List, Union
 from datetime import datetime
 from app.models.scan import ScanLevel, ScanStatus, AIStatus
 from app.models.finding import Severity
