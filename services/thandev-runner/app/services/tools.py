@@ -187,6 +187,8 @@ class ToolExecutor:
                 Path("/services/thandev-brain/catalog/catalog.json"),
                 Path("/app/services/thandev-brain/catalog/catalog.json"),
                 BASE_DIR / "catalog" / "catalog.json",
+                # Docker image path (runner Dockerfile copies to /app/catalog/catalog.json)
+                Path("/app/catalog/catalog.json"),
             ]
             catalog_path = None
             for path in possible_paths:
@@ -1621,8 +1623,6 @@ class ToolExecutor:
             "--mining-dom",  # DOM-based parameter mining for better discovery
             "--follow-redirects",
             "--deep-domxss",  # Deep DOM XSS analysis
-            "--detailed-analysis",  # Detailed parameter analysis
-            "--context-aware",  # Context-aware payload selection for better detection
             # Note: --grep expects a file path, not a string, so we skip it
             # Dalfox has built-in grepping that will detect XSS indicators
             "--only-poc", "g,v",  # Only show findings with proof-of-concept (grep + verified)
@@ -1653,10 +1653,6 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout)
         
         try:
-            # #region agent log
-            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1436","message":"Dalfox command execution start","data":{"scan_job_id":scan_job_id,"cmd":" ".join(cmd),"timeout":timeout},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
-            # #endregion
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -1667,11 +1663,6 @@ class ToolExecutor:
             exit_code = result.returncode
             stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
             stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
-            # #region agent log
-            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1443","message":"Dalfox command execution result","data":{"scan_job_id":scan_job_id,"exit_code":exit_code,"stdout_length":stdout_bytes,"stderr_length":stderr_bytes,"stdout_preview":result.stdout[:200] if result.stdout else "","stderr_preview":result.stderr[:200] if result.stderr else ""},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
-            # #endregion
-            
             logger.info(
                 "Dalfox scan completed",
                 extra={
@@ -1692,8 +1683,14 @@ class ToolExecutor:
             error_msg = None
             
             if exit_code != 0:
-                if stdout_bytes > 0:
-                    # We have output, so the scan found some XSS issues
+                stdout_lower = (result.stdout or "").lower()
+                # Treat CLI/flag/config errors as real failures even if they were printed to stdout.
+                if any(s in stdout_lower for s in ["unknown flag", "invalid", "usage:"]):
+                    is_error = True
+                    error_msg = f"dalfox exited with code {exit_code}: {result.stdout[:200] if result.stdout else ''}"
+                    logger.warning("dalfox scan %s failed (cli error): %s", scan_job_id, error_msg)
+                elif stdout_bytes > 0:
+                    # We have output; dalfox sometimes returns non-zero even on findings.
                     logger.info(
                         "dalfox scan %s completed with exit_code=%s but produced %d bytes of output (treating as success)",
                         scan_job_id, exit_code, stdout_bytes
@@ -1718,11 +1715,6 @@ class ToolExecutor:
             # Normalize Dalfox output before returning (for all cases)
             # This ensures empty placeholder outputs are converted to [] before file writing
             normalized_output = _normalize_dalfox_output(result.stdout) if result.stdout else "[]"
-            
-            # #region agent log
-            with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
-                f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"A","location":"tools.py:1565","message":"Dalfox output normalization in tools.py","data":{"scan_job_id":scan_job_id,"stdout_length":len(result.stdout) if result.stdout else 0,"stdout_preview":repr(result.stdout[:100]) if result.stdout else "","normalized_length":len(normalized_output),"normalized_preview":repr(normalized_output[:100])},"timestamp":int(datetime.now().timestamp()*1000)})+'\n')
-            # #endregion
             
             if is_error:
                 return {

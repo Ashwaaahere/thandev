@@ -1,0 +1,42 @@
+                            Table "public.tool_results"
+         Column         |           Type           | Collation | Nullable | Default 
+------------------------+--------------------------+-----------+----------+---------
+ id                     | character varying(36)    |           | not null | 
+ scan_job_id            | character varying(36)    |           | not null | 
+ tool_name              | character varying(100)   |           | not null | 
+ tool_version           | character varying(50)    |           |          | 
+ output                 | text                     |           |          | 
+ exit_code              | integer                  |           |          | 
+ execution_time         | double precision         |           |          | 
+ command                | text                     |           |          | 
+ error_message          | text                     |           |          | 
+ created_at             | timestamp with time zone |           | not null | now()
+ started_at             | timestamp with time zone |           |          | 
+ completed_at           | timestamp with time zone |           |          | 
+ timed_out              | integer                  |           | not null | 0
+ status                 | character varying(20)    |           |          | 
+ error_code             | character varying(50)    |           |          | 
+ output_path            | character varying(512)   |           |          | 
+ stdout_preview         | text                     |           |          | 
+ stderr_preview         | text                     |           |          | 
+ parsed_findings_count  | integer                  |           | not null | 0
+ created_findings_count | integer                  |           | not null | 0
+ meta                   | json                     |           |          | 
+ duration_ms            | integer                  |           |          | 
+ skip_reason            | character varying(100)   |           |          | 
+ raw_stdout             | text                     |           |          | 
+ raw_stderr             | text                     |           |          | 
+ tool_run_id            | character varying(36)    |           |          | 
+Indexes:
+    "tool_results_pkey" PRIMARY KEY, btree (id)
+    "ix_tool_results_output_path" btree (output_path)
+    "ix_tool_results_scan_job_id" btree (scan_job_id)
+    "ix_tool_results_status" btree (status)
+    "ix_tool_results_tool_name" btree (tool_name)
+    "ix_tool_results_tool_run_id" btree (tool_run_id)
+    "uq_tool_results_scan_tool_run_id" UNIQUE CONSTRAINT, btree (scan_job_id, tool_run_id)
+Foreign-key constraints:
+    "tool_results_scan_job_id_fkey" FOREIGN KEY (scan_job_id) REFERENCES scan_jobs(id)
+Referenced by:
+    TABLE "findings" CONSTRAINT "fk_findings_tool_result_id" FOREIGN KEY (tool_result_id) REFERENCES tool_results(id) ON DELETE SET NULL
+

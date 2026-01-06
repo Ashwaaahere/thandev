@@ -1,0 +1,90 @@
+name: "Level 2 - Active (Non-destructive)"
+version: "1.0"
+description: "More aggressive detection (non-exploitative) and CVE checks"
+tier: "level2"
+preset_name: "active"
+cloud_run_job: "thandev-active"
+estimated_duration: "20-45 minutes"
+
+tools:
+  - name: "nuclei"
+    templates: ["info", "technologies", "misconfig", "exposures", "cves", "vulnerabilities"]
+    severity: "medium"
+    timeout: 300
+    description: "Comprehensive vulnerability scanning including CVE checks"
+    
+  - name: "sslscan"
+    fallback: "sslyze"
+    fallback_final: "openssl s_client"
+    timeout: 300
+    description: "TLS/certificate checks"
+    
+  - name: "nmap"
+    args: ["-sC", "-sV", "-Pn"]
+    timeout: 300
+    description: "Comprehensive port scan with NSE scripts"
+    
+  - name: "subfinder"
+    fallback: "amass"
+    timeout: 300
+    description: "Passive subdomain enumeration"
+    
+  - name: "crt.sh"
+    timeout: 300
+    description: "Certificate transparency lookups"
+    
+  - name: "ffuf"
+    fallback: "gobuster"
+    wordlist: "medium"
+    timeout: 300
+    description: "Directory discovery with expanded wordlist"
+    
+  - name: "nikto"
+    timeout: 300
+    description: "HTTP server security checks"
+
+steps:
+  1:
+    tool: "nuclei"
+    purpose: "Technology fingerprinting and basic info gathering"
+    
+  2:
+    tool: "sslscan"
+    purpose: "TLS/SSL configuration analysis"
+    
+  3:
+    tool: "nmap"
+    purpose: "Comprehensive port scan with NSE scripts"
+    
+  4:
+    tool: "subfinder"
+    purpose: "Passive subdomain enumeration"
+    
+  5:
+    tool: "crt.sh"
+    purpose: "Certificate transparency lookups"
+    
+  6:
+    tool: "ffuf"
+    purpose: "Directory and endpoint discovery"
+    
+  7:
+    tool: "nuclei"
+    purpose: "CVE and vulnerability scanning"
+    
+  8:
+    tool: "nikto"
+    purpose: "HTTP server security analysis"
+
+outputs:
+  - "nuclei.json"
+  - "ssl_scan.txt"
+  - "nmap.xml"
+  - "subdomains.txt"
+  - "crt_results.json"
+  - "ffuf_results.json"
+  - "nikto.txt"
+
+
+
+

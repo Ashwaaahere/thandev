@@ -129,8 +129,7 @@ def upgrade():
             conn.execute(text("ALTER TABLE scan_jobs ADD COLUMN ai_status VARCHAR(20)"))
         print("Added column: ai_status")
     
-    # Commit the transaction
-    conn.commit()
+    # NOTE: Do NOT call conn.commit() - Alembic handles transactions automatically
 
 
 def downgrade():
@@ -183,5 +182,5 @@ def downgrade():
         conn.execute(text("DROP INDEX IF EXISTS ix_scan_jobs_celery_task_id"))
         conn.execute(text("ALTER TABLE scan_jobs DROP COLUMN IF EXISTS celery_task_id"))
     
-    conn.commit()
+    # NOTE: Do NOT call conn.commit() - Alembic handles transactions automatically
 

@@ -2,13 +2,33 @@
 RAG store interface and implementations
 """
 import logging
+import uuid
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 
 from app.core.config import settings
 from app.rag.embeddings import get_embedding_provider
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_qdrant_id(raw: Any) -> Union[int, str]:
+    """Normalize ID for Qdrant (accepts int or UUID string)"""
+    # Qdrant accepts int or UUID string. Everything else -> convert.
+    if isinstance(raw, int):
+        return raw
+
+    if isinstance(raw, str):
+        # allow UUID strings as-is
+        try:
+            uuid.UUID(raw)
+            return raw
+        except Exception:
+            # deterministic UUID from string so re-indexing is stable
+            return str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
+
+    # fallback
+    return str(uuid.uuid4())
 
 
 class RagStore(ABC):
@@ -108,32 +128,7 @@ class QdrantRagStore(RagStore):
             
             # Prepare points for Qdrant
             points = []
-            import uuid
             for i, doc in enumerate(docs):
-                point_id_raw = doc.get("id")
-                
-                # Qdrant requires point IDs to be UUID or integer
-                # Handle different ID formats
-                if point_id_raw is None:
-                    # Generate a UUID for missing IDs
-                    point_id = uuid.uuid4()
-                elif isinstance(point_id_raw, uuid.UUID):
-                    # Already a UUID object
-                    point_id = point_id_raw
-                elif isinstance(point_id_raw, str):
-                    # Try to parse as UUID string
-                    try:
-                        point_id = uuid.UUID(point_id_raw)
-                    except ValueError:
-                        # Not a valid UUID string, generate one deterministically
-                        point_id = uuid.uuid5(uuid.NAMESPACE_DNS, point_id_raw)
-                elif isinstance(point_id_raw, int):
-                    # Integer IDs are valid for Qdrant
-                    point_id = point_id_raw
-                else:
-                    # Fallback: generate UUID from string representation
-                    point_id = uuid.uuid5(uuid.NAMESPACE_DNS, str(point_id_raw))
-                
                 # Extract payload (metadata)
                 payload = {
                     k: v for k, v in doc.items()
@@ -149,13 +144,17 @@ class QdrantRagStore(RagStore):
                 
                 points.append(
                     PointStruct(
-                        id=point_id,
+                        id=normalize_qdrant_id(doc.get("id")),
                         vector=embeddings[i],
                         payload=payload
                     )
                 )
             
             # Upsert to Qdrant
+            logger.info(f"Upserting {len(points)} points to Qdrant collection={self.collection}")
+            if points:
+                logger.info(f"Example point id: {points[0].id}")
+            
             self._client.upsert(
                 collection_name=self.collection,
                 points=points

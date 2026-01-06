@@ -1,0 +1,108 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: thandev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  backend:
+    build: ./backend
+    env_file:
+      - .env.fly.local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    command: ["./entrypoint.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  thandev-brain:
+    build: ./services/thandev-brain
+    env_file:
+      - .env.fly.local
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      backend:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    command: ["./start_brain.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  thandev-runner:
+    build: ./services/thandev-runner
+    env_file:
+      - .env.fly.local
+    environment:
+      # Runner paths must be inside the runner container filesystem (NOT backend paths).
+      TOOLS_BASE_DIR: /app
+      DATA_DIR: /app/data
+      JOBS_DIR: /app/data/jobs
+      WORDLISTS_DIR: /opt/thandev/wordlists
+    volumes:
+      # Mount shared wordlists from repo root so ffuf can run with full wordlists
+      - ./wordlists:/opt/thandev/wordlists:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    command: ["./start_runner.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  postgres_data:
+  qdrant_data:
+

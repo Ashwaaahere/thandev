@@ -91,6 +91,13 @@ class Settings(BaseSettings):
     BRAIN_SERVICE_ENABLED: bool = True  # Set to False to disable brain service and use fallback
     BRAIN_REQUIRED: bool = False  # If True, fail scan if brain is unreachable. Set to False to allow fallback
     BRAIN_SERVICE_TIMEOUT: int = 60  # Timeout in seconds for brain service requests (increased for slow RAG queries)
+    BRAIN_HEALTH_PATH: str = "/health"  # Health endpoint path for brain service (env override supported)
+    
+    # Runner Service Authentication
+    RUNNER_API_TOKEN: Optional[str] = None  # Bearer token for runner service authentication (required in production)
+    # Internal endpoint security (comma-separated IPs/CIDR blocks, or "private" for private networks only)
+    INTERNAL_ENDPOINT_ALLOWED_IPS: str = ""  # e.g., "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" or "private" for RFC1918
+    INTERNAL_ENDPOINT_REQUIRE_PRIVATE_NETWORK: bool = False  # If True, only allow RFC1918 private IPs
     
     # Scan Execution Path Configuration
     USE_CELERY_SCAN_EXECUTION: bool = False  # If True, use Celery for scan execution (legacy). Default: False (use Runner via Redis streams)
@@ -213,6 +220,16 @@ class Settings(BaseSettings):
             if provider and external_id:
                 superadmin_set.add((provider, external_id))
         object.__setattr__(self, "_superadmin_external_ids_set", superadmin_set)
+        
+        # Warn if RUNNER_API_TOKEN is not set in production
+        if is_production and not self.RUNNER_API_TOKEN:
+            import warnings
+            warnings.warn(
+                "RUNNER_API_TOKEN is not set in production! "
+                "Tool result ingestion endpoint will be open to unauthenticated requests. "
+                "Set RUNNER_API_TOKEN environment variable for security.",
+                UserWarning
+            )
 
     @property
     def superadmin_external_ids_set(self) -> Set[Tuple[str, str]]:

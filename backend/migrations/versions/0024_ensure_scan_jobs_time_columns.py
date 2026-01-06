@@ -94,7 +94,7 @@ def upgrade():
             WHERE finished_at IS NULL AND completed_at IS NOT NULL
         """))
     
-    conn.commit()
+    # NOTE: Do NOT call conn.commit() - Alembic handles transactions automatically
     print("Synced finished_at and completed_at columns")
 
 
@@ -131,5 +131,5 @@ def downgrade():
         conn.execute(text("ALTER TABLE scan_jobs DROP COLUMN IF EXISTS completed_at"))
         print("Dropped column: completed_at")
     
-    conn.commit()
+    # NOTE: Do NOT call conn.commit() - Alembic handles transactions automatically
 

@@ -139,7 +139,7 @@ def upgrade():
                     else:
                         print(f"Warning: Could not update {old_value} to {new_value}: {e}")
     
-    conn.commit()
+    # NOTE: Do NOT call conn.commit() - Alembic handles transactions automatically
     print("Completed scanlevel enum fix")
 
 

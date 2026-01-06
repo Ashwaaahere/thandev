@@ -1,0 +1,26 @@
+{
+  "tool_run_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "step_id": "step-test-A",
+  "tool_name": "nuclei",
+  "tool_id": "nuclei",
+  "success": true,
+  "exit_code": 0,
+  "execution_time": 1.23,
+  "timed_out": false,
+  "command": "nuclei -u https://example.com",
+  "output": "test output A",
+  "stdout_preview": "stdout preview",
+  "stderr_preview": "",
+  "findings_count": 1,
+  "findings": [
+    {
+      "tool_id": "nuclei",
+      "title": "Test A Finding - run aaaaaaaaaaaa",
+      "severity": "low",
+      "description": "demo",
+      "url": "https://example.com",
+      "evidence": "demo evidence",
+      "raw": {"a":"A"}
+    }
+  ]
+}

@@ -123,14 +123,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 
 # Health check endpoint
-@app.get("/health")
-async def health():
-    """Health check endpoint - returns service status"""
-    return {
-        "status": "ok",
-        "service": "thandev-brain",
-        "version": "1.0.0",
-    }
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
 
 
 @app.get("/healthz")

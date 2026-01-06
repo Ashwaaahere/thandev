@@ -193,7 +193,17 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                 # Wait for results
                 logger.info(f"Waiting for {len(step_ids)} step results for session {session_id}")
                 try:
-                    results = await read_step_results(session_id, step_ids, timeout_sec=600)
+                    # IMPORTANT:
+                    # A busy/queued runner can legitimately take >10 minutes before it starts consuming
+                    # newly enqueued steps (especially with a single runner worker).
+                    #
+                    # Do NOT mark the session as failed just because no results arrived quickly.
+                    # Instead, wait up to the session max runtime budget.
+                    results = await read_step_results(
+                        session_id,
+                        step_ids,
+                        timeout_sec=settings.SESSION_MAX_RUNTIME_SEC,
+                    )
                 except Exception as e:
                     logger.error(f"Failed to read step results for session {session_id}: {e}", exc_info=True)
                     # If we can't read results, mark steps as failed
@@ -209,13 +219,15 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                         )
                 
                 # Check if we got any results
+                #
+                # If we waited the full session runtime budget and still got nothing, treat as runner down.
+                # Otherwise, the scan should remain queued/running elsewhere.
                 if not results:
                     error_msg = (
                         f"No step results received for session {session_id} after waiting. "
                         f"Runner service may not be processing requests."
                     )
                     logger.error(error_msg)
-                    # Mark session as failed due to runner unavailability
                     await stop_session(
                         org_id,
                         project_id,
@@ -317,10 +329,6 @@ async def check_stop_conditions(
     if session_state.total_runtime_sec >= settings.SESSION_MAX_RUNTIME_SEC:
         return True, StopReasonCode.BUDGET_EXCEEDED
     
-    # Check consecutive failures
-    if session_state.consecutive_failures >= settings.SESSION_MAX_CONSECUTIVE_FAILURES:
-        return True, StopReasonCode.ERROR
-    
     # Check no new findings iterations
     if session_state.no_new_findings_iterations >= settings.SESSION_NO_NEW_FINDINGS_ITERATIONS:
         return True, StopReasonCode.DIMINISHING_RETURNS
@@ -389,10 +397,19 @@ async def decide_next_steps(
             stack_info=rag_evidence.get("stack_info", {}),
         )
         
-        # Convert plan steps to StepRequest objects
-        # For now, return all steps (in future, filter by what's already done)
+        # Convert plan steps to StepRequest objects.
+        #
+        # IMPORTANT: Do NOT re-enqueue the same tool/mode repeatedly.
+        # The StepRequest.step_id is a random UUID, so we track executed tools via
+        # session_state.executed_tool_keys (tool_id/mode_id) instead of step ids.
         steps = []
         for plan_step in plan.steps:
+            # Prefer tool_id/mode_id, but fall back to tool_id only (runner StepResult includes tool_id today).
+            tool_key = f"{plan_step.tool_id}/{plan_step.mode_id}"
+            executed_keys = (session_state.executed_tool_keys or [])
+            already_executed = (tool_key in executed_keys) or (plan_step.tool_id in executed_keys)
+            if already_executed:
+                continue
             step_request = StepRequest(
                 session_id=session_state.session_id,
                 tool_id=plan_step.tool_id,
@@ -434,6 +451,29 @@ async def update_session_from_results(
 
     updates: Dict[str, Any] = {}
 
+    # Track executed step ids and tool keys to avoid re-enqueue loops.
+    executed_ids = list(getattr(session_state, "executed_step_ids", []) or [])
+    executed_ids.extend([sid for sid in results.keys() if sid])
+    updates["executed_step_ids"] = executed_ids
+
+    executed_tool_keys = list(getattr(session_state, "executed_tool_keys", []) or [])
+    for r in results.values():
+        tool_id = getattr(r, "tool_id", None) or None
+        mode_id = getattr(r, "mode_id", None) or None
+        if tool_id and mode_id:
+            executed_tool_keys.append(f"{tool_id}/{mode_id}")
+        elif tool_id:
+            executed_tool_keys.append(tool_id)
+    # Deduplicate while preserving order
+    deduped = []
+    seen = set()
+    for k in executed_tool_keys:
+        if k in seen:
+            continue
+        seen.add(k)
+        deduped.append(k)
+    updates["executed_tool_keys"] = deduped
+
     # Accumulate step count across iterations
     updates["current_step_count"] = session_state.current_step_count + len(results)
 
@@ -442,31 +482,21 @@ async def update_session_from_results(
     existing_runtime = float(getattr(session_state, "total_runtime_sec", 0.0) or 0.0)
     updates["total_runtime_sec"] = existing_runtime + float(batch_runtime)
 
-    # Consecutive failures: count failed steps in this batch, accumulate if non‑zero, reset on full success
+    # Consecutive failures: count failed steps in this batch, accumulate if non‑zero, reset on full success.
+    # IMPORTANT: Do NOT stop the whole session due to consecutive failures. Runner/tools/network can be flaky,
+    # and scan lifecycle is managed by core backend (it can mark the scan FAILED/CANCELLED).
     failures = sum(1 for r in results.values() if r.status != "success")
     if failures > 0:
         new_consecutive_failures = session_state.consecutive_failures + failures
         updates["consecutive_failures"] = new_consecutive_failures
-        # If too many consecutive failures, stop the session
-        if new_consecutive_failures >= settings.SESSION_MAX_CONSECUTIVE_FAILURES:
-            error_msg = f"Session stopped due to {new_consecutive_failures} consecutive step failures. Runner service may be unavailable."
-            logger.error(f"Session {session_id}: {error_msg}")
-            await stop_session(
-                org_id,
-                project_id,
-                session_id,
-                SessionStatus.FAILED,
-                StopReasonCode.ERROR,
-                error_message=error_msg,
-            )
-            # Return early to signal that session was stopped
-            return
     else:
         updates["consecutive_failures"] = 0
 
-    # No‑new‑findings iterations: increment only when *all* steps produced zero findings
+    # No‑new‑findings iterations: increment only when *all* steps succeeded AND produced zero findings.
+    # If any step failed, do not treat it as "diminishing returns" (it is likely a transient/tool/network issue).
     total_findings = sum(r.findings_count for r in results.values())
-    if total_findings == 0:
+    all_success = all(r.status == "success" for r in results.values())
+    if all_success and total_findings == 0:
         updates["no_new_findings_iterations"] = session_state.no_new_findings_iterations + 1
     else:
         updates["no_new_findings_iterations"] = 0

@@ -1,0 +1,28 @@
+# Fly.io configuration for thandev-runner
+app = "thandev-runner"
+primary_region = "iad"
+
+[build]
+
+[env]
+  CONSUMER_GROUP = "runner-workers"
+  CONSUMER_NAME = "runner-1"
+  EXECUTION_ADAPTER = "local"
+  MAX_CONCURRENT_STEPS = "5"
+  MAX_INFLIGHT_PER_SESSION = "2"
+  WORDLISTS_DIR = "/opt/thandev/wordlists"
+  TOOL_CATALOG_PATH = "/app/catalog/catalog.json"
+
+# Runner is a background worker, not an HTTP service (PRIVATE)
+[processes]
+  app = "python -m app.tasks"
+
+# Keep machines running (worker process, no HTTP service)
+# Using http_service section for machine lifecycle management only
+# (Runner does not actually serve HTTP traffic)
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
+

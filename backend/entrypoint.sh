@@ -25,8 +25,6 @@ fi
 # This is used by Fly.io release_command to run migrations
 if [ $# -gt 0 ]; then
   echo "Executing command: $@"
-  # If the command contains &&, execute it as a shell command
-  # Otherwise, execute it directly
   if echo "$*" | grep -q "&&"; then
     exec /bin/bash -c "$*"
   else
@@ -34,9 +32,25 @@ if [ $# -gt 0 ]; then
   fi
 fi
 
-# Default runtime behavior: start uvicorn ONLY
-# Migrations should have run via Fly.io release_command before containers start
-# This ensures fast startup and reliable health checks
-echo "Runtime mode: Starting application server (migrations should have run via release_command)"
-exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+# ----------------------------
+# Runtime mode
+# ----------------------------
+PORT="${PORT:-8000}"
+WORKERS="${WEB_CONCURRENCY:-1}"
 
+echo "Starting API server:"
+echo "  - Bind: 0.0.0.0:${PORT} (dual-stack via IPv4)"
+echo "  - Workers: ${WORKERS}"
+
+# Start gunicorn with uvicorn workers
+# Bind to 0.0.0.0 - Fly.io proxy handles IPv6/IPv4 translation
+# The connection reset issue is likely application-level, not network-level
+exec gunicorn app.main:app \
+  -k uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:${PORT} \
+  --workers ${WORKERS} \
+  --timeout 120 \
+  --keep-alive 5 \
+  --access-logfile - \
+  --error-logfile - \
+  --log-level info

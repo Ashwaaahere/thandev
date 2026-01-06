@@ -192,6 +192,10 @@ class SessionState(BaseModel):
     consecutive_failures: int = Field(default=0, ge=0, description="Consecutive step failures")
     no_new_findings_iterations: int = Field(default=0, ge=0, description="Iterations with no new findings")
     executed_step_ids: List[str] = Field(default_factory=list, description="List of step IDs that have been executed")
+    executed_tool_keys: List[str] = Field(
+        default_factory=list,
+        description="List of executed tool keys in the form tool_id/mode_id to prevent re-enqueue loops",
+    )
     created_at: datetime = Field(default_factory=datetime.utcnow, description="Session creation time")
     last_updated: datetime = Field(default_factory=datetime.utcnow, description="Last update time")
     error_message: Optional[str] = Field(None, description="Error message if session failed")

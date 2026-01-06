@@ -1,0 +1,580 @@
+{
+  "metadata": {
+    "version": "1.0.0",
+    "description": "Thandev tool catalog - defines available tools, modes, and parameters"
+  },
+  "tools": [
+    {
+      "tool_id": "nuclei",
+      "name": "Nuclei Vulnerability Scanner",
+      "description": "Fast vulnerability scanner using community-driven templates",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "basic_web",
+          "name": "Basic Web Scan",
+          "description": "Quick scan for common vulnerabilities and exposures",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["cves", "misconfig", "exposed-panels", "exposures"]
+              },
+              "severity": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                "default": ["critical", "high", "medium"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300,
+            "max_templates": 1000
+          }
+        },
+        {
+          "mode_id": "pro_web",
+          "name": "Pro Web Scan",
+          "description": "Comprehensive scan including XSS, SQLi, SSRF, and more",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["cves", "misconfig", "exposed-panels", "exposures", "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal", "cmdi", "idor", "csrf", "cors", "cors-misconfig"]
+              },
+              "severity": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                "default": ["critical", "high", "medium", "low"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300,
+            "max_templates": 2000
+          }
+        },
+        {
+          "mode_id": "advanced_web",
+          "name": "Advanced Web Scan",
+          "description": "Full-depth scan with all vulnerability classes",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["cves", "misconfig", "exposed-panels", "exposures", "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal", "cmdi", "idor", "csrf", "cors", "cors-misconfig"]
+              },
+              "severity": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+                "default": ["critical", "high", "medium", "low", "info"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300,
+            "max_templates": 5000
+          }
+        },
+        {
+          "mode_id": "cve_fast",
+          "name": "CVE Fast Scan",
+          "description": "Quick CVE confirmation scan",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tags": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": ["cves"]
+              },
+              "severity": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["critical", "high"]},
+                "default": ["critical", "high"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300,
+            "max_templates": 500
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "nmap",
+      "name": "Nmap Network Scanner",
+      "description": "Network port scanner and service detector",
+      "allowed_target_types": ["tcp", "http", "https"],
+      "modes": [
+        {
+          "mode_id": "top_ports",
+          "name": "Top Ports Scan",
+          "description": "Scan top 1000 common ports",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "ports": {
+                "type": "string",
+                "default": "--top-ports 1000"
+              },
+              "scripts": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "full_ports_scripts",
+          "name": "Full Ports with Scripts",
+          "description": "Comprehensive port scan with service detection and scripts",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "ports": {
+                "type": "string",
+                "default": "-p-"
+              },
+              "scripts": {
+                "type": "boolean",
+                "default": true
+              },
+              "version_detection": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "sslscan",
+      "name": "SSL/TLS Scanner",
+      "description": "SSL/TLS configuration and vulnerability scanner",
+      "allowed_target_types": ["https", "tcp"],
+      "modes": [
+        {
+          "mode_id": "standard",
+          "name": "Standard SSL Scan",
+          "description": "Standard SSL/TLS configuration scan",
+          "params_schema": {
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "httpx",
+      "name": "HTTP Probe",
+      "description": "HTTP probe and technology detection",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "low",
+          "name": "Low Intensity",
+          "description": "Quick HTTP probe with basic tech detection",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tech_detect": {
+                "type": "boolean",
+                "default": true
+              },
+              "status_code": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "medium",
+          "name": "Medium Intensity",
+          "description": "Standard HTTP probe with extended tech detection",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tech_detect": {
+                "type": "boolean",
+                "default": true
+              },
+              "status_code": {
+                "type": "boolean",
+                "default": true
+              },
+              "title": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "high",
+          "name": "High Intensity",
+          "description": "Comprehensive HTTP probe with full tech detection",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "tech_detect": {
+                "type": "boolean",
+                "default": true
+              },
+              "status_code": {
+                "type": "boolean",
+                "default": true
+              },
+              "title": {
+                "type": "boolean",
+                "default": true
+              },
+              "favicon": {
+                "type": "boolean",
+                "default": true
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "ffuf",
+      "name": "FFuF Directory Brute Forcer",
+      "description": "Fast web fuzzer for directory and file discovery",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "pro",
+          "name": "Pro Wordlist",
+          "description": "Medium-sized wordlist for directory discovery",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "wordlist": {
+                "type": "string",
+                "default": "ffuf-pro.txt"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [".php", ".html", ".js", ".json"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "advanced",
+          "name": "Advanced Wordlist",
+          "description": "Large wordlist for comprehensive directory discovery",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "wordlist": {
+                "type": "string",
+                "default": "ffuf-advanced.txt"
+              },
+              "extensions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "default": [".php", ".html", ".js", ".json", ".txt", ".xml", ".yaml"]
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "dalfox",
+      "name": "DalFox XSS Scanner",
+      "description": "Parameter analysis and XSS vulnerability scanner",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "standard",
+          "name": "Standard XSS Scan",
+          "description": "Standard XSS parameter testing",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "payload": {
+                "type": "string",
+                "default": "all"
+              },
+              "deep": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "constrained",
+          "name": "Constrained XSS Scan",
+          "description": "Lightweight XSS scan for apps with known parameters",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "payload": {
+                "type": "string",
+                "default": "common"
+              },
+              "deep": {
+                "type": "boolean",
+                "default": false
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "sqlmap",
+      "name": "SQLMap SQL Injection Scanner",
+      "description": "Automated SQL injection and database takeover tool",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "sqli_get_basic",
+          "name": "SQLi GET Scan",
+          "description": "Test SQL injection in URL query parameters (GET requests)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              },
+              "param_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Specific parameter names to test (optional, tests all if not provided)"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_post_data",
+          "name": "SQLi POST Data Scan",
+          "description": "Test SQL injection in POST request body with explicit data",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "data": {
+                "type": "string",
+                "description": "POST data string (e.g., 'uname=test&pass=test')"
+              },
+              "param_names": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Parameter names to test (optional, tests all if not provided)"
+              },
+              "cookie": {
+                "type": "string",
+                "description": "Cookie string (optional)"
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              }
+            },
+            "required": ["data"],
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_forms_login",
+          "name": "SQLi Forms Login Scan",
+          "description": "Test SQL injection in login forms (automatically detects and tests form parameters)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              },
+              "use_raw_request": {
+                "type": "boolean",
+                "default": true,
+                "description": "Use raw request file (-r) for better reliability (recommended)"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_raw_request",
+          "name": "SQLi Raw Request Scan",
+          "description": "Test SQL injection using a raw HTTP request file (most reliable for login forms)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "raw_request_ref": {
+                "type": "string",
+                "description": "Path to raw HTTP request file or inline raw request text"
+              },
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 1
+              },
+              "timeout_sec": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 300,
+                "default": 60
+              }
+            },
+            "required": ["raw_request_ref"],
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        },
+        {
+          "mode_id": "sqli_light",
+          "name": "Light SQLi Scan",
+          "description": "Quick SQL injection detection (legacy mode, uses --forms)",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "level": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 2
+              },
+              "risk": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3,
+                "default": 2
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 300
+          }
+        }
+      ]
+    }
+  ]
+}
+
+
+
+

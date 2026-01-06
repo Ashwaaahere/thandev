@@ -55,14 +55,15 @@ except ImportError:
             self.tool_id = tool_id  # Store tool_id
         
         def to_dict(self) -> Dict[str, Any]:
-            """Convert to dictionary for Redis stream"""
+            """Convert to dictionary for Redis stream - ensures no None values"""
+            # Ensure all values are not None before xadd
             return {
-                "session_id": self.session_id,
-                "step_id": self.step_id,
-                "status": self.status,
-                "execution_time_sec": str(self.execution_time_sec),
-                "findings_count": str(self.findings_count),
-                "artifact_refs": json.dumps(self.artifact_refs),
+                "session_id": self.session_id or "",
+                "step_id": self.step_id or "",
+                "status": self.status or "",
+                "execution_time_sec": str(self.execution_time_sec) if self.execution_time_sec is not None else "0.0",
+                "findings_count": str(self.findings_count) if self.findings_count is not None else "0",
+                "artifact_refs": json.dumps(self.artifact_refs) if self.artifact_refs else "[]",
                 "error": self.error or "",
                 "tool_output_summary": self.tool_output_summary or "",
                 "tool_id": self.tool_id or "",  # Include tool_id
@@ -138,54 +139,78 @@ async def consume_step_requests(
         
         result = []
         
-        # First, try to read PENDING messages for this consumer (if check_pending is True)
-        # This handles messages that were delivered but never ACKed (e.g., from a previous crash)
-        # Note: Pending message handling is optional - the main fix is checking scan status before processing
+        # First, try to read and claim PENDING messages (if check_pending is True).
+        # This handles messages that were delivered but never ACKed (e.g., from a previous crash or restart).
+        #
+        # Important: pending entries may belong to a DIFFERENT consumer name (from the crashed container).
+        # In that case, filtering by consumer_name would miss them and they would be stuck forever.
+        # So we intentionally look at the group pending list (no consumer filter) and XCLAIM old entries.
         if check_pending:
             try:
+                # Never let pending-claiming starve new work.
+                # Reserve capacity to read ">" entries so newly-triggered scans start immediately.
+                pending_read_count = min(count, 5)
+
                 # Get summary first to check if there are any pending messages
                 # xpending(key, group) returns: {'pending': count, 'min': '...', 'max': '...', 'consumers': [...]}
                 pending_summary = redis_client.xpending(STREAM_STEP_REQUESTS, consumer_group)
-                
-                if pending_summary and isinstance(pending_summary, dict) and pending_summary.get("pending", 0) > 0:
-                    # Try to get pending messages for this consumer
-                    # Note: Different redis-py versions may have different signatures
-                    # We'll try the most common pattern
+
+                # redis-py has returned different shapes across versions:
+                # - dict: {"pending": int, "min": str, "max": str, "consumers": [...]}
+                # - tuple/list: (pending_count, min_id, max_id, consumers)
+                pending_count = 0
+                if isinstance(pending_summary, dict):
+                    pending_count = int(pending_summary.get("pending", 0) or 0)
+                elif isinstance(pending_summary, (tuple, list)) and len(pending_summary) >= 1:
                     try:
-                        # Try with keyword arguments (redis-py >= 4.0)
-                        pending_info = redis_client.xpending(
+                        pending_count = int(pending_summary[0] or 0)
+                    except Exception:
+                        pending_count = 0
+
+                if pending_count > 0:
+                    # Get pending message details for the group (do NOT filter by consumer).
+                    # redis-py API differs by version:
+                    # - Newer: xpending_range(...)
+                    # - Older: xpending(...) with range args
+                    pending_info = []
+                    if hasattr(redis_client, "xpending_range"):
+                        pending_info = redis_client.xpending_range(
                             STREAM_STEP_REQUESTS,
                             consumer_group,
                             min="-",
                             max="+",
-                            count=count,
-                            consumername=consumer_name
+                            count=pending_read_count,
                         )
-                    except TypeError:
-                        # Fallback: try without consumername filter (older redis-py or different signature)
+                    else:
+                        # Best-effort fallback (older clients)
                         try:
                             pending_info = redis_client.xpending(
                                 STREAM_STEP_REQUESTS,
                                 consumer_group,
                                 min="-",
                                 max="+",
-                                count=count
+                                count=pending_read_count,
                             )
-                            # Filter for this consumer manually
-                            if pending_info:
-                                pending_info = [
-                                    p for p in pending_info 
-                                    if isinstance(p, dict) and p.get("consumer") == consumer_name
-                                ]
                         except TypeError:
-                            # If that also fails, skip pending message handling
-                            logger.debug("Skipping pending message check - unsupported xpending signature")
+                            logger.debug("Skipping pending message range - unsupported xpending signature")
                             pending_info = []
                     
                     if pending_info and isinstance(pending_info, list):
                         # Claim pending messages that are older than 60 seconds
                         min_idle_time = 60000  # 60 seconds in milliseconds
-                        message_ids = [p.get("message_id") for p in pending_info if isinstance(p, dict) and p.get("message_id")]
+                        message_ids: list[str] = []
+                        for p in pending_info:
+                            # Newer redis-py: list of dicts with message_id
+                            if isinstance(p, dict) and p.get("message_id"):
+                                message_ids.append(p.get("message_id"))
+                                continue
+                            # Older redis-py: list of tuples/lists like (message_id, consumer, idle_ms, deliveries)
+                            if isinstance(p, (tuple, list)) and len(p) >= 1:
+                                mid = p[0]
+                                if isinstance(mid, bytes):
+                                    mid = mid.decode("utf-8")
+                                if isinstance(mid, str):
+                                    message_ids.append(mid)
                         
                         if message_ids:
                             claimed = await asyncio.to_thread(
@@ -221,7 +246,10 @@ async def consume_step_requests(
                 logger.debug(f"Error checking pending messages (skipping): {e}")
                 # Continue to read new messages even if pending check fails
         
-        # Read new messages (only if we don't have enough pending messages)
+        # Read new messages (only if we don't have enough pending messages).
+        # IMPORTANT: Do NOT return early when we claimed pending messages.
+        # If we do, a single "stuck" pending message can starve the consumer group and prevent
+        # new scans from starting (we would never read ">" entries).
         if len(result) < count:
             messages = await asyncio.to_thread(
                 redis_client.xreadgroup,
@@ -259,6 +287,11 @@ async def consume_step_requests(
         return result
         
     except RedisError as e:
+        # Redis socket timeouts are expected when blocking reads return no data.
+        # Treat them as empty reads, not fatal errors.
+        if "Timeout reading from socket" in str(e):
+            logger.debug(f"Timeout waiting for step requests (normal): {e}")
+            return []
         logger.error(f"Failed to consume step requests: {e}", exc_info=True)
         return []
 

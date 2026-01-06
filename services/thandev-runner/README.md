@@ -40,11 +40,22 @@ Brain Controller → Redis Stream (scan_step_requests)
 ## Configuration
 
 - `REDIS_URL`: Redis connection URL (default: `redis://localhost:6379/0`)
-- `DATABASE_URL`: Database connection URL (for findings ingestion)
+- `BACKEND_URL`: Backend API URL (default: `http://localhost:8000`) - **Required** for posting tool results and findings
+- `RUNNER_API_TOKEN`: Optional API token for backend authentication (if backend requires it)
+- `DATABASE_URL`: Database connection URL (deprecated - runner now uses backend API instead of direct DB access)
 - `CONSUMER_GROUP`: Consumer group name (default: `runner-workers`)
 - `CONSUMER_NAME`: Unique consumer name (default: hostname)
 - `MAX_CONCURRENT_STEPS`: Maximum steps to process in parallel per worker (default: `5`)
 - `MAX_INFLIGHT_PER_SESSION`: Maximum concurrent steps per session (default: `2`)
+
+### Backend API Integration
+
+The runner communicates with the backend via REST API for tool result and findings ingestion:
+
+- **Idempotency**: Each tool execution generates a unique `tool_run_id` (UUID) that ensures idempotent POSTs
+- **Retry Logic**: Automatic retry with exponential backoff + jitter for transient errors (429, 502, 503, 504, network errors)
+- **Request Timeout**: 60 seconds per request
+- **Transaction Safety**: Backend wraps ToolResult creation + findings ingestion in a single DB transaction
 
 ## Execution Adapter
 

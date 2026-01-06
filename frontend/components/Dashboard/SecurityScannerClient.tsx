@@ -842,12 +842,51 @@ export default function SecurityScannerClient() {
           body.target_url = newUrlForProject.trim();
         }
       } else {
-        // New target mode - must have verified project
-        if (!preparedProjectId) {
+        // New target mode - prefer existing verified project_id; admins can auto-create
+        let projectId = preparedProjectId;
+
+        if (isAdmin && !projectId) {
+          try {
+            const resp = await thandevFetchJSON<DomainVerificationStartResponse>(
+              '/api/domain-verifications/start',
+              session,
+              {
+                method: 'POST',
+                body: JSON.stringify({ url: targetUrl.trim() }),
+              }
+            );
+
+            if (resp?.project_id) {
+              projectId = resp.project_id;
+              setPreparedProjectId(resp.project_id);
+
+              // For allowlisted/verified domains, best-effort add target to project
+              if (resp.status === 'ALLOWLISTED' || resp.status === 'VERIFIED') {
+                try {
+                  await thandevFetchJSON(
+                    `/api/projects/${resp.project_id}/targets`,
+                    session,
+                    {
+                      method: 'POST',
+                      body: JSON.stringify({ url: targetUrl.trim() }),
+                    }
+                  );
+                } catch (e) {
+                  console.warn('Admin auto-add target failed (continuing):', e);
+                }
+              }
+            }
+          } catch (e: any) {
+            console.warn('Admin auto-prepare project failed:', e?.message || e);
+          }
+        }
+
+        if (!projectId) {
           setError('Please verify domain ownership first');
           return;
         }
-        body.project_id = preparedProjectId;
+
+        body.project_id = projectId;
         body.target_url = targetUrl.trim();
       }
 
@@ -1507,8 +1546,10 @@ export default function SecurityScannerClient() {
                       (selectedMode === 'existing'
                         ? (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
                         : (
-                            !preparedProjectId || 
-                            (verificationData && verificationData.status !== 'VERIFIED' && verificationData.status !== 'ALLOWLISTED')
+                            // Allow admins to bypass preparedProjectId for new target
+                            (!session.user?.isAdmin &&
+                              (!preparedProjectId ||
+                                (verificationData && !['VERIFIED', 'ALLOWLISTED'].includes(verificationData.status))))
                           ))
                     }
                     className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"

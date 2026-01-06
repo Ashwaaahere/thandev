@@ -56,6 +56,8 @@ def enforce_scan_permissions(
 
     # Domain verification / lock
     is_admin = bool(user.is_admin or user.is_superuser)
+    env_lower = (settings.ENVIRONMENT or "").strip().lower()
+    is_dev_env = env_lower in ("development", "dev", "local", "test")
     ensure_project_root_domain(project, target_url, allow_admin_override=True, is_admin=is_admin)
     enforce_domain_verification_for_scan(db, project, target_url, is_admin=is_admin)
 
@@ -70,7 +72,9 @@ def enforce_scan_permissions(
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    if limits.max_scans_per_day:
+    # In local/dev environments we intentionally relax quota enforcement so multiple users
+    # can test scans without tripping limits. Production enforcement remains unchanged.
+    if limits.max_scans_per_day and not is_dev_env:
         scans_today = (
             db.query(ScanJob)
             .join(Project, ScanJob.project_id == Project.id)
@@ -86,7 +90,7 @@ def enforce_scan_permissions(
                 detail=f"Daily scan limit reached ({limits.max_scans_per_day}).",
             )
 
-    if limits.max_concurrent_scans:
+    if limits.max_concurrent_scans and not is_dev_env:
         in_progress = (
             db.query(ScanJob)
             .join(Project, ScanJob.project_id == Project.id)

@@ -2,18 +2,13 @@
 app = "thandev-backend"
 primary_region = "iad"
 
-[build]
-
 [deploy]
-  # Run migrations once per deploy via release_command
-  # This ensures migrations run on the same database as the app, before containers start
-  # Migrations run in a separate release container that exits after completion
-  # Runtime containers (entrypoint.sh) do NOT run migrations - they only start uvicorn
   release_command = "alembic upgrade head"
 
 [env]
   PORT = "8000"
   ENVIRONMENT = "production"
+  WEB_CONCURRENCY = "1"
 
 [http_service]
   internal_port = 8000
@@ -30,10 +25,10 @@ primary_region = "iad"
 
   [[http_service.checks]]
     interval = "10s"
-    timeout = "2s"
-    grace_period = "30s"
+    timeout = "5s"
+    grace_period = "60s"
     method = "GET"
-    path = "/health"
+    path = "/healthz"
 
 [[vm]]
   cpu_kind = "shared"

@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
 import json
 import time
@@ -28,7 +28,7 @@ import io
 from app.schemas.scan import (
     ScanCreate, ScanResponse, ScanSummary, ScanListResponse,
     ScanJobListItem, ScanJobListResponse, QuickScanRequest, QuickScanResponse,
-    ToolExecutionResult, ScanToolsResponse
+    ToolExecutionResult, ScanToolsResponse, ToolResultCreate, ToolResultResponse
 )
 from app.schemas.brain import BrainSessionResponse, SessionStatus, parse_iso_datetime_safe
 from app.services.scan_orchestrator import ScanOrchestrator
@@ -901,7 +901,11 @@ async def quick_scan(
             
                 # Store session_id in scan_job
                 scan_job.brain_session_id = session_response.get("session_id")
-                scan_job.status = ScanStatus.RUNNING  # Brain owns the loop now
+                # Mark as QUEUED until the runner starts producing tool results.
+                # This prevents "false failures" when the runner is busy and results arrive later.
+                scan_job.status = ScanStatus.QUEUED
+                if not scan_job.started_at:
+                    scan_job.started_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(scan_job)
             
@@ -1010,10 +1014,11 @@ async def quick_scan(
                     db.commit()
                     db.refresh(scan_job)
                     logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
-    
-            return QuickScanResponse(
+
+        # Always return a response (Brain path or Runner path)
+        return QuickScanResponse(
             project_id=project.id,
-            scan_id=scan_job.id
+            scan_id=scan_job.id,
         )
     except HTTPException as e:
         # Log 4xx errors with detail before re-raising
@@ -1091,11 +1096,37 @@ async def get_scan(
                         }
                     )
                     
-                    session_status_raw = await brain_client.get_session(
-                    session_id=scan_job.brain_session_id,
-                    org_id=tenant.id,
-                    project_id=scan_job.project_id,
-                )
+                    # Wrap brain client call with timeout to prevent hanging
+                    # Use shorter timeout (10s) for get_session to avoid blocking scan page loads
+                    import asyncio
+                    try:
+                        session_status_raw = await asyncio.wait_for(
+                            brain_client.get_session(
+                                session_id=scan_job.brain_session_id,
+                                org_id=tenant.id,
+                                project_id=scan_job.project_id,
+                            ),
+                            timeout=10.0  # 10 second timeout for brain status fetch
+                        )
+                    except asyncio.TimeoutError:
+                        logger.warning(
+                            f"Brain session status fetch timed out after 10s for scan {scan_id}, continuing without brain status",
+                            extra={
+                                "scan_id": scan_id,
+                                "brain_session_id": scan_job.brain_session_id,
+                            }
+                        )
+                        session_status_raw = None  # Continue without brain status
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to fetch brain session status for scan {scan_id}: {e}, continuing without brain status",
+                            extra={
+                                "scan_id": scan_id,
+                                "brain_session_id": scan_job.brain_session_id,
+                                "error": str(e),
+                            }
+                        )
+                        session_status_raw = None  # Continue without brain status
                 
                 brain_fetch_latency_ms = (datetime.now(timezone.utc) - brain_fetch_start).total_seconds() * 1000
                 
@@ -1213,45 +1244,16 @@ async def get_scan(
                     }
                 )
                 
-                # Status reconciliation: Brain is source of truth when available
-                if brain_status is None:
-                    # Session not found - skip brain status reconciliation, use DB status
-                    brain_status_str = None
-                elif isinstance(brain_status, SessionStatus):
-                    brain_status_str = brain_status.value
-                else:
-                    brain_status_str = str(brain_status)
-                
-                if brain_status_str and (brain_status_str == "completed" or (isinstance(brain_status, SessionStatus) and brain_status == SessionStatus.COMPLETED)):
-                    if scan_job.status != ScanStatus.COMPLETED:
-                        logger.info(
-                            "Updating scan to COMPLETED (brain status)",
-                            extra={
-                                    "scan_id": scan_id,
-                                "old_status": scan_job.status.value,
-                                "brain_status": brain_status_str,
-                            }
-                        )
-                        scan_job.status = ScanStatus.COMPLETED
-                        if not scan_job.completion_time:
-                            # Use brain's finished_at if available, otherwise now
-                            completion_time = None
-                            if brain_session_response and brain_session_response.finished_at:
-                                completion_time = brain_session_response.finished_at
-                            else:
-                                completion_time = datetime.now(timezone.utc)
-                            # Set both columns to keep them in sync
-                            scan_job.set_completion_time(completion_time)
-                        db.commit()
-                        status_source = "brain"
-                elif all_tools_done and scan_job.status == ScanStatus.RUNNING:
+                # Status reconciliation: Core DB is the source of truth.
+                # Brain session status is advisory only and MUST NOT override scan status in DB
+                # (otherwise UI can show COMPLETED/FAILED while runner is still executing).
+                if all_tools_done and scan_job.status in (ScanStatus.RUNNING, ScanStatus.QUEUED):
                     # Fallback: If all tools are done but scan status is still RUNNING, mark scan as completed
                     # This handles cases where brain session doesn't update status or Celery path completes
                     logger.info(
                         "Updating scan to COMPLETED (all tools done fallback)",
                         extra={
                             "scan_id": scan_id,
-                            "brain_status": brain_status_str,
                             "old_status": scan_job.status.value,
                             "all_tools_done": all_tools_done,
                             "tool_count": len(tool_statuses_dict),
@@ -1285,26 +1287,6 @@ async def get_scan(
                         db.refresh(scan_job)
                         status_source = "db"
                         status_reason = "celery_all_tools_done"
-                elif brain_status_str and (brain_status_str in ["failed"] or (isinstance(brain_status, SessionStatus) and brain_status == SessionStatus.FAILED)):
-                    if scan_job.status != ScanStatus.FAILED:
-                        scan_job.status = ScanStatus.FAILED
-                        # Extract error message from session status if available
-                        if brain_session_response:
-                            error_msg = brain_session_response.error_message or "Brain session failed"
-                        elif session_status_raw and isinstance(session_status_raw, dict):
-                            error_msg = session_status_raw.get("error_message") or session_status_raw.get("error") or "Brain session failed"
-                        else:
-                            error_msg = "Brain session failed"
-                        scan_job.error_message = error_msg
-                        scan_job.set_completion_time(datetime.now(timezone.utc))
-                        db.commit()
-                        status_source = "brain"
-                elif brain_status_str and (brain_status_str in ["cancelled", "stopping", "stopped"] or (isinstance(brain_status, SessionStatus) and brain_status in [SessionStatus.CANCELLED, SessionStatus.STOPPING, SessionStatus.STOPPED])):
-                    if scan_job.status != ScanStatus.CANCELLED:
-                        scan_job.status = ScanStatus.CANCELLED
-                        scan_job.set_completion_time(datetime.now(timezone.utc))
-                        db.commit()
-                        status_source = "brain"
                 # "running" or "planning" status is already set
                 
         except Exception as e:
@@ -1419,6 +1401,13 @@ async def get_scan(
     
     tool_statuses = []
     done_tools = 0
+    running_tools = 0
+    done_status_values = {
+        ToolExecutionStatus.COMPLETED.value,
+        ToolExecutionStatus.FAILED.value,
+        ToolExecutionStatus.SKIPPED.value,
+        ToolExecutionStatus.TIMED_OUT.value,
+    }
     
     # Get expected total tools for this scan level (not just tools that have started)
     # Also account for AI-planned tools if available
@@ -1466,7 +1455,10 @@ async def get_scan(
             elif scan_job.scan_level.value == "advanced":
                 expected_tool_keys = {"httpx", "nuclei", "ffuf", "nmap", "sslscan", "dalfox", "sqlmap"}  # Default ADVANCED tools
     
-    total_tools = len(expected_tool_keys) if expected_tool_keys else 1  # Fallback to 1 to avoid division by zero
+    # We'll compute total_tools after we see both:
+    # - expected tools (tool matrix / AI plan)
+    # - tools that actually produced ToolResult rows
+    total_tools = 0
     
     # Track which tools we've seen
     seen_tool_names = set()
@@ -1511,10 +1503,13 @@ async def get_scan(
                 tool_status = ToolExecutionStatus.COMPLETED.value
         
         # Count tools that are done (completed, failed, skipped, or timed_out)
-        if tool_status in {ToolExecutionStatus.COMPLETED.value, ToolExecutionStatus.FAILED.value, 
-                          ToolExecutionStatus.SKIPPED.value, ToolExecutionStatus.TIMED_OUT.value}:
+        if tool_status in done_status_values:
             done_tools += 1
-        
+
+        # Track running tools for progress smoothing
+        if tool_status == ToolExecutionStatus.RUNNING.value:
+            running_tools += 1
+
         tool_statuses.append({
             "tool_name": tool_name,
             "status": tool_status,
@@ -1524,6 +1519,12 @@ async def get_scan(
             "error_code": tool_result.error_code,  # New field: short error code
             "error_message": tool_result.error_message,
         })
+
+    # Total tools should reflect what we show: expected tools PLUS any actually executed tools.
+    all_tool_keys = set(expected_tool_keys) | set(seen_tool_names)
+    total_tools = len(all_tool_keys)
+    if total_tools == 0:
+        total_tools = 1  # avoid division by zero; should be rare due to defaults above
     
     # If we have expected tools but haven't seen all of them yet, check if they're scheduled
     if expected_tool_keys:
@@ -1567,6 +1568,9 @@ async def get_scan(
                     error_code = None
                     error_message = None
                 
+                if missing_status in done_status_values:
+                    done_tools += 1
+                
                 tool_statuses.append({
                     "tool_name": tool_key,
                     "status": missing_status,
@@ -1577,8 +1581,10 @@ async def get_scan(
                     "error_message": error_message,
                 })
     
-    # Calculate progress percentage based on expected total tools
-    progress_pct = 0 if total_tools == 0 else round(100 * done_tools / total_tools)
+    # Calculate progress percentage based on displayed total tools (never exceed 100).
+    # Smooth: count RUNNING tools as half-done so UI progress moves during long tool execution.
+    progress_numerator = done_tools + (0.5 * running_tools)
+    progress_pct = 0 if total_tools == 0 else min(100, round(100 * progress_numerator / total_tools))
     
     # For summary generation, we only need a sample or count
     # Load findings only if needed for summary (limit to first 100 for summary stats)
@@ -1635,12 +1641,22 @@ async def get_scan(
     except Exception:
         pass
     
+    # Defensive: some deployments/DBs may store JSON fields as strings.
+    # Pydantic expects dicts for these fields.
+    summary_val = scan_job.summary
+    if isinstance(summary_val, str):
+        try:
+            import json as _json
+            summary_val = _json.loads(summary_val)
+        except Exception:
+            summary_val = {"raw": summary_val}
+
     response = ScanResponse(
         id=scan_job.id,
         project_id=scan_job.project_id,
         scan_level=scan_job.scan_level,
         status=scan_job.status,
-        summary=scan_job.summary,
+        summary=summary_val,
         stack_info=scan_job.stack_info,
         ai_plan=scan_job.ai_plan,
         status_source=status_source,
@@ -1863,32 +1879,27 @@ async def get_scan_tools(
     # Get tool results for this scan
     from app.models.finding import ToolResult
     from datetime import timedelta
-    from sqlalchemy import func
     
-    # Get the latest execution of each tool (deduplicate by tool_name)
-    # This prevents showing duplicate tools from multiple brain service iterations
-    latest_tool_results = (
-        db.query(
-            ToolResult.tool_name,
-            func.max(ToolResult.created_at).label('latest_created_at')
-        )
-        .filter(ToolResult.scan_job_id == scan_id)
-        .group_by(ToolResult.tool_name)
-        .subquery()
-    )
-    
-    # Get the actual ToolResult records for the latest executions
-    tool_results = (
+    # Fetch all tool results and dedupe in Python (Option A: simple + robust)
+    # This avoids SQL edge cases with tie-breaking when multiple results share same created_at
+    tool_results_all = (
         db.query(ToolResult)
-        .join(
-            latest_tool_results,
-            (ToolResult.tool_name == latest_tool_results.c.tool_name) &
-            (ToolResult.created_at == latest_tool_results.c.latest_created_at)
-        )
         .filter(ToolResult.scan_job_id == scan_id)
-        .order_by(ToolResult.created_at.asc())
+        .order_by(ToolResult.created_at.desc(), ToolResult.id.desc())  # Newest first, tie-break by ID
         .all()
     )
+    
+    # Deduplicate by tool_name (keep first occurrence = latest)
+    seen = set()
+    tool_results = []
+    for tr in tool_results_all:
+        if tr.tool_name in seen:
+            continue
+        seen.add(tr.tool_name)
+        tool_results.append(tr)
+    
+    # Reverse to show oldest->newest (optional, for display order)
+    tool_results.reverse()
     
     items = []
     for tool_result in tool_results:

@@ -27,7 +27,8 @@ primary_region = "iad"
     protocol = "http"
 
 [processes]
-  app = "uvicorn app.main:app --host 0.0.0.0 --port 8001"
+  app = "sh -lc \"uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8001}\""
+
 
 [[vm]]
   cpu_kind = "shared"

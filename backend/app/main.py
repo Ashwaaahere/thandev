@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -21,6 +21,7 @@ from app.api import findings_batch
 from app.api import auth_bootstrap
 from app.api import domain_verifications
 from app.api import stats
+from app.api import runner_ingest
 
 # Load environment variables
 load_dotenv()
@@ -175,6 +176,123 @@ app.add_middleware(
 
 # Response compression middleware
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+# Internal endpoint security middleware
+@app.middleware("http")
+async def internal_endpoint_security(request: Request, call_next):
+    """
+    Protect /api/internal/* endpoints from public access.
+    
+    Note: Runner endpoints have been moved to /api/runner/* to avoid Fly.io proxy blocking.
+    They still require Bearer token authentication via require_runner_service_auth.
+    
+    In production, these endpoints should only be accessible from:
+    - Private networks (RFC1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+    - Allowed IP addresses/CIDR blocks (INTERNAL_ENDPOINT_ALLOWED_IPS)
+    - Or behind an internal load balancer/gateway
+    
+    Note: Bearer token authentication is still required via require_runner_service_auth.
+    This middleware adds an additional layer of network-level protection.
+    """
+    if request.url.path.startswith("/api/internal/"):
+        from app.core.config import settings
+        import ipaddress
+        
+        # Get client IP (check X-Forwarded-For for proxies, fallback to direct)
+        client_ip_str = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+        if not client_ip_str:
+            client_ip_str = request.client.host if request.client else None
+        
+        if not client_ip_str:
+            logger.warning("Internal endpoint accessed without identifiable client IP")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "Internal endpoint access denied"}
+            )
+        
+        try:
+            client_ip = ipaddress.ip_address(client_ip_str)
+        except ValueError:
+            logger.warning(f"Invalid client IP format: {client_ip_str}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "Internal endpoint access denied"}
+            )
+        
+        # Check if IP is allowed
+        allowed = False
+        
+        # Option 0: Always allow if Bearer token is present (will be validated by dependency)
+        # This allows Fly.io internal networking while maintaining security via token auth
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            allowed = True
+            logger.debug(f"Internal endpoint accessed with Bearer token from {client_ip_str}, allowing")
+        
+        # Option 1: Fly.io internal network (IPv6 range fdaa::/48)
+        if not allowed:
+            try:
+                # Fly.io uses fdaa::/48 for internal networking
+                fly_internal_network = ipaddress.ip_network("fdaa::/48")
+                if isinstance(client_ip, ipaddress.IPv6Address) and client_ip in fly_internal_network:
+                    allowed = True
+                    logger.debug(f"Internal endpoint accessed from Fly.io internal network {client_ip_str}")
+            except Exception:
+                pass
+        
+        # Option 2: Require private network (RFC1918)
+        if not allowed and settings.INTERNAL_ENDPOINT_REQUIRE_PRIVATE_NETWORK:
+            private_networks = [
+                ipaddress.ip_network("10.0.0.0/8"),
+                ipaddress.ip_network("172.16.0.0/12"),
+                ipaddress.ip_network("192.168.0.0/16"),
+                ipaddress.ip_network("127.0.0.0/8"),  # localhost
+            ]
+            allowed = any(client_ip in net for net in private_networks)
+        
+        # Option 3: Check allowed IPs/CIDR blocks
+        if not allowed and settings.INTERNAL_ENDPOINT_ALLOWED_IPS:
+            allowed_ips = [ip.strip() for ip in settings.INTERNAL_ENDPOINT_ALLOWED_IPS.split(",") if ip.strip()]
+            for allowed_ip_str in allowed_ips:
+                if allowed_ip_str.lower() == "private":
+                    # RFC1918 private networks
+                    private_networks = [
+                        ipaddress.ip_network("10.0.0.0/8"),
+                        ipaddress.ip_network("172.16.0.0/12"),
+                        ipaddress.ip_network("192.168.0.0/16"),
+                        ipaddress.ip_network("127.0.0.0/8"),
+                    ]
+                    if any(client_ip in net for net in private_networks):
+                        allowed = True
+                        break
+                else:
+                    try:
+                        allowed_net = ipaddress.ip_network(allowed_ip_str)
+                        if client_ip in allowed_net:
+                            allowed = True
+                            break
+                    except ValueError:
+                        logger.warning(f"Invalid allowed IP format: {allowed_ip_str}")
+        
+        # In development, allow all if no restrictions configured
+        if not allowed and settings.ENVIRONMENT == "development" and not settings.INTERNAL_ENDPOINT_REQUIRE_PRIVATE_NETWORK and not settings.INTERNAL_ENDPOINT_ALLOWED_IPS:
+            allowed = True
+            logger.debug(f"Development mode: allowing internal endpoint access from {client_ip_str}")
+        
+        if not allowed:
+            logger.warning(
+                f"Internal endpoint access denied from {client_ip_str} (path: {request.url.path})"
+            )
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"error": "Internal endpoint access denied"}
+            )
+    
+    return await call_next(request)
 
 
 # Request logging middleware
@@ -382,6 +500,9 @@ app.include_router(admin.router, prefix=settings.API_V1_PREFIX)
 app.include_router(access.router, prefix=settings.API_V1_PREFIX)
 app.include_router(domain_verifications.router, prefix=settings.API_V1_PREFIX)
 app.include_router(stats.router, prefix=settings.API_V1_PREFIX)
+# Runner service endpoints - moved from /api/internal to /api/runner to avoid Fly.io proxy blocking
+# Still requires Bearer token authentication via require_runner_service_auth
+app.include_router(runner_ingest.router, prefix="/api/runner")
 
 
 # Custom OpenAPI schema

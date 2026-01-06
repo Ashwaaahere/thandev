@@ -4,6 +4,7 @@ Executes tools as subprocesses on the local machine
 """
 import logging
 import sys
+import asyncio
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -62,15 +63,24 @@ class LocalSubprocessBackend(ExecutionBackend):
                 job_dir = jobs_base / session_id
             job_dir.mkdir(parents=True, exist_ok=True)
             
-            # Execute using ToolExecutor
-            result = await self.executor.run_step(
-                tool_id=tool_id,
-                mode_id=mode_id,
-                target_url=target,
-                params=params,
-                scan_job_id=scan_job_id,
-                job_dir=job_dir,
-            )
+            # Execute using ToolExecutor.
+            #
+            # IMPORTANT: ToolExecutor contains blocking subprocess calls. If we run it directly
+            # inside the runner's asyncio event loop, it blocks ALL concurrent scans/steps.
+            # Run it in a worker thread with its own event loop to allow real concurrency.
+            def _run_step_sync() -> Dict[str, Any]:
+                return asyncio.run(
+                    self.executor.run_step(
+                        tool_id=tool_id,
+                        mode_id=mode_id,
+                        target_url=target,
+                        params=params,
+                        scan_job_id=scan_job_id,
+                        job_dir=job_dir,
+                    )
+                )
+
+            result = await asyncio.to_thread(_run_step_sync)
             
             # Get artifact refs
             artifact_refs = []

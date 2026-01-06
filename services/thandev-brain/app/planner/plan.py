@@ -78,8 +78,8 @@ async def generate_plan(
     steps.extend(base_steps)
     step_counter += len(base_steps)
     
-    # Rule 2: TLS endpoint → add sslyze/sslscan
-    if is_tls and _tool_supports_target("sslscan", target_type, catalog):
+    # Rule 2: TLS endpoint → add sslscan (only for pro/advanced; keep BASIC lightweight)
+    if scan_level in {"pro", "advanced"} and is_tls and _tool_supports_target("sslscan", target_type, catalog):
         # Check if sslscan not already in plan
         if not any(s.tool_id == "sslscan" for s in steps):
             steps.append(PlanStep(

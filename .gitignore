@@ -165,6 +165,9 @@ __pycache__/
 **/.env.development
 **/.env.test
 !**/.env.example
+**/.env.fly.local
+secrets.local*
+.cursor/
 
 # Job artifacts and tool outputs
 backend/data/jobs/**

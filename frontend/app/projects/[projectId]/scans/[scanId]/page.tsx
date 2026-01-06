@@ -1517,7 +1517,16 @@ export default function ScanReportPage() {
                       </div>
                     </div>
                     <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                      {scan.completed_tools ?? 0} / {scan.total_tools} checks completed
+                      {(() => {
+                        const total = scan.total_tools ?? 0;
+                        const completed = scan.completed_tools ?? 0;
+                        const running = (scan.tool_statuses || []).filter(t => t.status === 'running').length;
+                        const queued = (scan.tool_statuses || []).filter(t => t.status === 'pending').length;
+                        const parts = [`${completed} / ${total} checks completed`];
+                        if (running > 0) parts.push(`${running} running`);
+                        if (queued > 0) parts.push(`${queued} queued`);
+                        return parts.join(' • ');
+                      })()}
                     </p>
                   </>
                 )}

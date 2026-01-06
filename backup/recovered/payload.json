@@ -1,0 +1,26 @@
+{
+  "tool_run_id": "77777777-7777-7777-7777-777777777777",
+  "step_id": "step-test-internal-3",
+  "tool_name": "nuclei",
+  "tool_id": "nuclei",
+  "success": true,
+  "exit_code": 0,
+  "execution_time": 1.23,
+  "timed_out": false,
+  "command": "nuclei -u https://example.com",
+  "output": "test output",
+  "stdout_preview": "stdout preview",
+  "stderr_preview": "",
+  "findings_count": 1,
+  "findings": [
+    {
+      "tool_id": "nuclei",
+      "title": "200 OK Duplicate Test",
+      "severity": "low",
+      "description": "demo",
+      "url": "https://example.com",
+      "evidence": "demo evidence",
+      "raw": {"k":"v"}
+    }
+  ]
+}

@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Redis Configuration
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     
+    # Backend API Configuration
+    BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
+    RUNNER_API_TOKEN: str = os.getenv("RUNNER_API_TOKEN", "")
+    
     # Database Configuration (for findings ingestion)
     # CRITICAL: Runner must use the SAME DATABASE_URL as backend to avoid "scan job not found" errors
     # Default to SQLite for development, Postgres for production
@@ -76,15 +80,32 @@ class Settings(BaseSettings):
         else:
             logger.info(f"Using DATABASE_URL from .env file: {self.DATABASE_URL}")
         
-        # Compute tool execution paths if not set
-        if not self.TOOLS_BASE_DIR:
-            self.TOOLS_BASE_DIR = os.getenv("TOOLS_BASE_DIR", os.path.join(_repo_root, "backend"))
-        if not self.DATA_DIR:
-            self.DATA_DIR = os.getenv("DATA_DIR", os.path.join(_repo_root, "backend", "data"))
-        if not self.JOBS_DIR:
-            self.JOBS_DIR = os.getenv("JOBS_DIR", os.path.join(self.DATA_DIR, "jobs"))
-        if not self.WORDLISTS_DIR:
-            self.WORDLISTS_DIR = os.getenv("WORDLISTS_DIR", "/opt/thandev/wordlists")
+        # Compute tool execution paths.
+        # IMPORTANT: environment variables must take precedence (like DATABASE_URL) so per-service
+        # docker-compose overrides work even if .env.fly.local contains other values.
+        env_tools_base_dir = os.getenv("TOOLS_BASE_DIR")
+        if env_tools_base_dir:
+            self.TOOLS_BASE_DIR = env_tools_base_dir
+        elif not self.TOOLS_BASE_DIR:
+            self.TOOLS_BASE_DIR = os.path.join(_repo_root, "backend")
+
+        env_data_dir = os.getenv("DATA_DIR")
+        if env_data_dir:
+            self.DATA_DIR = env_data_dir
+        elif not self.DATA_DIR:
+            self.DATA_DIR = os.path.join(_repo_root, "backend", "data")
+
+        env_jobs_dir = os.getenv("JOBS_DIR")
+        if env_jobs_dir:
+            self.JOBS_DIR = env_jobs_dir
+        elif not self.JOBS_DIR:
+            self.JOBS_DIR = os.path.join(self.DATA_DIR, "jobs")
+
+        env_wordlists_dir = os.getenv("WORDLISTS_DIR")
+        if env_wordlists_dir:
+            self.WORDLISTS_DIR = env_wordlists_dir
+        elif not self.WORDLISTS_DIR:
+            self.WORDLISTS_DIR = "/opt/thandev/wordlists"
 
 
 settings = Settings()
