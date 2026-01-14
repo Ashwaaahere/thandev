@@ -1,0 +1,38 @@
+# Fly.io configuration for ZAP (OWASP ZAP Proxy)
+app = "thandev-zap"
+primary_region = "iad"
+
+[build]
+  image = "ghcr.io/zaproxy/zaproxy:stable"
+
+[env]
+  # ZAP will run in daemon mode on port 8090
+  # API port: 8090
+  # Proxy port: 8080
+
+# PRIVATE service - accessed via .flycast DNS only
+# Using [[services]] for private networking
+[[services]]
+  protocol = "tcp"
+  internal_port = 8090
+  processes = ["app"]
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 8090
+  
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/JSON/core/view/version/"
+    protocol = "http"
+
+[processes]
+  app = "zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config api.addrs.addr.enabled=true"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory_mb = 2048
