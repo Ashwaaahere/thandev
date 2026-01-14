@@ -17,9 +17,14 @@ RUN wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz \
     && tar -C /usr/local -xzf go1.21.5.linux-amd64.tar.gz \
     && rm go1.21.5.linux-amd64.tar.gz
 
+# Set Go environment variables
+ENV GOROOT=/usr/local/go
 ENV GOBIN=/usr/local/bin
 ENV GOPATH=/tmp/go
 ENV PATH="/usr/local/bin:/usr/local/go/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Verify Go installation
+RUN /usr/local/go/bin/go version || (echo "ERROR: Go installation failed" && exit 1)
 
 # Python deps first (so they can't overwrite Go binaries later)
 COPY requirements.txt .
@@ -30,12 +35,16 @@ RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap 
     && ln -s /opt/sqlmap/sqlmap.py /usr/local/bin/sqlmap
 
 # Now install Go tools AFTER pip (so Go binaries take final ownership)
+# CRITICAL: Use full path to go binary and verify each installation
 RUN rm -f /usr/local/bin/httpx || true \
-    && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
-    && go install -v github.com/ffuf/ffuf/v2@v2.1.0 \
-    && go install -v github.com/hahwul/dalfox/v2@latest \
-    && go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 \
-    && chmod +x /usr/local/bin/nuclei /usr/local/bin/ffuf /usr/local/bin/dalfox /usr/local/bin/httpx
+    && /usr/local/go/bin/go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+    && /usr/local/go/bin/go install -v github.com/ffuf/ffuf/v2@v2.1.0 \
+    && /usr/local/go/bin/go install -v github.com/hahwul/dalfox/v2@latest \
+    && /usr/local/go/bin/go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 \
+    && chmod +x /usr/local/bin/nuclei /usr/local/bin/ffuf /usr/local/bin/dalfox /usr/local/bin/httpx \
+    && /usr/local/bin/nuclei -version || (echo "ERROR: nuclei installation failed" && exit 1) \
+    && /usr/local/bin/httpx -version || (echo "ERROR: httpx installation failed" && exit 1) \
+    && /usr/local/bin/dalfox version || (echo "ERROR: dalfox installation failed" && exit 1)
 
 # Catalog
 RUN mkdir -p /app/catalog

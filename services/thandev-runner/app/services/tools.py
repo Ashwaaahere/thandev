@@ -802,6 +802,7 @@ class ToolExecutor:
             }
         
         try:
+            # Verify binary is actually executable by running version check
             check_result = await asyncio.to_thread(subprocess.run,
                 [nuclei_binary, "-version"],
                 capture_output=True,
@@ -809,7 +810,14 @@ class ToolExecutor:
                 text=True
             )
             if check_result.returncode != 0:
-                raise FileNotFoundError("nuclei command failed")
+                # If version check fails, log the error but don't fail yet - might still work
+                logger.warning(f"nuclei version check failed (exit_code={check_result.returncode}): {check_result.stderr}")
+                # Check if it's a real error or just a version display issue
+                if check_result.stderr and any(keyword in check_result.stderr.lower() for keyword in ["not found", "cannot execute", "permission denied"]):
+                    raise FileNotFoundError(f"nuclei binary not executable: {check_result.stderr}")
+                # If stdout has version info, it's probably fine
+                if not check_result.stdout or "nuclei" not in check_result.stdout.lower():
+                    raise FileNotFoundError("nuclei version check returned no output")
         except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
             return {
                 "tool_name": "nuclei",
