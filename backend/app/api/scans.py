@@ -422,10 +422,86 @@ async def create_scan(
             db.commit()
             db.refresh(scan_job)
             
+            # CRITICAL LOG: This must appear in logs to confirm we reach this point
+            logger.error(f"[BRAIN-PENDING-ENTRY] CRITICAL: About to create PENDING ToolResult records for brain scan {scan_job.id}")
+            
+            # CRITICAL: Create PENDING ToolResult records so UI can show tool status
+            # Brain service will publish steps dynamically, but we need initial PENDING records
+            # based on expected tools for this scan level
+            # Use a fresh database session to avoid transaction issues
+            try:
+                logger.info(f"[BRAIN-PENDING-STEP1] Importing modules...")
+                from app.core.database import SessionLocal
+                from app.core.tool_matrix import get_tools_for_level
+                from app.models.finding import ToolResult, ToolExecutionStatus
+                logger.info(f"[BRAIN-PENDING-STEP2] Modules imported successfully")
+                
+                logger.info(f"[BRAIN-PENDING-STEP3] Starting to create PENDING ToolResult records for brain scan {scan_job.id}")
+                scan_level_enum = scan.scan_level
+                logger.info(f"[BRAIN-PENDING-STEP4] Scan level enum: {scan_level_enum}, value: {scan_level_enum.value if hasattr(scan_level_enum, 'value') else scan_level_enum}")
+                expected_tools = get_tools_for_level(scan_level_enum)
+                logger.info(f"[BRAIN-PENDING-STEP5] Got {len(expected_tools)} expected tools for scan level {scan_level_enum.value}")
+                
+                # Use a fresh database session for PENDING record creation
+                pending_db = SessionLocal()
+                try:
+                    pending_count = 0
+                    for tool_config in expected_tools:
+                        if not tool_config.get("enabled", True):
+                            logger.debug(f"[BRAIN-PENDING] Skipping disabled tool: {tool_config.get('key')}")
+                            continue
+                        
+                        tool_id = tool_config.get("key") or tool_config.get("name")
+                        logger.debug(f"[BRAIN-PENDING] Processing tool: {tool_id}")
+                        
+                        # Check if ToolResult already exists (idempotent)
+                        existing = pending_db.query(ToolResult).filter(
+                            ToolResult.scan_job_id == scan_job.id,
+                            ToolResult.tool_name == tool_id
+                        ).first()
+                        
+                        if not existing:
+                            tool_result = ToolResult(
+                                scan_job_id=scan_job.id,
+                                tool_name=tool_id,
+                                status=ToolExecutionStatus.PENDING,
+                            )
+                            pending_db.add(tool_result)
+                            pending_count += 1
+                            logger.debug(f"[BRAIN-PENDING] Added PENDING record for {tool_id}")
+                        else:
+                            logger.debug(f"[BRAIN-PENDING] ToolResult already exists for {tool_id}: {existing.status}")
+                    
+                    if pending_count > 0:
+                        pending_db.commit()
+                        logger.info(f"[BRAIN-PENDING] Created {pending_count} PENDING ToolResult records for brain scan {scan_job.id}")
+                    else:
+                        logger.warning(f"[BRAIN-PENDING] No PENDING records created (all tools may already exist or be disabled)")
+                except Exception as inner_e:
+                    logger.error(f"[BRAIN-PENDING] Error in PENDING record creation loop: {inner_e}", exc_info=True)
+                    pending_db.rollback()
+                    raise
+                finally:
+                    pending_db.close()
+            except Exception as e:
+                logger.error(f"[BRAIN-PENDING] Failed to create PENDING ToolResult records for brain scan {scan_job.id}: {e}", exc_info=True)
+                # Don't fail the scan if this fails - brain will still work
+            
             logger.info(
                 f"Started brain session {scan_job.brain_session_id} for scan {scan_job.id}. "
                 f"Brain will own the closed-loop scanning process."
             )
+            
+            # Verify PENDING records were created (for debugging)
+            try:
+                from app.models.finding import ToolResult
+                pending_count_check = db.query(ToolResult).filter(
+                    ToolResult.scan_job_id == scan_job.id,
+                    ToolResult.status == ToolExecutionStatus.PENDING
+                ).count()
+                logger.info(f"[BRAIN-PENDING-VERIFY] Scan {scan_job.id} has {pending_count_check} PENDING ToolResult records after brain session start")
+            except Exception as verify_e:
+                logger.debug(f"[BRAIN-PENDING-VERIFY] Failed to verify PENDING records: {verify_e}")
         except Exception as e:
             # Log the error with full details for debugging
             error_detail = str(e) if str(e) else repr(e)
@@ -462,80 +538,38 @@ async def create_scan(
     
     # Default path: Use Runner via Redis streams (when brain is disabled or not required)
     if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
-        # Check if Celery execution is explicitly enabled
-        if settings.USE_CELERY_SCAN_EXECUTION:
-            logger.info(f"USE_CELERY_SCAN_EXECUTION=true, using Celery path for scan {scan_job.id}")
+        # Use Runner via Redis streams
+        logger.info(f"Publishing scan steps to Runner for scan {scan_job.id}")
         try:
-            from app.services.scan_orchestrator import ScanOrchestrator
-            orchestrator = ScanOrchestrator()
-            # Convert enum to string value
-            scan_level_str = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level)
-            # Pass user_id for user-specific queue routing
-            celery_task_id = await orchestrator.queue_scan(
-                scan_job.id, 
-                project.target_url, 
-                scan_level_str,
-                user_id=current_user.id
+            from app.services.runner_client import publish_scan_steps_to_runner
+            
+            # Publish step requests to Runner
+            success = await publish_scan_steps_to_runner(
+                scan_job_id=scan_job.id,
+                target_url=project.target_url,
+                scan_level=scan.scan_level,
+                org_id=tenant.id,
+                project_id=project.id,
             )
             
-            # Update scan job with celery task ID
-            scan_job.celery_task_id = celery_task_id
-            scan_job.status = ScanStatus.QUEUED
-            db.commit()
-            db.refresh(scan_job)
-            logger.info(f"Scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
-        except Exception as e:
-            # If Celery queueing fails, mark scan as failed but still return the scan job
-            error_msg = f"Failed to queue scan task: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            
-            scan_job.status = ScanStatus.FAILED
-            scan_job.error_message = error_msg
-            db.commit()
-            db.refresh(scan_job)
-            
-            # Raise HTTPException with detailed error for debugging
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to queue scan task. Error: {str(e)}. Make sure Celery worker is running."
-            )
-        else:
-            # Default: Use Runner via Redis streams
-            logger.info(f"Publishing scan steps to Runner for scan {scan_job.id}")
-            try:
-                from app.services.runner_client import publish_scan_steps_to_runner
-                
-                # Publish step requests to Runner
-                success = await publish_scan_steps_to_runner(
-                    scan_job_id=scan_job.id,
-                    target_url=project.target_url,
-                    scan_level=scan.scan_level,
-                    org_id=tenant.id,
-                    project_id=project.id,
-                )
-                
-                if success:
-                    scan_job.status = ScanStatus.RUNNING
+            if success:
+                # CRITICAL: Always set status to RUNNING when steps are published successfully
+                # This ensures scans don't get stuck in QUEUED or PENDING status
+                scan_job.status = ScanStatus.RUNNING
+                if not scan_job.started_at:
                     scan_job.started_at = datetime.now(timezone.utc)
-                    db.commit()
-                    db.refresh(scan_job)
-                    logger.info(f"Scan {scan_job.id} started via Runner (steps published to Redis streams)")
-                else:
-                    error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
-                    logger.error(error_msg)
-                    scan_job.status = ScanStatus.FAILED
-                    scan_job.error_message = error_msg
-                    db.commit()
-                    db.refresh(scan_job)
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=error_msg
-                    )
-            except HTTPException:
-                raise
-            except Exception as e:
-                error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
-                logger.error(error_msg, exc_info=True)
+                db.commit()
+                db.refresh(scan_job)
+                logger.info(
+                    f"Scan {scan_job.id} started via Runner (steps published to Redis streams). "
+                    f"Status updated to RUNNING."
+                )
+            else:
+                error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
+                logger.error(
+                    f"Scan {scan_job.id}: {error_msg}. "
+                    f"Current status: {scan_job.status.value if hasattr(scan_job.status, 'value') else scan_job.status}"
+                )
                 scan_job.status = ScanStatus.FAILED
                 scan_job.error_message = error_msg
                 db.commit()
@@ -544,6 +578,19 @@ async def create_scan(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=error_msg
                 )
+        except HTTPException:
+            raise
+        except Exception as e:
+            error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            scan_job.status = ScanStatus.FAILED
+            scan_job.error_message = error_msg
+            db.commit()
+            db.refresh(scan_job)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_msg
+            )
     else:
         logger.info(f"Scan {scan_job.id} is being handled by brain service (session_id: {scan_job.brain_session_id}), skipping Runner path")
     
@@ -901,13 +948,64 @@ async def quick_scan(
             
                 # Store session_id in scan_job
                 scan_job.brain_session_id = session_response.get("session_id")
-                # Mark as QUEUED until the runner starts producing tool results.
-                # This prevents "false failures" when the runner is busy and results arrive later.
-                scan_job.status = ScanStatus.QUEUED
+                # Mark as RUNNING since brain session started successfully
+                # The brain will manage the scan execution
+                scan_job.status = ScanStatus.RUNNING
                 if not scan_job.started_at:
                     scan_job.started_at = datetime.now(timezone.utc)
                 db.commit()
                 db.refresh(scan_job)
+            
+                # CRITICAL LOG: Must appear to confirm we reach PENDING creation
+                logger.error(f"[QUICK-SCAN-PENDING-ENTRY] CRITICAL: About to create PENDING ToolResult records for quick scan {scan_job.id}")
+            
+                # CRITICAL: Create PENDING ToolResult records so UI can show tool status
+                # Brain service will publish steps dynamically, but we need initial PENDING records
+                try:
+                    logger.info(f"[QUICK-SCAN-PENDING-STEP1] Importing modules for quick scan {scan_job.id}")
+                    from app.core.database import SessionLocal
+                    from app.core.tool_matrix import get_tools_for_level
+                    from app.models.finding import ToolResult, ToolExecutionStatus
+                    logger.info(f"[QUICK-SCAN-PENDING-STEP2] Modules imported successfully")
+                    
+                    logger.info(f"[QUICK-SCAN-PENDING-STEP3] Getting tools for level {payload.scan_level}")
+                    expected_tools = get_tools_for_level(payload.scan_level)
+                    logger.info(f"[QUICK-SCAN-PENDING-STEP4] Got {len(expected_tools)} expected tools")
+                    pending_db = SessionLocal()
+                    try:
+                        pending_count = 0
+                        logger.info(f"[QUICK-SCAN-PENDING-STEP5] Starting to create PENDING records")
+                        for tool_config in expected_tools:
+                            if not tool_config.get("enabled", True):
+                                continue
+                            
+                            tool_id = tool_config.get("key") or tool_config.get("name")
+                            
+                            # Check if ToolResult already exists (idempotent)
+                            existing = pending_db.query(ToolResult).filter(
+                                ToolResult.scan_job_id == scan_job.id,
+                                ToolResult.tool_name == tool_id
+                            ).first()
+                            
+                            if not existing:
+                                tool_result = ToolResult(
+                                    scan_job_id=scan_job.id,
+                                    tool_name=tool_id,
+                                    status=ToolExecutionStatus.PENDING,
+                                )
+                                pending_db.add(tool_result)
+                                pending_count += 1
+                        
+                        if pending_count > 0:
+                            pending_db.commit()
+                            logger.info(f"[QUICK-SCAN-PENDING] Created {pending_count} PENDING ToolResult records for quick scan {scan_job.id}")
+                    except Exception as inner_e:
+                        logger.error(f"[QUICK-SCAN-PENDING] Error creating PENDING records: {inner_e}", exc_info=True)
+                        pending_db.rollback()
+                    finally:
+                        pending_db.close()
+                except Exception as e:
+                    logger.error(f"[QUICK-SCAN-PENDING] Failed to create PENDING ToolResult records: {e}", exc_info=True)
             
                 logger.info(
                     f"Started brain session {scan_job.brain_session_id} for quick scan {scan_job.id}. "
@@ -945,76 +1043,43 @@ async def quick_scan(
     
         # Default path: Use Runner via Redis streams (when brain is disabled or not required)
         if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
-            # Check if Celery execution is explicitly enabled
-            if settings.USE_CELERY_SCAN_EXECUTION:
-                logger.info(f"USE_CELERY_SCAN_EXECUTION=true, using Celery path for quick scan {scan_job.id}")
-                try:
-                    from app.services.scan_orchestrator import ScanOrchestrator
-                    orchestrator = ScanOrchestrator()
-                    scan_level_str = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level)
-                    celery_task_id = await orchestrator.queue_scan(
-                        scan_job.id, 
-                        project.target_url, 
-                        scan_level_str,
-                        user_id=current_user.id
-                    )
-                
-                    # Update scan job with celery task ID
-                    scan_job.celery_task_id = celery_task_id
-                    scan_job.status = ScanStatus.QUEUED
+            # Use Runner via Redis streams
+            logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
+            try:
+                from app.services.runner_client import publish_scan_steps_to_runner
+            
+                # Publish step requests to Runner
+                success = await publish_scan_steps_to_runner(
+                    scan_job_id=scan_job.id,
+                    target_url=project.target_url,
+                    scan_level=payload.scan_level,
+                    org_id=tenant.id,
+                    project_id=project.id,
+                )
+            
+                if success:
+                    scan_job.status = ScanStatus.RUNNING
+                    scan_job.started_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(scan_job)
-                    logger.info(f"Quick scan {scan_job.id} queued via Celery (task_id: {celery_task_id})")
-                except Exception as e:
-                    # If Celery queueing fails, mark scan as failed but still return the scan job
-                    error_msg = f"Failed to queue scan task: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
-                
-                    scan_job.status = ScanStatus.FAILED
-                    scan_job.error_message = error_msg
-                    db.commit()
-                    db.refresh(scan_job)
-                
-                    # Still return the scan, but log the error
-                    logger.warning(f"Quick scan created but queueing failed: {error_msg}")
-            else:
-                # Default: Use Runner via Redis streams
-                logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
-                try:
-                    from app.services.runner_client import publish_scan_steps_to_runner
-                
-                    # Publish step requests to Runner
-                    success = await publish_scan_steps_to_runner(
-                        scan_job_id=scan_job.id,
-                        target_url=project.target_url,
-                        scan_level=payload.scan_level,
-                        org_id=tenant.id,
-                        project_id=project.id,
-                    )
-                
-                    if success:
-                        scan_job.status = ScanStatus.RUNNING
-                        scan_job.started_at = datetime.now(timezone.utc)
-                        db.commit()
-                        db.refresh(scan_job)
-                        logger.info(f"Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
-                    else:
-                        error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
-                        logger.error(error_msg)
-                        scan_job.status = ScanStatus.FAILED
-                        scan_job.error_message = error_msg
-                        db.commit()
-                        db.refresh(scan_job)
-                        logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
-                except Exception as e:
-                    error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
-                    logger.error(error_msg, exc_info=True)
+                    logger.info(f"Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
+                else:
+                    error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
+                    logger.error(error_msg)
                     scan_job.status = ScanStatus.FAILED
                     scan_job.error_message = error_msg
                     db.commit()
                     db.refresh(scan_job)
                     logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
-
+            except Exception as e:
+                error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
+                logger.error(error_msg, exc_info=True)
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = error_msg
+                db.commit()
+                db.refresh(scan_job)
+                logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
+    
         # Always return a response (Brain path or Runner path)
         return QuickScanResponse(
             project_id=project.id,
@@ -1066,6 +1131,17 @@ async def get_scan(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Scan not found. The scan ID '{scan_id}' does not exist or you don't have permission to access it."
         )
+
+    # CRITICAL: Check for stuck tools and update scan completion status
+    # This ensures that tools stuck in RUNNING status are marked as TIMED_OUT
+    # and scans with all tools done are marked as COMPLETED
+    if scan_job.status in (ScanStatus.RUNNING, ScanStatus.QUEUED):
+        try:
+            from app.api.runner_ingest import _check_and_update_scan_completion
+            _check_and_update_scan_completion(scan_job, db)
+            db.refresh(scan_job)  # Refresh to get updated status
+        except Exception as e:
+            logger.warning(f"Failed to check scan completion for {scan_id}: {e}")
 
     _log_scan_state("H2", "get_scan:loaded", scan_job)
     
@@ -1505,7 +1581,7 @@ async def get_scan(
         # Count tools that are done (completed, failed, skipped, or timed_out)
         if tool_status in done_status_values:
             done_tools += 1
-
+        
         # Track running tools for progress smoothing
         if tool_status == ToolExecutionStatus.RUNNING.value:
             running_tools += 1
@@ -1650,7 +1726,7 @@ async def get_scan(
             summary_val = _json.loads(summary_val)
         except Exception:
             summary_val = {"raw": summary_val}
-
+    
     response = ScanResponse(
         id=scan_job.id,
         project_id=scan_job.project_id,
@@ -1748,15 +1824,9 @@ async def cancel_scan(
             logger.warning(f"Failed to stop brain session {scan_job.brain_session_id}: {e}")
             # Don't fail the cancellation if we can't stop the brain session
     
-    # Try to revoke the Celery task if it exists
-    if scan_job.celery_task_id:
-        try:
-            from app.tasks.celery_app import celery
-            celery.control.revoke(scan_job.celery_task_id, terminate=True)
-            logger.info(f"Revoked Celery task {scan_job.celery_task_id} for cancelled scan {scan_id}")
-        except Exception as e:
-            logger.warning(f"Failed to revoke Celery task {scan_job.celery_task_id}: {e}")
-            # Don't fail the cancellation if we can't revoke the task
+    # NOTE: Celery has been removed. Scans are now cancelled via Runner/Brain.
+    # Runner will check scan status and skip cancelled scans automatically.
+    # No need to revoke Celery tasks anymore.
     
     # Try to stop the brain session if it exists
     if scan_job.brain_session_id:

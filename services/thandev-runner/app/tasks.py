@@ -14,9 +14,10 @@ from app.config import settings
 from app.executor import get_execution_adapter  # Keep for backward compatibility
 from app.execution.selector import get_backend_for_tool
 from app.queue import consume_step_requests, ack_step_request, publish_step_result, StepResult
+from app.queue.streams import discover_brain_sessions, consume_brain_session_steps
 import uuid
 from app.backend_client import post_tool_result, get_scan_status, mark_scan_started, post_tool_started
-from app.findings.parsers import parse_nuclei_output, parse_httpx_output, parse_sslscan_output, parse_ffuf_output
+from app.findings.parsers import parse_nuclei_output, parse_httpx_output, parse_sslscan_output, parse_dalfox_output, parse_nmap_output, parse_zap_output, parse_sqlmap_output
 from app.concurrency import (
     acquire_session_slot,
     release_session_slot,
@@ -29,6 +30,11 @@ def _tcp_connectable(target_url: str, timeout_sec: float = 5.0) -> bool:
     """
     Fast preflight check: can we open a TCP connection to target host:port?
     Prevents long-running tools from hanging on unreachable targets.
+    
+    Note: This check may fail for targets that are reachable via HTTP but not via raw TCP
+    (e.g., behind load balancers, firewalls, or CDNs). In such cases, tools should still
+    be allowed to attempt the connection as they may use HTTP-level retries or different
+    connection methods.
     """
     try:
         parsed = urlparse(target_url)
@@ -38,8 +44,13 @@ def _tcp_connectable(target_url: str, timeout_sec: float = 5.0) -> bool:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         with socket.create_connection((host, port), timeout=timeout_sec):
             return True
-    except Exception:
-        return False
+    except Exception as e:
+        # Log the specific error for debugging, but don't fail the preflight check
+        # Some targets may block raw TCP but allow HTTP connections
+        logger.debug(f"TCP preflight check failed for {target_url}: {e}. Allowing tool to attempt connection anyway.")
+        # Return True to allow tools to attempt the connection even if TCP preflight fails
+        # Tools like httpx and nuclei have their own retry logic and may succeed where raw TCP fails
+        return True
 
 
 def _normalize_dalfox_output(output_text: str) -> str:
@@ -125,6 +136,15 @@ async def process_step_request(message: Dict[str, Any]) -> None:
     project_id = data.get("project_id") or None
     scan_job_id = data.get("scan_job_id") or None
     
+    # #region agent log
+    try:
+        debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+        with open(debug_log_path, "a") as f:
+            import json as json_lib
+            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"D","location":"tasks.py:119","message":"Processing step request","data":{"message_id":message_id,"step_id":step_id,"tool_id":tool_id,"mode_id":mode_id,"scan_job_id":scan_job_id},"timestamp":int(time.time()*1000)})+"\n")
+    except: pass
+    # #endregion
+    
     # Note: Scan status check removed - runner no longer depends on backend Python imports
     # Backend API will handle validation when we POST tool results
     
@@ -170,7 +190,7 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             f"Processing step {step_id} (tool_id={tool_id}, mode_id={mode_id}, "
             f"session={session_id}, scan_job={scan_job_id})"
         )
-
+        
         # If the scan has been cancelled/failed/completed in core, skip execution immediately.
         # This prevents wasting resources and ensures "stop" propagates end-to-end.
         if scan_job_id:
@@ -208,30 +228,25 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             )
 
         # Preflight connectivity check for HTTP/TLS tools.
-        # If the target is unreachable, fail fast (instead of hanging for minutes).
-        http_tools = {"httpx", "nuclei", "ffuf", "dalfox", "sslscan"}
+        # NOTE: We log warnings but don't fail tools based on TCP preflight,
+        # as some targets may block raw TCP but allow HTTP connections.
+        http_tools = {"httpx", "nuclei", "dalfox", "sslscan"}
         preflight_ok = True
         if tool_id in http_tools:
             preflight_ok = _tcp_connectable(target_ref, timeout_sec=5.0)
+            if not preflight_ok:
+                logger.warning(
+                    f"TCP preflight check failed for {target_ref}, but allowing tool to attempt connection anyway",
+                    extra={"scan_job_id": scan_job_id, "step_id": step_id, "tool_id": tool_id}
+                )
 
         # Get execution backend (new system) or adapter (legacy)
         # Use new execution backend system if available, fallback to adapter
         use_new_backend = getattr(settings, "USE_EXECUTION_BACKEND", True)
         execution_result = None  # Will be set if using new backend
-
-        if not preflight_ok:
-            err = f"Target unreachable (TCP connect failed): {target_ref}"
-            logger.warning(err, extra={"scan_job_id": scan_job_id, "step_id": step_id, "tool_id": tool_id})
-            result = {
-                "tool_name": tool_id,
-                "output": "",
-                "exit_code": -1,
-                "execution_time": 0.0,
-                "success": False,
-                "error": err,
-                "timed_out": False,
-            }
-        elif use_new_backend:
+        
+        # Always attempt tool execution, even if preflight check fails
+        if use_new_backend:
             # Use new execution backend system
             backend = get_backend_for_tool(tool_id)
             
@@ -313,13 +328,13 @@ async def process_step_request(message: Dict[str, Any]) -> None:
         findings_count = 0
         findings = []
         
+        # Initialize output_file outside scan_job_id block to ensure it's in scope for parsing
+        output_file = None
+        tool_name = result.get("tool_name", tool_id) if result else tool_id
+        
         if scan_job_id:
-            # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
-            # Initialize tool_name early
-            tool_name = result.get("tool_name", tool_id) if result else tool_id
-            
             # Determine output file path (may be from artifact_refs for remote backend)
-            output_file = None
+            # output_file is already initialized above
             if use_new_backend and execution_result and execution_result.artifact_refs:
                 # Use artifact refs from remote backend
                 output_file = Path(execution_result.artifact_refs[0]) if execution_result.artifact_refs else None
@@ -335,11 +350,21 @@ async def process_step_request(message: Dict[str, Any]) -> None:
 
             # If we have tool output but no file yet (e.g. remote backend without shared volume),
             # materialize the output to a file so parsers can operate on it.
-            # Always create the file (even if empty) so POST logic can run
-            if output_file and not output_file.exists():
+            # CRITICAL: Materialize output even if tool "failed" - tools can produce useful output
+            # even with non-zero exit codes (e.g., httpx, nuclei may exit non-zero but still have output)
+            # Also materialize for tools like ZAP that return output in result dict
+            # CRITICAL FIX: Always write full output to file if we have output (even if file exists)
+            # This ensures parser gets complete data, not truncated content
+            if output_file and result.get("output"):
                 try:
                     output_file.parent.mkdir(parents=True, exist_ok=True)
                     output_text = result.get("output") or ""
+                    
+                    logger.info(
+                        f"[MATERIALIZE-CHECK] Step {step_id} (tool={tool_id}, name={tool_name}): "
+                        f"output_file={output_file}, output_len={len(output_text)}, "
+                        f"output_preview={output_text[:100] if output_text else 'None'}"
+                    )
                     
                     # Normalize Dalfox output: convert placeholder outputs to empty array
                     # This must happen BEFORE writing to file so parsers get normalized data
@@ -348,51 +373,17 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     if is_dalfox:
                         output_text = _normalize_dalfox_output(output_text)
                     
-                    # Always create file (even if empty) to ensure POST logic runs
-                    output_file.write_text(output_text, encoding="utf-8")
+                    # CRITICAL: For ZAP, ALWAYS write output (even if empty array "[]")
+                    # ZAP output is a JSON string of findings array, so we must write it
+                    is_zap = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
+                    should_write = output_text.strip() or is_zap
+                    
                     logger.info(
-                        "Materialized output for tool %s (step %s, scan_job %s) to %s (len=%d)",
-                        tool_name,
-                        step_id,
-                        scan_job_id,
-                        output_file,
-                        len(output_text),
+                        f"[MATERIALIZE-DECISION] Step {step_id} (tool={tool_id}): "
+                        f"is_zap={is_zap}, output_text.strip()={bool(output_text.strip())}, should_write={should_write}"
                     )
-                except Exception as write_err:
-                    logger.warning(
-                        f"Failed to materialize output file for {tool_name}: {write_err}",
-                        exc_info=True,
-                    )
-        
-        # Parse findings using local parsers
-        # Always run POST logic for successful executions, even if no output file or no findings
-        findings_count = 0
-        findings = []
-        
-        if scan_job_id and result.get("success") and output_file and output_file.exists():
-            if use_new_backend and execution_result and execution_result.artifact_refs:
-                # Use artifact refs from remote backend
-                output_file = Path(execution_result.artifact_refs[0]) if execution_result.artifact_refs else None
-            else:
-                # Use local job_dir (legacy adapter)
-                # Use configured jobs directory from settings
-                job_dir = Path(settings.JOBS_DIR) / (scan_job_id or session_id)
-                job_dir.mkdir(parents=True, exist_ok=True)
-                tool_name = result.get("tool_name", tool_id)
-                output_file = job_dir / f"{tool_name}_output.json"
-
-                # If we have tool output but no file yet (e.g. remote backend without shared volume),
-                # materialize the output to a file so existing parsers can operate on it.
-                if output_file and not output_file.exists() and result.get("output"):
-                    try:
-                        output_file.parent.mkdir(parents=True, exist_ok=True)
-                        output_text = result.get("output") or ""
-                        
-                        # Normalize Dalfox output to avoid fake findings
-                        is_dalfox = (tool_name and "dalfox" in tool_name.lower()) or (tool_id and "dalfox" in tool_id.lower())
-                        if is_dalfox:
-                            output_text = _normalize_dalfox_output(output_text)
-                        
+                    
+                    if should_write:
                         output_file.write_text(output_text, encoding="utf-8")
                         logger.info(
                             "Materialized output for tool %s (step %s, scan_job %s) to %s (len=%d)",
@@ -402,44 +393,256 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             output_file,
                             len(output_text),
                         )
-                    except Exception as write_err:
+                        # CRITICAL: Log immediately after materialization to trace execution
+                        logger.info(f"[AFTER-MATERIALIZE] Step {step_id} (tool={tool_id}): Just materialized, output_file={output_file}, exists={output_file.exists() if output_file else False}")
+                    else:
                         logger.warning(
-                            "Failed to write tool output to file for %s (step %s, scan_job %s): %s",
-                            tool_name,
-                            step_id,
-                            scan_job_id,
-                            write_err,
+                            f"[MATERIALIZE-SKIP] Step {step_id} (tool={tool_id}): Skipping empty output file for {tool_name}",
                         )
+                except Exception as write_err:
+                    logger.error(
+                        f"[MATERIALIZE-ERROR] Failed to materialize output file for {tool_name}: {write_err}",
+                        exc_info=True,
+                    )
+            else:
+                logger.warning(
+                    f"[MATERIALIZE-SKIP] Step {step_id} (tool={tool_id}): Skipping materialization - "
+                    f"output_file={output_file}, has_output={bool(result.get('output') if result else False)}"
+                )
+        
+        # CRITICAL: This log MUST appear after materialization - if it doesn't, parsing section is being skipped
+        # Using ERROR level to ensure it always appears in logs
+        logger.error(f"[CRITICAL-PARSING-ENTRY] Step {step_id} (tool={tool_id}): ABOUT TO ENTER PARSING SECTION - scan_job_id={scan_job_id}, output_file={output_file}")
+        print(f"[STDOUT-PARSING-ENTRY] Step {step_id} (tool={tool_id}): PARSING SECTION ENTRY POINT", flush=True)
+        
+        # CRITICAL DEBUG: Log before parsing section to trace execution
+        logger.info(f"[DEBUG-BEFORE-PARSE] Step {step_id} (tool={tool_id}): Reached parsing section, scan_job_id={scan_job_id}, output_file={output_file}")
+        
+        # #region agent log
+        try:
+            with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                import json as json_lib
+                import time
+                f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H1","location":"tasks.py:404","message":"Parsing section entry","data":{"step_id":step_id,"tool_id":tool_id,"scan_job_id":scan_job_id,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False},"timestamp":int(time.time()*1000)})+"\n")
+        except: pass
+        # #endregion
+        
+        # Parse findings using local parsers
+        # CRITICAL: Parse findings even if tool "failed" - tools can produce useful findings
+        # even with non-zero exit codes (e.g., httpx, nuclei may exit non-zero but still have output)
+        logger.info(f"[BEFORE-PARSE] Step {step_id} (tool={tool_id}): About to start parsing section, output_file={output_file}")
+        findings_count = 0
+        findings = []
+        
+        # CRITICAL: Ensure output_file is set if we have output but no file path yet
+        if not output_file and result and result.get("output") and scan_job_id:
+            # Reconstruct output_file path
+            job_dir = Path(settings.JOBS_DIR) / scan_job_id
+            tool_name = result.get("tool_name", tool_id)
+            output_file = job_dir / f"{tool_name}_output.json"
+            logger.info(f"[PARSE-FIX] Reconstructed output_file: {output_file}")
+        
+        try:
+            logger.error(f"[PARSE-START] Step {step_id} (tool={tool_id}): Starting parsing section")
+            print(f"[STDOUT-PARSE-START] Step {step_id} (tool={tool_id}): Parsing section try block entered", flush=True)
+            
+            # Parse findings if we have an output file OR if we have output in the result
+            # Don't require success=True - tools can produce findings even when they "fail"
+            has_output_file = bool(output_file and output_file.exists())
+            has_output_in_result = bool(result.get("output") and len(result.get("output", "").strip()) > 0)
+            
+            logger.error(
+                f"[PARSE] Step {step_id} (tool={tool_id}): "
+                f"scan_job_id={scan_job_id}, has_output_file={has_output_file}, "
+                f"has_output_in_result={has_output_in_result}, output_file={output_file}"
+            )
+            print(f"[STDOUT-PARSE] Step {step_id}: has_output_file={has_output_file}, has_output_in_result={has_output_in_result}, output_file={output_file}", flush=True)
+            
+            # CRITICAL: Always try to parse if we have an output file, regardless of scan_job_id
+            # This ensures findings are parsed even if scan_job_id is None or conditions aren't met
+            if (has_output_file or has_output_in_result):
+                # Ensure output_file is set up for parsing
+                if not output_file or not output_file.exists():
+                    if use_new_backend and execution_result and execution_result.artifact_refs:
+                        # Use artifact refs from remote backend
+                        output_file = Path(execution_result.artifact_refs[0]) if execution_result.artifact_refs else None
+                    else:
+                        # Use local job_dir (legacy adapter)
+                        # Use configured jobs directory from settings
+                        job_dir = Path(settings.JOBS_DIR) / (scan_job_id or session_id)
+                        job_dir.mkdir(parents=True, exist_ok=True)
+                        tool_name = result.get("tool_name", tool_id)
+                        output_file = job_dir / f"{tool_name}_output.json"
 
-            try:
-                tool_name = result.get("tool_name", tool_id)
-                
-                # Parse findings using local parsers
-                if tool_name == "nuclei":
-                    findings = parse_nuclei_output(output_file)
-                    logger.info(f"Parsed {len(findings)} findings from nuclei")
-                elif tool_name == "httpx":
-                    findings = parse_httpx_output(output_file)
-                    logger.info(f"Parsed {len(findings)} findings from httpx")
-                elif tool_name == "sslscan":
-                    findings = parse_sslscan_output(output_file)
-                    logger.info(f"Parsed {len(findings)} findings from sslscan")
-                elif tool_name == "ffuf":
-                    findings = parse_ffuf_output(output_file)
-                    logger.info(f"Parsed {len(findings)} findings from ffuf")
+                # If we have tool output but no file yet (e.g. remote backend without shared volume),
+                # materialize the output to a file so existing parsers can operate on it.
+                # CRITICAL: Always write if we have output, even if file exists (to ensure full content, not truncated)
+                if output_file and result.get("output"):
+                    try:
+                        output_file.parent.mkdir(parents=True, exist_ok=True)
+                        output_text = result.get("output") or ""
+                        
+                        logger.info(
+                            f"[MATERIALIZE2-CHECK] Step {step_id} (tool={tool_id}, name={tool_name}): "
+                            f"output_file={output_file}, output_len={len(output_text)}"
+                        )
+                        
+                        # Normalize Dalfox output to avoid fake findings
+                        is_dalfox = (tool_name and "dalfox" in tool_name.lower()) or (tool_id and "dalfox" in tool_id.lower())
+                        if is_dalfox:
+                            output_text = _normalize_dalfox_output(output_text)
+                        
+                        # CRITICAL: For ZAP, ALWAYS write output (even if empty array "[]")
+                        # ZAP output is a JSON string of findings array, so we must write it
+                        is_zap = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
+                        should_write = output_text.strip() or is_zap
+                        
+                        if should_write:
+                            output_file.write_text(output_text, encoding="utf-8")
+                            # Verify file was written
+                            if output_file.exists():
+                                actual_size = output_file.stat().st_size
+                                logger.info(
+                                    "Materialized output for tool %s (step %s, scan_job %s) to %s (len=%d, verified_size=%d)",
+                                    tool_name,
+                                    step_id,
+                                    scan_job_id,
+                                    output_file,
+                                    len(output_text),
+                                    actual_size,
+                                )
+                            else:
+                                logger.error(
+                                    f"[MATERIALIZE2-ERROR] File was not created after write! {output_file}"
+                                )
+                        else:
+                            logger.warning(
+                                f"[MATERIALIZE2-SKIP] Skipping empty output file for {tool_name} (step {step_id})"
+                            )
+                    except Exception as write_err:
+                        logger.error(
+                            f"[MATERIALIZE2-ERROR] Failed to write tool output to file for {tool_name} (step {step_id}): {write_err}",
+                            exc_info=True,
+                        )
                 else:
-                    # Other tools (nmap, ffuf, dalfox, sqlmap) not yet implemented in local parsers
-                    # For now, skip parsing - can be added later
-                    logger.debug(f"Parser not yet implemented for {tool_name}, skipping findings parsing")
+                    logger.warning(
+                        f"[MATERIALIZE2-SKIP] Step {step_id} (tool={tool_id}): Skipping materialization - "
+                        f"output_file={output_file}, has_output={bool(result.get('output') if result else False)}"
+                    )
+
+            # Parse findings if we have an output file
+            # CRITICAL: Always try to parse if file exists, regardless of other conditions
+            # #region agent log
+            try:
+                with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:509","message":"Before file existence check","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False,"output_file_size":output_file.stat().st_size if output_file and output_file.exists() else 0},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            if output_file and output_file.exists():
+                try:
+                    logger.info(
+                        f"[PARSE-FILE] About to parse findings for step {step_id} (tool={tool_name}): "
+                        f"output_file={output_file}, exists={output_file.exists()}, size={output_file.stat().st_size}"
+                    )
+                    
+                    # Parse findings using local parsers - SIMPLIFIED
+                    if tool_name == "zap":
+                        logger.info(f"[ZAP-PARSE-START] Parsing ZAP output from {output_file}")
+                        # #region agent log
+                        try:
+                            with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                                import json as json_lib
+                                import time
+                                f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H4","location":"tasks.py:520","message":"Before parse_zap_output call","data":{"step_id":step_id,"output_file":str(output_file),"file_size":output_file.stat().st_size if output_file.exists() else 0},"timestamp":int(time.time()*1000)})+"\n")
+                        except: pass
+                        # #endregion
+                        findings = parse_zap_output(output_file)
+                        # #region agent log
+                        try:
+                            with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                                import json as json_lib
+                                import time
+                                f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H4","location":"tasks.py:521","message":"After parse_zap_output call","data":{"step_id":step_id,"findings_count":len(findings),"first_finding_title":findings[0].get("title","N/A")[:50] if len(findings)>0 else None},"timestamp":int(time.time()*1000)})+"\n")
+                        except: pass
+                        # #endregion
+                        logger.info(f"[ZAP-PARSE-END] Parsed {len(findings)} findings from zap")
+                        if len(findings) > 0:
+                            logger.info(f"[ZAP-PARSE-SUCCESS] First finding: {findings[0].get('title', 'N/A')[:60]}")
+                        else:
+                            logger.warning(f"[ZAP-PARSE-EMPTY] No findings parsed from ZAP output file {output_file}")
+                    elif tool_name == "nuclei":
+                        findings = parse_nuclei_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from nuclei")
+                    elif tool_name == "httpx":
+                        findings = parse_httpx_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from httpx")
+                    elif tool_name == "sslscan":
+                        findings = parse_sslscan_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from sslscan")
+                    elif tool_name == "dalfox":
+                        findings = parse_dalfox_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from dalfox")
+                    elif tool_name == "nmap":
+                        findings = parse_nmap_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from nmap")
+                    elif tool_name == "sqlmap":
+                        findings = parse_sqlmap_output(output_file)
+                        logger.info(f"Parsed {len(findings)} findings from sqlmap")
+                    else:
+                        # Other tools not yet implemented in local parsers
+                        logger.debug(f"Parser not yet implemented for {tool_name}, skipping findings parsing")
+                        findings = []
+                    
+                    findings_count = len(findings)
+                    logger.info(f"[PARSE-COMPLETE] Step {step_id} (tool={tool_name}): Found {findings_count} findings")
+                    # #region agent log
+                    try:
+                        with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H5","location":"tasks.py:549","message":"After parsing, before POST","data":{"step_id":step_id,"tool_name":tool_name,"findings_count":findings_count,"findings_len":len(findings)},"timestamp":int(time.time()*1000)})+"\n")
+                    except: pass
+                    # #endregion
+                    
+                except Exception as e:
+                    logger.error(f"[PARSE-ERROR] Failed to parse findings for step {step_id} (tool={tool_name}): {e}", exc_info=True)
+                    # Continue - findings parsing failure shouldn't fail the step
                     findings = []
-                
-                findings_count = len(findings)
-                
-            except Exception as e:
-                logger.error(f"Failed to parse findings for step {step_id}: {e}", exc_info=True)
-                # Continue - findings parsing failure shouldn't fail the step
-                findings = []
-                findings_count = 0
+                    findings_count = 0
+                    # #region agent log
+                    try:
+                        with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H4","location":"tasks.py:554","message":"Parse exception caught","data":{"step_id":step_id,"tool_name":tool_name,"error":str(e)},"timestamp":int(time.time()*1000)})+"\n")
+                    except: pass
+                    # #endregion
+            else:
+                logger.warning(f"[PARSE-SKIP] Step {step_id} (tool={tool_name}): No output file to parse - output_file={output_file}, exists={output_file.exists() if output_file else False}")
+                # #region agent log
+                try:
+                    with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
+                        import json as json_lib
+                        import time
+                        f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:557","message":"Parse skipped - file check failed","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+        except Exception as parse_section_error:
+            logger.error(
+                f"[CRITICAL-PARSE-EXCEPTION] Exception in parsing section for step {step_id} (tool={tool_id}): {parse_section_error}",
+                exc_info=True
+            )
+            # Ensure findings are empty on error
+            findings = []
+            findings_count = 0
+        else:
+            # This else block runs if NO exception occurred in the try block
+            logger.info(f"[PARSE-SECTION-COMPLETE] Parsing section completed without exception for step {step_id} (tool={tool_id}), findings_count={findings_count}")
+        
+        # CRITICAL: Log before POST to confirm we reached here
+        logger.error(f"[CRITICAL-BEFORE-POST] Step {step_id} (tool={tool_id}): About to POST - findings_count={findings_count}, scan_job_id={scan_job_id}")
         
         # POST tool result and findings to backend API (always when scan_job_id is present).
         # This ensures backend progress is accurate even for failures/timeouts.
@@ -461,6 +664,29 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 
                 # POST tool result and findings to backend API
                 if settings.BACKEND_URL:
+                    # #region agent log
+                    try:
+                        with open("/app/data/debug.log", "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "H7",
+                                "location": "tasks.py:671",
+                                "message": "Before post_tool_result call",
+                                "data": {
+                                    "scan_job_id": scan_job_id,
+                                    "step_id": step_id,
+                                    "tool_name": tool_name,
+                                    "tool_id": tool_id,
+                                    "findings_count": len(findings),
+                                    "findings_sample": findings[0] if len(findings) > 0 else None
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + '\n')
+                    except: pass
+                    # #endregion
                     success = await post_tool_result(
                         scan_job_id=scan_job_id,
                         step_id=step_id,
@@ -470,6 +696,28 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         execution_result=result,
                         tool_run_id=tool_run_id,
                     )
+                    # #region agent log
+                    try:
+                        with open("/app/data/debug.log", "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "H7",
+                                "location": "tasks.py:688",
+                                "message": "After post_tool_result call",
+                                "data": {
+                                    "scan_job_id": scan_job_id,
+                                    "step_id": step_id,
+                                    "tool_name": tool_name,
+                                    "success": success,
+                                    "findings_count": len(findings)
+                                },
+                                "timestamp": int(time.time() * 1000)
+                            }) + '\n')
+                    except: pass
+                    # #endregion
                     if success:
                         logger.info(
                             f"Posted tool result to backend (status code 201): "
@@ -566,18 +814,50 @@ async def run_worker_loop() -> None:
             
             # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
             
-            messages = await consume_step_requests(
+            # #region agent log
+            try:
+                debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"tasks.py:778","message":"About to consume step requests","data":{"consumer_group":settings.CONSUMER_GROUP,"consumer_name":settings.CONSUMER_NAME,"count":settings.MAX_CONCURRENT_STEPS},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            
+            # Poll from both global stream (backward compat) and Brain session streams
+            messages = []
+            
+            # 1. Check global stream (legacy scans not using Brain)
+            global_messages = await consume_step_requests(
                 consumer_group=settings.CONSUMER_GROUP,
                 consumer_name=settings.CONSUMER_NAME,
-                count=settings.MAX_CONCURRENT_STEPS,
-                block_ms=1000,
-                # Always check/claim pending messages to avoid stuck scans after restarts.
-                # This is low overhead (quick XPENDING summary) and prevents orphaned work.
-                check_pending=True,
+                count=settings.MAX_CONCURRENT_STEPS // 2,  # Reserve half capacity for Brain
+                block_ms=500,  # Reduced block time
+                check_pending=first_iteration,  # Only check pending on first iteration
             )
+            messages.extend(global_messages or [])
+            
+            # 2. Check Brain session streams (new Brain-managed scans)
+            brain_sessions = discover_brain_sessions()
+            for session_id in brain_sessions:
+                session_messages = await consume_brain_session_steps(
+                    session_id=session_id,
+                    consumer_group=settings.CONSUMER_GROUP,
+                    consumer_name=settings.CONSUMER_NAME,
+                    count=max(1, settings.MAX_CONCURRENT_STEPS // max(len(brain_sessions), 1)),
+                    block_ms=0,  # Non-blocking for Brain streams
+                )
+                messages.extend(session_messages or [])
+            
             first_iteration = False  # Kept for backwards compatibility with existing log flow
             
-            # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
+            # #region agent log
+            try:
+                debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"tasks.py:787","message":"After consume_step_requests","data":{"message_count":len(messages) if messages else 0,"first_message_id":messages[0].get("id") if messages and len(messages) > 0 else None,"first_step_id":messages[0].get("data",{}).get("step_id") if messages and len(messages) > 0 else None},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
             
             if not messages:
                 # No messages, continue

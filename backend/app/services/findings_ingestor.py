@@ -186,6 +186,11 @@ def create_or_update_finding(
         existing_finding.found_count += 1
         existing_finding.not_seen_in_latest_scan = False
         
+        # CRITICAL FIX: Update scan_job_id to current scan so findings show up in UI
+        # This makes the finding appear in the current scan's results
+        # The original scan is preserved in first_seen_at timestamp
+        existing_finding.scan_job_id = scan_job_id
+        
         # Update tool_name to canonical form if changed
         if existing_finding.tool_name != canonical_tool:
             existing_finding.tool_name = canonical_tool

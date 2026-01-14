@@ -4,6 +4,8 @@ from app.queue.streams import (
     ack_step_request,
     publish_step_result,
     StepResult,
+    discover_brain_sessions,
+    consume_brain_session_steps,
 )
 
 __all__ = [
@@ -11,5 +13,7 @@ __all__ = [
     "ack_step_request",
     "publish_step_result",
     "StepResult",
+    "discover_brain_sessions",
+    "consume_brain_session_steps",
 ]
 

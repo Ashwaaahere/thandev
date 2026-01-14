@@ -209,6 +209,14 @@
               "status_code": {
                 "type": "boolean",
                 "default": true
+              },
+              "timeout_seconds": {
+                "type": "integer",
+                "description": "System property: timeout in seconds"
+              },
+              "scan_level": {
+                "type": "string",
+                "description": "System property: scan level"
               }
             },
             "additionalProperties": false
@@ -568,6 +576,89 @@
           },
           "constraints": {
             "max_timeout_sec": 300
+          }
+        }
+      ]
+    },
+    {
+      "tool_id": "zap",
+      "name": "OWASP ZAP",
+      "description": "OWASP Zed Attack Proxy - Web application security scanner",
+      "allowed_target_types": ["http", "https"],
+      "modes": [
+        {
+          "mode_id": "passive_spider",
+          "name": "Passive Scan + Spider",
+          "description": "Passive vulnerability scanning with short spider crawl",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "max_depth": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "default": 3,
+                "description": "Maximum spider depth"
+              },
+              "max_children": {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 100,
+                "default": 50,
+                "description": "Maximum children per node"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 600
+          }
+        },
+        {
+          "mode_id": "active_scan",
+          "name": "Active Scan (Medium)",
+          "description": "Active vulnerability scanning with medium policy",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "policy": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "default": "medium",
+                "description": "Scan policy intensity"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 1800
+          }
+        },
+        {
+          "mode_id": "ajax_spider",
+          "name": "AJAX Spider (SPA)",
+          "description": "AJAX spider for Single Page Applications with stronger policy",
+          "params_schema": {
+            "type": "object",
+            "properties": {
+              "max_duration": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 60,
+                "default": 10,
+                "description": "Maximum crawl duration in minutes"
+              },
+              "policy": {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "default": "high",
+                "description": "Scan policy intensity"
+              }
+            },
+            "additionalProperties": false
+          },
+          "constraints": {
+            "max_timeout_sec": 3600
           }
         }
       ]

@@ -75,6 +75,10 @@ logger = logging.getLogger(__name__)
 STREAM_STEP_REQUESTS = "scan_step_requests"
 STREAM_STEP_RESULTS = "scan_step_results"
 
+# Brain session-specific stream patterns
+BRAIN_STREAM_PATTERN = "brain:steps:*"
+BRAIN_RESULT_PATTERN = "brain:results:{session_id}"
+
 # Redis client singleton
 _redis_client: Optional[Redis] = None
 
@@ -89,8 +93,8 @@ def get_redis_client() -> Redis:
         use_tls = parsed.scheme == "rediss"
         redis_kwargs = {
             "decode_responses": True,
-            "socket_connect_timeout": 5,
-            "socket_timeout": 5,
+            "socket_connect_timeout": 10,  # Increased from 5 to 10 seconds
+            "socket_timeout": 30,  # Increased from 5 to 30 seconds to prevent timeout errors
         }
         if use_tls:
             redis_kwargs["ssl"] = True
@@ -124,6 +128,16 @@ async def consume_step_requests(
     """
     redis_client = get_redis_client()
     
+    # #region agent log
+    try:
+        debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+        with open(debug_log_path, "a") as f:
+            import json as json_lib
+            import time
+            f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"streams.py:125","message":"About to consume from Redis stream","data":{"stream":STREAM_STEP_REQUESTS,"consumer_group":consumer_group,"consumer_name":consumer_name},"timestamp":int(time.time()*1000)})+"\n")
+    except: pass
+    # #endregion
+    
     try:
         # Create consumer group if it doesn't exist
         try:
@@ -133,6 +147,15 @@ async def consume_step_requests(
                 id="0",  # Start from beginning
                 mkstream=True,  # Create stream if it doesn't exist
             )
+            # #region agent log
+            try:
+                debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"streams.py:135","message":"Created consumer group","data":{"stream":STREAM_STEP_REQUESTS,"consumer_group":consumer_group},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
         except RedisError:
             # Group already exists, ignore
             pass
@@ -154,7 +177,7 @@ async def consume_step_requests(
                 # Get summary first to check if there are any pending messages
                 # xpending(key, group) returns: {'pending': count, 'min': '...', 'max': '...', 'consumers': [...]}
                 pending_summary = redis_client.xpending(STREAM_STEP_REQUESTS, consumer_group)
-
+                
                 # redis-py has returned different shapes across versions:
                 # - dict: {"pending": int, "min": str, "max": str, "consumers": [...]}
                 # - tuple/list: (pending_count, min_id, max_id, consumers)
@@ -224,41 +247,89 @@ async def consume_step_requests(
                             
                             if claimed:
                                 logger.info(f"Claimed {len(claimed)} pending message(s) for consumer {consumer_name}")
+                                logger.info(f"xclaim returned type: {type(claimed)}, length: {len(claimed) if claimed else 0}")
+                                if claimed:
+                                    logger.info(f"First item type: {type(claimed[0])}, first item: {str(claimed[0])[:200]}")
                                 # Process claimed messages
-                                for message_id, data in claimed:
+                                # xclaim returns list of tuples: [(message_id, {field: value, ...}), ...]
+                                processed_count = 0
+                                for item in claimed:
+                                    # Handle both tuple format (message_id, data) and dict format
+                                    if isinstance(item, tuple) and len(item) >= 2:
+                                        message_id, data = item[0], item[1]
+                                    elif isinstance(item, dict):
+                                        # Some redis-py versions return dicts directly
+                                        message_id = item.get("message_id") or item.get("id")
+                                        data = {k: v for k, v in item.items() if k not in ("message_id", "id")}
+                                    else:
+                                        logger.warning(f"Unexpected xclaim return format: {type(item)} - {item}")
+                                        continue
+                                    
                                     if isinstance(message_id, bytes):
                                         message_id = message_id.decode('utf-8')
                                     
                                     decoded_data = {}
-                                    for key, value in data.items():
-                                        if isinstance(key, bytes):
-                                            key = key.decode('utf-8')
-                                        if isinstance(value, bytes):
-                                            value = value.decode('utf-8')
-                                        decoded_data[key] = value
+                                    if isinstance(data, dict):
+                                        for key, value in data.items():
+                                            if isinstance(key, bytes):
+                                                key = key.decode('utf-8')
+                                            if isinstance(value, bytes):
+                                                value = value.decode('utf-8')
+                                            decoded_data[key] = value
+                                    else:
+                                        logger.warning(f"Expected dict for message data, got {type(data)}")
+                                        continue
                                     
                                     result.append({
                                         "id": message_id,
                                         "data": decoded_data,
                                     })
+                                    processed_count += 1
+                                
+                                logger.info(f"Processed {processed_count} claimed messages, result list now has {len(result)} items")
             except Exception as e:
                 # Catch all errors and continue - pending message handling is optional
-                logger.debug(f"Error checking pending messages (skipping): {e}")
+                logger.warning(f"Error checking pending messages (skipping): {e}", exc_info=True)
                 # Continue to read new messages even if pending check fails
         
         # Read new messages (only if we don't have enough pending messages).
         # IMPORTANT: Do NOT return early when we claimed pending messages.
         # If we do, a single "stuck" pending message can starve the consumer group and prevent
         # new scans from starting (we would never read ">" entries).
+        logger.debug(f"Before xreadgroup: result has {len(result)} items, count={count}")
         if len(result) < count:
-            messages = await asyncio.to_thread(
-                redis_client.xreadgroup,
-                consumer_group,
-                consumer_name,
-                {STREAM_STEP_REQUESTS: ">"},  # Read new messages
-                count=count - len(result),  # Read remaining slots
-                block=block_ms if len(result) == 0 else 0,  # Only block if no messages at all
-            )
+            # #region agent log
+            try:
+                debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"streams.py:298","message":"About to xreadgroup from Redis","data":{"stream":STREAM_STEP_REQUESTS,"consumer_group":consumer_group,"consumer_name":consumer_name,"count":count - len(result),"block_ms":block_ms if len(result) == 0 else 0,"result_count":len(result)},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            try:
+                messages = await asyncio.to_thread(
+                    redis_client.xreadgroup,
+                    consumer_group,
+                    consumer_name,
+                    {STREAM_STEP_REQUESTS: ">"},  # Read new messages
+                    count=count - len(result),  # Read remaining slots
+                    block=block_ms if len(result) == 0 else 0,  # Only block if no messages at all
+                )
+                # #region agent log
+                try:
+                    debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
+                    with open(debug_log_path, "a") as f:
+                        import json as json_lib
+                        import time
+                        message_count = len(messages[0][1]) if messages and len(messages) > 0 and len(messages[0]) > 1 else 0
+                        f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"streams.py:310","message":"After xreadgroup","data":{"message_count":message_count,"messages_type":type(messages).__name__,"has_messages":bool(messages)},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+                logger.debug(f"xreadgroup returned {len(messages) if messages else 0} stream(s)")
+            except Exception as e:
+                logger.warning(f"Error reading new messages (continuing with claimed messages): {e}", exc_info=True)
+                messages = []
             
             # Format: [(stream_name, [(message_id, {data})])]
             for stream_name, stream_messages in messages:
@@ -283,6 +354,8 @@ async def consume_step_requests(
         
         if result:
             logger.info(f"Consumed {len(result)} step request(s) from stream")
+        else:
+            logger.debug("No messages consumed from stream")
         
         return result
         
@@ -317,9 +390,99 @@ async def ack_step_request(consumer_group: str, message_id: str) -> bool:
         return False
 
 
+def discover_brain_sessions() -> List[str]:
+    """
+    Discover active Brain session streams by scanning Redis for brain:steps:* keys.
+    
+    Returns:
+        List of session IDs (extracted from stream names)
+    """
+    redis_client = get_redis_client()
+    
+    try:
+        # Scan for all brain:steps:* streams
+        brain_streams = []
+        for key in redis_client.scan_iter(match="brain:steps:*", count=100):
+            # Extract session ID from stream name (brain:steps:{session_id})
+            if key.startswith("brain:steps:"):
+                session_id = key[len("brain:steps:"):]
+                brain_streams.append(session_id)
+        
+        if brain_streams:
+            logger.debug(f"Discovered {len(brain_streams)} active Brain session(s): {brain_streams[:5]}...")
+        
+        return brain_streams
+    except RedisError as e:
+        logger.error(f"Failed to discover Brain sessions: {e}")
+        return []
+
+
+async def consume_brain_session_steps(
+    session_id: str,
+    consumer_group: str,
+    consumer_name: str,
+    count: int = 10,
+    block_ms: int = 0,  # Don't block on Brain streams, we poll multiple
+) -> List[Dict[str, Any]]:
+    """
+    Consume steps from a specific Brain session stream.
+    
+    Args:
+        session_id: Brain session ID
+        consumer_group: Consumer group name
+        consumer_name: Consumer name
+        count: Max messages to read
+        block_ms: Block time (default 0 for non-blocking)
+        
+    Returns:
+        List of messages with session_id metadata
+    """
+    redis_client = get_redis_client()
+    stream_name = f"brain:steps:{session_id}"
+    
+    try:
+        # Create consumer group if it doesn't exist
+        try:
+            redis_client.xgroup_create(
+                stream_name,
+                consumer_group,
+                id="0",
+                mkstream=True,
+            )
+        except RedisError:
+            # Group already exists
+            pass
+        
+        # Read new messages
+        messages = redis_client.xreadgroup(
+            consumer_group,
+            consumer_name,
+            {stream_name: ">"},
+            count=count,
+            block=block_ms,
+        )
+        
+        result = []
+        if messages:
+            for stream, msgs in messages:
+                for msg_id, data in msgs:
+                    # Add session_id to metadata
+                    data["_session_id"] = session_id
+                    data["_stream_name"] = stream_name
+                    result.append({"id": msg_id, "data": data})
+        
+        return result
+    except RedisError as e:
+        logger.error(f"Failed to consume from Brain session {session_id}: {e}")
+        return []
+
+
 async def publish_step_result(step_result: StepResult) -> bool:
     """
-    Publish a step result to the scan_step_results stream.
+    Publish a step result to the appropriate stream.
+    
+    If step_result has a session_id, publishes to Brain's result stream (brain:results:{session_id}).
+    Otherwise, publishes to the global scan_step_results stream.
     
     Args:
         step_result: StepResult instance
@@ -329,16 +492,24 @@ async def publish_step_result(step_result: StepResult) -> bool:
     """
     redis_client = get_redis_client()
     
+    # Determine target stream
+    if step_result.session_id:
+        # Brain session - use session-specific result stream
+        target_stream = f"brain:results:{step_result.session_id}"
+    else:
+        # Global stream (backward compatibility)
+        target_stream = STREAM_STEP_RESULTS
+    
     try:
         message_id = redis_client.xadd(
-            STREAM_STEP_RESULTS,
+            target_stream,
             step_result.to_dict(),
         )
         logger.info(
             f"Published step result {step_result.step_id} for session {step_result.session_id} "
-            f"(status: {step_result.status}, message_id: {message_id})"
+            f"to {target_stream} (status: {step_result.status}, message_id: {message_id})"
         )
         return True
     except RedisError as e:
-        logger.error(f"Failed to publish step result: {e}", exc_info=True)
+        logger.error(f"Failed to publish step result to {target_stream}: {e}", exc_info=True)
         return False

@@ -39,17 +39,19 @@ if 'logger' not in locals():
 
 # Nuclei profile to tags mapping
 # Maps profile names from tool_matrix to Nuclei -tags CLI argument
+# IMPORTANT: Tags must match exactly what Nuclei templates use
+# Use "cve" (singular) not "cves" - Nuclei templates use "cve" tag
 NUCLEI_PROFILE_TAGS = {
-    "basic_web": ["cves", "misconfig", "exposed-panels", "exposures"],
+    "basic_web": ["cve", "vulnerability", "exposure", "misconfig", "xss"],  # Added xss even for basic
     "pro_web": [
-        "cves", "misconfig", "exposed-panels", "exposures",
+        "cve", "vulnerability", "exposure", "misconfig", "exposed-panels",
         "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal",
-        "cmdi", "idor", "csrf", "cors", "cors-misconfig"
+        "cmdi", "idor", "csrf", "cors", "cors-misconfig", "headless"  # Added headless for DOM XSS
     ],
     "advanced_web": [
-        "cves", "misconfig", "exposed-panels", "exposures",
+        "cve", "vulnerability", "exposure", "misconfig", "exposed-panels",
         "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal",
-        "cmdi", "idor", "csrf", "cors", "cors-misconfig"
+        "cmdi", "idor", "csrf", "cors", "cors-misconfig", "headless", "tech", "ssl"  # Added headless for DOM XSS
     ],
 }
 
@@ -685,14 +687,16 @@ class ToolExecutor:
             logger.info(f"Using Nuclei profile '{profile}' with tags: {tags_list}")
         else:
             # Fallback to scan_level-based tags if profile not provided or not found
+            # CRITICAL: Always include "xss" tag to ensure XSS detection works
             tags_map = {
-                "basic": "cve,vulnerability,exposure",
-                "pro": "cve,vulnerability,exposure,misconfig,default-login",
-                "advanced": "cve,vulnerability,exposure,misconfig,default-login,tech,ssl",
+                "basic": "cve,vulnerability,exposure,xss",  # Added xss for basic level
+                "pro": "cve,vulnerability,exposure,misconfig,xss,sqli,ssrf,ssti,xxe,lfi,rfi,path-traversal,cmdi,headless",  # Comprehensive tags including xss
+                "advanced": "cve,vulnerability,exposure,misconfig,xss,sqli,ssrf,ssti,xxe,lfi,rfi,path-traversal,cmdi,idor,csrf,cors,headless,tech,ssl",  # All tags including xss
             }
             template_tags = tags_map.get(scan_level, tags_map["basic"])
             if profile:
                 logger.warning(f"Nuclei profile '{profile}' not found in NUCLEI_PROFILE_TAGS, falling back to scan_level-based tags")
+            logger.info(f"Using fallback tags for {scan_level} scan: {template_tags}")
         
         # Nuclei v3.4.10 command flags:
         # -u: target URL (required)
@@ -1585,6 +1589,8 @@ class ToolExecutor:
         has_query_params = bool(parse_qs(parsed_url.query))
         
         # Build comprehensive Dalfox command with all XSS testing options
+        # CRITICAL: Include all XSS detection flags for maximum coverage
+        # Note: Dalfox has built-in grepping that detects XSS indicators automatically
         cmd = [
             dalfox_binary,
             "url", target_url,
@@ -1592,15 +1598,14 @@ class ToolExecutor:
             "--format", "json",
             "--mining-dict",  # Dictionary-based parameter mining
             "--mining-dom",  # DOM-based parameter mining for better discovery
+            "--mining-all",  # Use all parameter mining techniques
             "--follow-redirects",
             "--deep-domxss",  # Deep DOM XSS analysis
             "--detailed-analysis",  # Detailed parameter analysis
             "--context-aware",  # Context-aware payload selection for better detection
-            # Note: --grep expects a file path, not a string, so we skip it
-            # Dalfox has built-in grepping that will detect XSS indicators
             "--only-poc", "g,v",  # Only show findings with proof-of-concept (grep + verified)
             "--waf-evasion",  # Use WAF evasion techniques
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid blocking
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",  # Realistic UA to avoid blocking
             "--remote-payloads", "portswigger,payloadbox",  # Use comprehensive payload lists from PortSwigger and PayloadBox
             "--worker", "50",  # Use 50 parallel workers for faster scanning
         ]

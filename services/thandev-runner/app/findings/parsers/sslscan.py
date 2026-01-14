@@ -235,62 +235,116 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
     
     timestamp = datetime.now(timezone.utc).isoformat()
     
-    # Look for protocol version indicators
-    if re.search(r'SSLv2.*enabled', content_clean, re.IGNORECASE):
+    # Extract host and port from output
+    # Look for patterns like "Connected to 81.169.145.156" or "Testing SSL server demo.owasp-juice.shop on port 443"
+    host = None
+    port = 443
+    url = None
+    
+    host_match = re.search(r'Connected to\s+([^\s\n]+)', content_clean, re.IGNORECASE)
+    if host_match:
+        host = host_match.group(1)
+    
+    server_match = re.search(r'Testing SSL server\s+([^\s\n]+)\s+on port\s+(\d+)', content_clean, re.IGNORECASE)
+    if server_match:
+        host = server_match.group(1)
+        port = int(server_match.group(2))
+    
+    if host:
+        url = f"https://{host}:{port}" if port == 443 else f"https://{host}:{port}"
+    
+    # Look for protocol version indicators - check for "disabled" vs "enabled"
+    # Only report findings if protocols are enabled (not disabled)
+    sslv2_match = re.search(r'SSLv2\s+(\w+)', content_clean, re.IGNORECASE)
+    if sslv2_match and sslv2_match.group(1).lower() == "enabled":
         findings.append({
             "tool_id": "sslscan",
-            "title": "Weak SSL protocol enabled (SSLv2)",
+            "title": f"Weak SSL protocol enabled (SSLv2) on {host or 'target'}:{port}",
             "severity": "high",
-            "description": "SSLv2 is enabled. SSLv2 is deprecated and vulnerable.",
-            "evidence": "SSLv2 protocol detected in scan output",
-            "url": None,
-            "host": None,
+            "description": f"SSLv2 is enabled on {host or 'target'}:{port}. SSLv2 is deprecated and vulnerable.",
+            "evidence": f"SSLv2 protocol enabled on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
             "timestamp": timestamp,
             "raw": content,
             "cve_id": None,
             "cwe_id": "CWE-327",
         })
     
-    if re.search(r'SSLv3.*enabled', content_clean, re.IGNORECASE):
+    sslv3_match = re.search(r'SSLv3\s+(\w+)', content_clean, re.IGNORECASE)
+    if sslv3_match and sslv3_match.group(1).lower() == "enabled":
         findings.append({
             "tool_id": "sslscan",
-            "title": "Weak SSL protocol enabled (SSLv3)",
+            "title": f"Weak SSL protocol enabled (SSLv3) on {host or 'target'}:{port}",
             "severity": "high",
-            "description": "SSLv3 is enabled. SSLv3 is vulnerable to POODLE attack.",
-            "evidence": "SSLv3 protocol detected in scan output",
-            "url": None,
-            "host": None,
+            "description": f"SSLv3 is enabled on {host or 'target'}:{port}. SSLv3 is vulnerable to POODLE attack.",
+            "evidence": f"SSLv3 protocol enabled on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
             "timestamp": timestamp,
             "raw": content,
             "cve_id": "CVE-2014-3566",
             "cwe_id": "CWE-327",
         })
     
-    if re.search(r'TLSv1\.0.*enabled', content_clean, re.IGNORECASE):
+    tls10_match = re.search(r'TLSv1\.0\s+(\w+)', content_clean, re.IGNORECASE)
+    if tls10_match and tls10_match.group(1).lower() == "enabled":
         findings.append({
             "tool_id": "sslscan",
-            "title": "Weak TLS protocol enabled (TLSv1.0)",
+            "title": f"Weak TLS protocol enabled (TLSv1.0) on {host or 'target'}:{port}",
             "severity": "high",
-            "description": "TLSv1.0 is enabled. TLSv1.0 is deprecated and should be disabled.",
-            "evidence": "TLSv1.0 protocol detected in scan output",
-            "url": None,
-            "host": None,
+            "description": f"TLSv1.0 is enabled on {host or 'target'}:{port}. TLSv1.0 is deprecated and should be disabled.",
+            "evidence": f"TLSv1.0 protocol enabled on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
             "timestamp": timestamp,
             "raw": content,
             "cve_id": None,
             "cwe_id": "CWE-327",
         })
     
-    # Look for weak cipher indicators
-    if re.search(r'(RC4|DES|MD5|weak.*cipher)', content_clean, re.IGNORECASE):
+    tls11_match = re.search(r'TLSv1\.1\s+(\w+)', content_clean, re.IGNORECASE)
+    if tls11_match and tls11_match.group(1).lower() == "enabled":
         findings.append({
             "tool_id": "sslscan",
-            "title": "Weak cipher suites detected",
+            "title": f"Deprecated TLS protocol enabled (TLSv1.1) on {host or 'target'}:{port}",
             "severity": "medium",
-            "description": "Weak cipher suites detected in SSL/TLS configuration.",
-            "evidence": "Weak ciphers detected in scan output",
-            "url": None,
-            "host": None,
+            "description": f"TLSv1.1 is enabled on {host or 'target'}:{port}. TLSv1.1 is deprecated and should be disabled.",
+            "evidence": f"TLSv1.1 protocol enabled on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
+            "timestamp": timestamp,
+            "raw": content,
+            "cve_id": None,
+            "cwe_id": "CWE-327",
+        })
+    
+    # Look for weak cipher indicators - check for weak ciphers in the cipher list
+    # Look for patterns like "bits  ECDHE-RSA-AES256-SHA" (no "GCM" means CBC mode, which is weaker)
+    weak_cipher_patterns = [
+        r'\d+\s+bits\s+(?:ECDHE-)?RSA-AES\d+-SHA(?!256)',  # AES-CBC (not GCM)
+        r'RC4',
+        r'DES',
+        r'MD5',
+    ]
+    
+    weak_ciphers_found = []
+    for pattern in weak_cipher_patterns:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            # Extract cipher name
+            cipher_match = re.search(r'(\w+(?:-\w+)*)', content_clean)
+            if cipher_match:
+                weak_ciphers_found.append(cipher_match.group(1))
+    
+    if weak_ciphers_found:
+        findings.append({
+            "tool_id": "sslscan",
+            "title": f"Weak cipher suites detected on {host or 'target'}:{port}",
+            "severity": "medium",
+            "description": f"Weak cipher suites detected on {host or 'target'}:{port}. Weak ciphers: {', '.join(weak_ciphers_found[:5])}",
+            "evidence": f"Weak ciphers detected: {', '.join(weak_ciphers_found[:5])}",
+            "url": url,
+            "host": host,
             "timestamp": timestamp,
             "raw": content,
             "cve_id": None,

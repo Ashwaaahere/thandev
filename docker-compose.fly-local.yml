@@ -59,6 +59,9 @@ services:
     build: ./services/thandev-brain
     env_file:
       - .env.fly.local
+    volumes:
+      # Mount app code for live development (allows code changes without rebuild)
+      - ./services/thandev-brain/app:/app/app
     depends_on:
       redis:
         condition: service_healthy
@@ -78,6 +81,27 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: zap
+    ports:
+      - "8090:8090"
+      - "8080:8080"  # Expose proxy port so runner can access URLs through ZAP
+    command: ["zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "api.disablekey=true", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true", "-config", "api.addrs.addr.enabled=true"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      - default
+
   thandev-runner:
     build: ./services/thandev-runner
     env_file:
@@ -88,9 +112,12 @@ services:
       DATA_DIR: /app/data
       JOBS_DIR: /app/data/jobs
       WORDLISTS_DIR: /opt/thandev/wordlists
+      ZAP_API_URL: http://zap:8090
     volumes:
       # Mount shared wordlists from repo root so ffuf can run with full wordlists
       - ./wordlists:/opt/thandev/wordlists:ro
+      # Mount app code for live development (allows code changes without rebuild)
+      - ./services/thandev-runner/app:/app/app
     depends_on:
       postgres:
         condition: service_healthy
@@ -98,9 +125,16 @@ services:
         condition: service_healthy
       backend:
         condition: service_started
+      zap:
+        condition: service_healthy
     command: ["./start_runner.sh"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    networks:
+      - default
 
 volumes:
   postgres_data:

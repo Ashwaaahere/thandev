@@ -4,7 +4,13 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y \
     gcc curl wget git nmap sslscan dnsutils ca-certificates jq \
-    && rm -rf /var/lib/apt/lists/*
+    chromium chromium-driver \
+    && rm -rf /var/lib/apt/lists/* \
+    && mv /usr/bin/chromium /usr/bin/chromium-orig \
+    && echo '#!/bin/bash\n/usr/bin/chromium-orig --no-sandbox "$@"' > /usr/bin/chromium \
+    && chmod +x /usr/bin/chromium \
+    && ln -s /usr/bin/chromium /usr/bin/google-chrome \
+    && ln -s /usr/bin/chromium /usr/bin/chromium-browser
 
 # Install Go
 RUN wget -q https://go.dev/dl/go1.21.5.linux-amd64.tar.gz \
@@ -25,11 +31,11 @@ RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap 
 
 # Now install Go tools AFTER pip (so Go binaries take final ownership)
 RUN rm -f /usr/local/bin/httpx || true \
- && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.1.0 \
- && go install -v github.com/ffuf/ffuf/v2@v2.1.0 \
- && go install -v github.com/hahwul/dalfox/v2@v2.9.2 \
- && go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 \
- && chmod +x /usr/local/bin/nuclei /usr/local/bin/ffuf /usr/local/bin/dalfox /usr/local/bin/httpx
+    && go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest \
+    && go install -v github.com/ffuf/ffuf/v2@v2.1.0 \
+    && go install -v github.com/hahwul/dalfox/v2@latest \
+    && go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 \
+    && chmod +x /usr/local/bin/nuclei /usr/local/bin/ffuf /usr/local/bin/dalfox /usr/local/bin/httpx
 
 # Catalog
 RUN mkdir -p /app/catalog
@@ -42,7 +48,7 @@ COPY . .
 # Wordlists
 RUN mkdir -p /opt/thandev/wordlists && \
     if [ -d wordlists ] && [ "$(ls -A wordlists 2>/dev/null)" ]; then \
-        cp -r wordlists/* /opt/thandev/wordlists/ 2>/dev/null || true; \
+    cp -r wordlists/* /opt/thandev/wordlists/ 2>/dev/null || true; \
     fi
 
 COPY check_tools.sh /app/check_tools.sh

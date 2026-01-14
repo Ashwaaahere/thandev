@@ -163,6 +163,7 @@ class ToolResult(Base):
     stderr_preview = Column(Text, nullable=True)  # First 1000 chars of stderr
     parsed_findings_count = Column(Integer, nullable=False, default=0, server_default="0")  # Number of findings parsed from output
     created_findings_count = Column(Integer, nullable=False, default=0, server_default="0")  # Number of findings actually created in DB
+    targets_count = Column(Integer, nullable=False, default=0, server_default="0")  # Number of targets (URLs/params/requests) fed to tool
     meta = Column(JSON, nullable=True)  # Tool args, version, command details (JSON)
     duration_ms = Column(Integer, nullable=True)  # Duration in milliseconds (computed from execution_time)
     skip_reason = Column(String(100), nullable=True)  # e.g., no_injection_points, rate_limited, blocked

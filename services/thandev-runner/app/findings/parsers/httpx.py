@@ -41,6 +41,7 @@ def parse_httpx_output(path: Path) -> List[Dict[str, Any]]:
         return []
     
     findings: List[Dict[str, Any]] = []
+    seen: set = set()
     
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -114,6 +115,11 @@ def parse_httpx_output(path: Path) -> List[Dict[str, Any]]:
                         except:
                             pass
                     
+                    finding_key = (url, status_code, title, tls_version)
+                    if finding_key in seen:
+                        continue
+                    seen.add(finding_key)
+
                     finding = {
                         "tool_id": "httpx",
                         "title": finding_title[:500],

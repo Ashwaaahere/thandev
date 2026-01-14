@@ -33,6 +33,29 @@ async def get_scan_status(scan_job_id: str) -> Optional[Dict[str, Any]]:
     if not settings.BACKEND_URL:
         return None
 
+    endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_job_id}"
+    headers = {"Content-Type": "application/json"}
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+
+    try:
+        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            resp = await client.get(endpoint, headers=headers)
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.debug(f"Scan {scan_job_id} not found in backend")
+        else:
+            logger.warning(f"Backend API returned error status {e.response.status_code} for scan status: {e.response.text}")
+        return None
+    except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+        logger.warning(f"Network error fetching scan status for {scan_job_id}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to fetch scan status from backend for scan {scan_job_id}: {e}")
+        return None
+
 
 async def mark_scan_started(scan_job_id: str) -> bool:
     """
@@ -95,20 +118,6 @@ async def post_tool_started(
     except Exception as e:
         logger.warning(f"Failed to post tool-started for scan {scan_job_id} tool {tool_name}: {e}")
         return False
-
-    endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_job_id}"
-    headers = {"Content-Type": "application/json"}
-    if settings.RUNNER_API_TOKEN:
-        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
-
-    try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
-            resp = await client.get(endpoint, headers=headers)
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as e:
-        logger.warning(f"Failed to fetch scan status from backend for scan {scan_job_id}: {e}")
-        return None
 
 
 def _calculate_retry_delay(attempt: int) -> float:
@@ -218,6 +227,9 @@ async def post_tool_result(
             "timed_out": timed_out_value,
             "stdout_preview": (execution_result.get("stdout") or "")[:1000] if execution_result.get("stdout") else None,
             "stderr_preview": (execution_result.get("stderr") or "")[:1000] if execution_result.get("stderr") else None,
+            # Tool run tracking fields
+            "targets_count": execution_result.get("targets_count", 0),
+            "meta": execution_result.get("meta"),
         })
     
     # Prepare headers

@@ -219,6 +219,9 @@ class ToolResultCreate(BaseModel):
     timed_out: bool = False
     stdout_preview: Optional[str] = None
     stderr_preview: Optional[str] = None
+    # Tool run tracking
+    targets_count: int = Field(0, description="Number of targets (URLs/params/requests) fed to tool")
+    meta: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (tool args, version, harvester stats)")
 
 
 class ToolResultResponse(BaseModel):

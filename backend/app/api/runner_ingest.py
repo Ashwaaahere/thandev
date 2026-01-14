@@ -100,15 +100,19 @@ async def mark_tool_started_for_runner(
     if not scan_job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan not found: {scan_id}")
 
+    # PERMANENT FIX: Look for existing record by tool_run_id OR by tool_name (for PENDING records)
+    # PENDING records don't have tool_run_id yet, so we need to check by tool_name too
     existing = db.query(ToolResult).filter(
-        and_(
-            ToolResult.scan_job_id == scan_id,
-            ToolResult.tool_run_id == payload.tool_run_id,
-        )
+        ToolResult.scan_job_id == scan_id,
+        (ToolResult.tool_run_id == payload.tool_run_id) | 
+        ((ToolResult.tool_name == payload.tool_name) & (ToolResult.status == ToolExecutionStatus.PENDING))
     ).first()
 
     now = datetime.now(timezone.utc)
     if existing:
+        # Update existing record (whether it's matched by tool_run_id or was PENDING)
+        if not existing.tool_run_id:
+            existing.tool_run_id = payload.tool_run_id
         if not existing.started_at:
             existing.started_at = now
         if existing.status in (None, ToolExecutionStatus.PENDING):
@@ -116,8 +120,10 @@ async def mark_tool_started_for_runner(
         if payload.command and not existing.command:
             existing.command = payload.command
         db.commit()
+        logger.info(f"Updated existing ToolResult {existing.id} for {payload.tool_name} (was {existing.status})")
         return {"tool_result_id": existing.id, "status": existing.status.value if existing.status else None}
 
+    # Only create new record if no existing one found
     tool_result_obj = ToolResult(
         id=str(uuid.uuid4()),
         scan_job_id=scan_id,
@@ -132,6 +138,7 @@ async def mark_tool_started_for_runner(
     db.add(tool_result_obj)
     db.commit()
     db.refresh(tool_result_obj)
+    logger.info(f"Created new ToolResult {tool_result_obj.id} for {payload.tool_name}")
     return {"tool_result_id": tool_result_obj.id, "status": tool_result_obj.status.value}
 
 
@@ -256,14 +263,21 @@ async def create_tool_result(
     payload_hash_v2 = _compute_payload_hash(tool_result, version=2)
     payload_hash_v1 = _compute_payload_hash(tool_result, version=1)  # For backward compatibility
     
-    # Check for existing tool result with same tool_run_id (idempotency)
+    # PERMANENT FIX: Check for existing tool result by tool_run_id OR by tool_name (for PENDING records)
+    # This prevents duplicate records when PENDING records exist
     existing_result = None
     if tool_result.tool_run_id:
         existing_result = db.query(ToolResult).filter(
-            and_(
-                ToolResult.scan_job_id == scan_id,
-                ToolResult.tool_run_id == tool_result.tool_run_id,
-            )
+            ToolResult.scan_job_id == scan_id,
+            (ToolResult.tool_run_id == tool_result.tool_run_id) | 
+            ((ToolResult.tool_name == tool_result.tool_name) & (ToolResult.status == ToolExecutionStatus.PENDING))
+        ).first()
+    else:
+        # Fallback: look for PENDING record by tool_name only
+        existing_result = db.query(ToolResult).filter(
+            ToolResult.scan_job_id == scan_id,
+            ToolResult.tool_name == tool_result.tool_name,
+            ToolResult.status == ToolExecutionStatus.PENDING
         ).first()
     
     # If tool-started created a stub row (status=RUNNING) for this tool_run_id,
@@ -291,6 +305,9 @@ async def create_tool_result(
                     else (ToolExecutionStatus.COMPLETED if tool_result.success else ToolExecutionStatus.FAILED)
                 )
                 existing_result.tool_name = tool_result.tool_name
+                # PERMANENT FIX: Update tool_run_id if not set (for PENDING records)
+                if not existing_result.tool_run_id and tool_result.tool_run_id:
+                    existing_result.tool_run_id = tool_result.tool_run_id
                 existing_result.output = tool_result.output[:10000] if tool_result.output else None
                 existing_result.exit_code = tool_result.exit_code
                 existing_result.execution_time = tool_result.execution_time
@@ -309,6 +326,14 @@ async def create_tool_result(
                     # Legacy field for backward compatibility
                     "payload_hash": payload_hash_v1,
                 }
+
+                # DEBUG: Log findings payload (stub update path)
+                logger.info(
+                    f"[STUB UPDATE] Ingesting findings for scan {scan_id}, tool={tool_result.tool_name}: "
+                    f"{len(tool_result.findings)} findings in payload"
+                )
+                if tool_result.findings:
+                    logger.info(f"[STUB UPDATE] First finding sample: {tool_result.findings[0]}")
 
                 # Ingest findings (same as create path)
                 project_id = scan_job.project_id
@@ -341,13 +366,31 @@ async def create_tool_result(
                             tool_result_id=existing_result.id,
                         )
                         findings_created.append(finding)
+                        logger.debug(
+                            f"[STUB UPDATE] Created finding {len(findings_created)}: "
+                            f"id={finding.id}, title={finding.title}"
+                        )
                     except Exception as e:
                         logger.warning(f"Failed to ingest finding: {e}", exc_info=True)
                         ingestion_error = str(e)
                         continue
 
                 existing_result.created_findings_count = len(findings_created)
+                
+                # DEBUG: Log before commit
+                logger.info(
+                    f"[STUB UPDATE] About to commit for scan {scan_id}: "
+                    f"tool_result_id={existing_result.id}, findings_created={len(findings_created)}"
+                )
                 db.commit()
+                logger.info(f"[STUB UPDATE] Commit successful for scan {scan_id}")
+                
+                # DEBUG: Verify persistence immediately after commit
+                db.refresh(existing_result)
+                logger.info(
+                    f"[STUB UPDATE] After refresh: tool_result_id={existing_result.id}, "
+                    f"created_findings_count={existing_result.created_findings_count}"
+                )
 
                 try:
                     _check_and_update_scan_completion(scan_job, db)
@@ -363,8 +406,13 @@ async def create_tool_result(
                     + (f" (ingestion_error: {ingestion_error})" if ingestion_error else ""),
                 )
             except Exception as e:
-                logger.error(f"Failed to update tool result stub: {e}", exc_info=True)
+                logger.error(
+                    f"[STUB UPDATE] EXCEPTION during stub update for scan {scan_id}: {e}",
+                    exc_info=True
+                )
+                logger.error(f"[STUB UPDATE] Rolling back transaction for scan {scan_id}")
                 db.rollback()
+                logger.error(f"[STUB UPDATE] Rollback complete for scan {scan_id}")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to update tool result: {str(e)}",
@@ -416,6 +464,17 @@ async def create_tool_result(
     
     try:
         # Create ToolResult
+        # Merge meta from tool_result with payload hashes
+        result_meta = {
+            "payload_hash_v": PAYLOAD_HASH_VERSION,
+            "payload_hash_v1": payload_hash_v1,
+            "payload_hash_v2": payload_hash_v2,
+            # Legacy field for backward compatibility
+            "payload_hash": payload_hash_v1,
+        }
+        if tool_result.meta:
+            result_meta.update(tool_result.meta)
+        
         tool_result_obj = ToolResult(
             id=tool_result_id,
             scan_job_id=scan_id,
@@ -431,16 +490,36 @@ async def create_tool_result(
             stderr_preview=tool_result.stderr_preview,
             status=ToolExecutionStatus.COMPLETED if tool_result.success else ToolExecutionStatus.FAILED,
             parsed_findings_count=len(tool_result.findings),
-            meta={
-                "payload_hash_v": PAYLOAD_HASH_VERSION,
-                "payload_hash_v1": payload_hash_v1,
-                "payload_hash_v2": payload_hash_v2,
-                # Legacy field for backward compatibility
-                "payload_hash": payload_hash_v1,
-            } if tool_result.tool_run_id else None,  # Store hash versions for duplicate detection
+            targets_count=tool_result.targets_count if hasattr(tool_result, 'targets_count') else 0,
+            meta=result_meta if tool_result.tool_run_id else None,  # Store hash versions and tool metadata
         )
         db.add(tool_result_obj)
         db.flush()  # Flush to get tool_result_id for findings
+        
+        # DEBUG: Log findings payload
+        logger.info(
+            f"Ingesting findings for scan {scan_id}, tool={tool_result.tool_name}: "
+            f"{len(tool_result.findings)} findings in payload"
+        )
+        if tool_result.findings:
+            logger.info(f"First finding sample: {tool_result.findings[0]}")
+        
+        # #region agent log
+        import json as json_lib
+        import time
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json_lib.dumps({
+                    "location": "runner_ingest.py:485",
+                    "message": "About to ingest findings",
+                    "data": {"scan_id": scan_id, "tool_name": tool_result.tool_name, "findings_count": len(tool_result.findings), "findings_sample": tool_result.findings[0] if tool_result.findings else None},
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H6"
+                }) + '\n')
+        except: pass
+        # #endregion
         
         # Ingest findings within the same transaction
         for finding_data in tool_result.findings:
@@ -475,9 +554,38 @@ async def create_tool_result(
                 )
                 findings_created.append(finding)
                 
+                # #region agent log
+                try:
+                    with open('/app/data/debug.log', 'a') as f:
+                        f.write(json_lib.dumps({
+                            "location": "runner_ingest.py:515",
+                            "message": "Finding created/updated",
+                            "data": {"scan_id": scan_id, "finding_id": str(finding.id)[:8], "title": finding.title[:50], "tool": finding.tool_name},
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H6"
+                        }) + '\n')
+                except: pass
+                # #endregion
+                
             except Exception as e:
                 logger.warning(f"Failed to ingest finding: {e}", exc_info=True)
                 ingestion_error = str(e)
+                # #region agent log
+                try:
+                    with open('/app/data/debug.log', 'a') as f:
+                        f.write(json_lib.dumps({
+                            "location": "runner_ingest.py:518",
+                            "message": "Failed to ingest finding",
+                            "data": {"scan_id": scan_id, "error": str(e), "finding_data_title": normalized_finding.get("title", "N/A")[:50]},
+                            "timestamp": int(time.time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H6"
+                        }) + '\n')
+                except: pass
+                # #endregion
                 # Continue processing other findings
                 continue
         
@@ -490,6 +598,21 @@ async def create_tool_result(
             f"Created tool result {tool_result_id} for scan {scan_id}, "
             f"tool={tool_result.tool_name}, tool_run_id={tool_result.tool_run_id}, findings={len(findings_created)}"
         )
+        
+        # #region agent log
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json_lib.dumps({
+                    "location": "runner_ingest.py:527",
+                    "message": "Tool result committed",
+                    "data": {"scan_id": scan_id, "tool_name": tool_result.tool_name, "findings_created": len(findings_created), "findings_in_payload": len(tool_result.findings)},
+                    "timestamp": int(time.time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H6"
+                }) + '\n')
+        except: pass
+        # #endregion
         
         # Check if all tools are complete and update scan status if needed
         try:
@@ -558,6 +681,38 @@ def _check_and_update_scan_completion(scan_job: ScanJob, db: Session) -> None:
         ToolResult.scan_job_id == scan_job.id
     ).all()
     
+    # CRITICAL: Check for tools that were started but never completed (stuck in RUNNING)
+    # If a tool has been running for more than the max timeout, mark it as TIMED_OUT
+    from app.core.scan_timeouts import get_tool_timeout
+    from datetime import datetime, timezone, timedelta
+    
+    stuck_tools = []
+    for tr in tool_results:
+        if tr.status == ToolExecutionStatus.RUNNING and tr.started_at:
+            # Calculate how long the tool has been running
+            running_duration = (datetime.now(timezone.utc) - tr.started_at).total_seconds()
+            # Get timeout for this tool (default 15 minutes if not configured)
+            try:
+                timeout_seconds = get_tool_timeout(scan_job.scan_level.value, tr.tool_name, default=900)
+            except:
+                timeout_seconds = 900  # 15 minutes default
+            
+            # If tool has been running longer than timeout + 5 minute buffer, mark as timed out
+            if running_duration > (timeout_seconds + 300):
+                logger.warning(
+                    f"Tool {tr.tool_name} for scan {scan_job.id} has been running for {running_duration:.0f}s "
+                    f"(timeout: {timeout_seconds}s). Marking as TIMED_OUT."
+                )
+                tr.status = ToolExecutionStatus.TIMED_OUT
+                tr.completed_at = datetime.now(timezone.utc)
+                if not tr.error_message:
+                    tr.error_message = f"Tool execution timed out after {running_duration:.0f} seconds"
+                stuck_tools.append(tr.tool_name)
+    
+    if stuck_tools:
+        db.commit()
+        logger.info(f"Marked {len(stuck_tools)} stuck tools as TIMED_OUT: {', '.join(stuck_tools)}")
+    
     if not tool_results:
         # No tools have completed yet
         return
@@ -625,31 +780,51 @@ def _check_and_update_scan_completion(scan_job: ScanJob, db: Session) -> None:
     
     # If all tools are done, update scan status to COMPLETED/FAILED depending on tool outcomes
     if all_tools_done:
-        has_failures = False
+        # Count completed vs failed tools
+        completed_tools = []
+        failed_tools = []
         for tool_key in expected_tool_keys:
             tr = tool_statuses_dict.get(tool_key)
-            if tr and tr.status in {ToolExecutionStatus.FAILED, ToolExecutionStatus.TIMED_OUT}:
-                has_failures = True
-                break
+            if tr:
+                if tr.status == ToolExecutionStatus.COMPLETED:
+                    completed_tools.append(tool_key)
+                elif tr.status in {ToolExecutionStatus.FAILED, ToolExecutionStatus.TIMED_OUT}:
+                    failed_tools.append(tool_key)
 
         logger.info(
-            f"All {len(expected_tool_keys)} tools completed for scan {scan_job.id}, marking as COMPLETED",
+            f"All {len(expected_tool_keys)} tools completed for scan {scan_job.id}",
             extra={
                 "scan_id": scan_job.id,
                 "expected_tools": list(expected_tool_keys),
-                "completed_tools": list(tool_statuses_dict.keys()),
+                "completed_tools": completed_tools,
+                "failed_tools": failed_tools,
             }
         )
-        if has_failures:
+        
+        # Determine scan status based on tool results
+        if len(completed_tools) == 0:
+            # No tools completed - mark as FAILED
             scan_job.status = ScanStatus.FAILED
             if not scan_job.error_message:
-                scan_job.error_message = "One or more tools failed"
+                scan_job.error_message = f"All tools failed: {', '.join(failed_tools[:5])}"
+                if len(failed_tools) > 5:
+                    scan_job.error_message += f" and {len(failed_tools) - 5} more"
+        elif len(failed_tools) > 0:
+            # Some tools completed, some failed - mark as COMPLETED_WITH_ERRORS
+            scan_job.status = ScanStatus.COMPLETED_WITH_ERRORS
+            if not scan_job.error_message:
+                scan_job.error_message = f"Some tools failed: {', '.join(failed_tools[:5])}"
+                if len(failed_tools) > 5:
+                    scan_job.error_message += f" and {len(failed_tools) - 5} more"
         else:
+            # All tools completed successfully
             scan_job.status = ScanStatus.COMPLETED
+            scan_job.error_message = None
+        
         if not scan_job.completed_at:
             scan_job.completed_at = datetime.now(timezone.utc)
         db.commit()
-        logger.info(f"Scan {scan_job.id} status updated to {scan_job.status.value.upper()}")
+        logger.info(f"Scan {scan_job.id} status updated to {scan_job.status.value.upper()} (completed: {len(completed_tools)}, failed: {len(failed_tools)})")
 
         # Best-effort: stop brain session to prevent further step enqueues after completion.
         if getattr(scan_job, "brain_session_id", None):

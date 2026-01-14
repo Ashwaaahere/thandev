@@ -41,3 +41,4 @@ This repo is restored from Fly backups into:
 - If you prefer host Postgres instead of compose: set `DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/thandev` and ensure `extra_hosts` is present (already configured).
 
 
+

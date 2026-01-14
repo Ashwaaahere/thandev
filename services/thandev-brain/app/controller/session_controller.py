@@ -42,6 +42,22 @@ async def trigger_session_loop(session_id: str, org_id: Optional[str] = None, pr
         org_id: Organization ID (optional, will be loaded from session if not provided)
         project_id: Project ID (optional, will be loaded from session if not provided)
     """
+    # #region agent log
+    import json
+    try:
+        with open('/app/data/debug.log', 'a') as f:
+            f.write(json.dumps({
+                "location": "session_controller.py:33",
+                "message": "trigger_session_loop called",
+                "data": {"session_id": session_id, "org_id": org_id, "project_id": project_id},
+                "timestamp": int(__import__('time').time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H1"
+            }) + '\n')
+    except: pass
+    # #endregion
+    
     if session_id in _active_loops:
         logger.warning(f"Session {session_id} loop already running")
         return
@@ -52,6 +68,21 @@ async def trigger_session_loop(session_id: str, org_id: Optional[str] = None, pr
     _active_loops[session_id] = task
     
     logger.info(f"Started session loop for {session_id}")
+    
+    # #region agent log
+    try:
+        with open('/app/data/debug.log', 'a') as f:
+            f.write(json.dumps({
+                "location": "session_controller.py:54",
+                "message": "trigger_session_loop task created",
+                "data": {"session_id": session_id, "task_done": task.done()},
+                "timestamp": int(__import__('time').time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H1"
+            }) + '\n')
+    except: pass
+    # #endregion
 
 
 async def run_session_loop(session_id: str, org_id: Optional[str] = None, project_id: Optional[str] = None) -> None:
@@ -74,6 +105,22 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
         org_id: Organization ID (optional, will try to load from session if not provided)
         project_id: Project ID (optional, will try to load from session if not provided)
     """
+    # #region agent log
+    import json
+    try:
+        with open('/app/data/debug.log', 'a') as f:
+            f.write(json.dumps({
+                "location": "session_controller.py:77",
+                "message": "run_session_loop started",
+                "data": {"session_id": session_id, "org_id": org_id, "project_id": project_id},
+                "timestamp": int(__import__('time').time() * 1000),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H2"
+            }) + '\n')
+    except: pass
+    # #endregion
+    
     try:
         # Try to get session state
         # First try with provided org_id/project_id, then try without (for backward compatibility)
@@ -101,6 +148,21 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                     found_project_id = key_parts[2] if key_parts[2] != "default" else None
                     session_state = await get_session(found_org_id, found_project_id, session_id)
         
+        # #region agent log
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "location": "session_controller.py:105",
+                    "message": "session state lookup result",
+                    "data": {"session_id": session_id, "found": session_state is not None, "session_state_scan_job": session_state.scan_job_id if session_state else None},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H2"
+                }) + '\n')
+        except: pass
+        # #endregion
+        
         if not session_state:
             logger.error(f"Session {session_id} not found in Redis")
             return
@@ -116,14 +178,63 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
             iteration += 1
             logger.info(f"Session {session_id} iteration {iteration}")
             
+            # #region agent log
+            try:
+                with open('/app/data/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "session_controller.py:117",
+                        "message": "Session loop iteration start",
+                        "data": {"session_id": session_id, "iteration": iteration},
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H8"
+                    }) + '\n')
+            except: pass
+            # #endregion
+            
             # Acquire lock to prevent concurrent processing
-            if not await acquire_session_lock(session_id, timeout=60):
+            lock_acquired = await acquire_session_lock(session_id, timeout=60)
+            # #region agent log
+            try:
+                with open('/app/data/debug.log', 'a') as f:
+                    import json
+                    f.write(json.dumps({
+                        "location": "session_controller.py:120",
+                        "message": "Lock acquisition result",
+                        "data": {"session_id": session_id, "lock_acquired": lock_acquired},
+                        "timestamp": int(__import__('time').time() * 1000),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "H8"
+                    }) + '\n')
+            except: pass
+            # #endregion
+            
+            if not lock_acquired:
                 logger.warning(f"Could not acquire lock for session {session_id}, skipping iteration")
                 await asyncio.sleep(5)
                 continue
             
             try:
                 # Reload session state
+                # #region agent log
+                try:
+                    with open('/app/data/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "location": "session_controller.py:127",
+                            "message": "About to reload session state",
+                            "data": {"session_id": session_id, "org_id": org_id, "project_id": project_id},
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H9"
+                        }) + '\n')
+                except: pass
+                # #endregion
+                
                 session_state = await get_session(org_id, project_id, session_id)
                 if not session_state:
                     logger.error(f"Session {session_id} not found or state is malformed")
@@ -141,6 +252,22 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                     break
                 
                 # Check stop conditions
+                # #region agent log
+                try:
+                    with open('/app/data/debug.log', 'a') as f:
+                        import json
+                        f.write(json.dumps({
+                            "location": "session_controller.py:144",
+                            "message": "About to check stop conditions",
+                            "data": {"session_id": session_id},
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H9"
+                        }) + '\n')
+                except: pass
+                # #endregion
+                
                 should_stop, reason_code = await check_stop_conditions(session_state)
                 if should_stop:
                     logger.info(f"Session {session_id} stopping: {reason_code}")
@@ -167,6 +294,21 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                     rag_evidence,
                 )
                 
+                # #region agent log
+                try:
+                    with open('/app/data/debug.log', 'a') as f:
+                        f.write(json.dumps({
+                            "location": "session_controller.py:165",
+                            "message": "decide_next_steps result",
+                            "data": {"session_id": session_id, "next_steps_count": len(next_steps) if next_steps else 0, "step_tools": [s.tool_id for s in next_steps] if next_steps else []},
+                            "timestamp": int(__import__('time').time() * 1000),
+                            "sessionId": "debug-session",
+                            "runId": "run1",
+                            "hypothesisId": "H3"
+                        }) + '\n')
+                except: pass
+                # #endregion
+                
                 if not next_steps:
                     logger.info(f"Session {session_id} has no more steps, stopping")
                     await stop_session(
@@ -181,7 +323,22 @@ async def run_session_loop(session_id: str, org_id: Optional[str] = None, projec
                 # Enqueue steps
                 step_ids = []
                 for step in next_steps:
-                    if await publish_step_request(step):
+                    publish_result = await publish_step_request(step)
+                    # #region agent log
+                    try:
+                        with open('/app/data/debug.log', 'a') as f:
+                            f.write(json.dumps({
+                                "location": "session_controller.py:184",
+                                "message": "publish_step_request result",
+                                "data": {"session_id": session_id, "step_id": step.step_id, "tool_id": step.tool_id, "mode_id": step.mode_id, "published": publish_result},
+                                "timestamp": int(__import__('time').time() * 1000),
+                                "sessionId": "debug-session",
+                                "runId": "run1",
+                                "hypothesisId": "H4"
+                            }) + '\n')
+                    except: pass
+                    # #endregion
+                    if publish_result:
                         step_ids.append(step.step_id)
                         logger.info(f"Enqueued step {step.step_id} ({step.tool_id}/{step.mode_id}) for session {session_id}")
                 
@@ -389,6 +546,22 @@ async def decide_next_steps(
     """
     try:
         # Generate plan using existing planner
+        # #region agent log
+        import json
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "location": "session_controller.py:392",
+                    "message": "calling generate_plan",
+                    "data": {"session_id": session_state.session_id, "target_url": session_state.target_url, "scan_level": session_state.scan_level},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H5"
+                }) + '\n')
+        except: pass
+        # #endregion
+        
         plan = await generate_plan(
             target_url=session_state.target_url,
             scan_level=session_state.scan_level,
@@ -396,6 +569,21 @@ async def decide_next_steps(
             project_id=session_state.project_id,
             stack_info=rag_evidence.get("stack_info", {}),
         )
+        
+        # #region agent log
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "location": "session_controller.py:399",
+                    "message": "generate_plan result",
+                    "data": {"session_id": session_state.session_id, "plan_steps_count": len(plan.steps) if plan and plan.steps else 0},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H5"
+                }) + '\n')
+        except: pass
+        # #endregion
         
         # Convert plan steps to StepRequest objects.
         #
@@ -424,10 +612,39 @@ async def decide_next_steps(
             )
             steps.append(step_request)
         
+        # #region agent log
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "location": "session_controller.py:427",
+                    "message": "decide_next_steps returning",
+                    "data": {"session_id": session_state.session_id, "steps_count": len(steps), "step_tools": [s.tool_id for s in steps]},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H5"
+                }) + '\n')
+        except: pass
+        # #endregion
+        
         return steps
         
     except Exception as e:
         logger.error(f"Failed to decide next steps: {e}", exc_info=True)
+        # #region agent log
+        try:
+            with open('/app/data/debug.log', 'a') as f:
+                f.write(json.dumps({
+                    "location": "session_controller.py:430",
+                    "message": "decide_next_steps exception",
+                    "data": {"session_id": session_state.session_id, "error": str(e)},
+                    "timestamp": int(__import__('time').time() * 1000),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H5"
+                }) + '\n')
+        except: pass
+        # #endregion
         return []
 
 

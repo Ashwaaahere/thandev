@@ -94,80 +94,11 @@ def _normalize_dalfox_output(output_text: str) -> str:
 class ScanOrchestrator:
     """Orchestrates security scan execution"""
     
-    async def queue_scan(
-        self,
-        scan_job_id: str,
-        target_url: str,
-        scan_level: str,
-        user_id: str = None
-    ) -> str:
-        """
-        Queue a scan job using Celery with user-specific queue routing.
-        
-        Each user's scans are routed to a dedicated queue (user_{user_id}) to ensure
-        scans run one at a time per user.
-        
-        Args:
-            scan_job_id: ID of the scan job
-            target_url: URL to scan
-            scan_level: Scan level (basic, pro, advanced)
-            user_id: User ID for queue routing (if None, uses default queue)
-            
-        Returns:
-            Celery task ID
-        """
-        logger.info(f"Queueing scan job {scan_job_id} for {target_url} at level {scan_level}")
-        
-        # Import here to avoid circular imports
-        from app.tasks.celery_app import run_scan_task
-        
-        # Route all tasks to default "celery" queue
-        # Per-user concurrency is now handled by Redis-based queue_manager in the task itself
-        logger.info(f"Routing scan {scan_job_id} to default celery queue (user: {user_id})")
-        # Pass user_id to the task for concurrency control
-        # Use apply_async to pass user_id as a keyword argument
-        task = run_scan_task.apply_async(
-            args=(scan_job_id, target_url, scan_level),
-            kwargs={"user_id": user_id if user_id else None}
-        )
-        
-        # ORIGINAL CODE (commented out until worker multi-queue support is fixed):
-        # if user_id:
-        #     queue_name = f"user_{user_id}"
-        #     logger.info(f"Routing scan {scan_job_id} to user-specific queue: {queue_name}")
-        #     task = run_scan_task.apply_async(
-        #         args=(scan_job_id, target_url, scan_level),
-        #         queue=queue_name
-        #     )
-        # else:
-        #     logger.warning(f"No user_id provided for scan {scan_job_id}, using default queue")
-        #     task = run_scan_task.delay(scan_job_id, target_url, scan_level)
-        
-        logger.info(f"Scan job {scan_job_id} queued with Celery task ID: {task.id} (user: {user_id or 'unknown'})")
-        
-        return task.id
+    # NOTE: queue_scan method removed - Celery has been removed.
+    # Scans are now queued via Runner (Redis streams) or Brain service directly.
     
-    async def get_scan_status(self, celery_task_id: str) -> dict:
-        """
-        Get the status of a Celery task
-        
-        Args:
-            celery_task_id: Celery task ID
-            
-        Returns:
-            Task status information
-        """
-        from celery.result import AsyncResult
-        
-        task_result = AsyncResult(celery_task_id)
-        
-        return {
-            "task_id": celery_task_id,
-            "status": task_result.status,
-            "ready": task_result.ready(),
-            "successful": task_result.successful() if task_result.ready() else None,
-            "result": task_result.result if task_result.ready() else None,
-        }
+    # NOTE: get_scan_status method removed - Celery has been removed.
+    # Scan status is now tracked via Runner (Redis streams) or Brain service.
     
     def run_basic_scan_for_job(self, job: "ScanJob") -> None:
         """
@@ -601,11 +532,20 @@ def _run_single_tool(
     ingest_error = None
     
     # Ingest nuclei findings immediately (don't wait for end)
-    if ingest_tool_name == "nuclei" and result.get("success", True):
+    # CRITICAL: Ingest findings even if tool timed out, as there might be partial results
+    # Only skip if tool actually failed (not just timed out)
+    should_ingest_nuclei = (
+        ingest_tool_name == "nuclei" and 
+        (result.get("success", True) or result.get("timed_out", False))
+    )
+    if should_ingest_nuclei:
         try:
             nuclei_results = parse_nuclei_output(output_file)
             parsed_count = len(nuclei_results)
-            logger.info("Parsed %d nuclei findings for scan %s", parsed_count, scan_job.id)
+            if parsed_count > 0:
+                logger.info("Parsed %d nuclei findings for scan %s (even though tool may have timed out)", parsed_count, scan_job.id)
+            else:
+                logger.info("No nuclei findings parsed for scan %s (file may be empty or tool timed out before finding anything)", scan_job.id)
             findings = ingest_nuclei_findings(db, scan_job.id, nuclei_results, tool_result_id=tool_run_id)
             created_count_hint = len(findings)
             update_tool_run_counts(db, tool_run_id, parsed_count, created_count_hint)
@@ -1126,6 +1066,18 @@ def run_scan_for_job(job: "ScanJob") -> None:
                     logger.error(f"Plan validation failed: {e}")
                     raise ValueError(f"Invalid plan from brain service: {e}")
                 
+                # Log the complete brain plan for debugging
+                logger.info(
+                    f"Brain service plan for scan {scan_job.id}: "
+                    f"{len(brain_plan.steps)} steps, "
+                    f"tools=[{', '.join(set(s.tool_id for s in brain_plan.steps))}]"
+                )
+                for step in brain_plan.steps:
+                    logger.info(
+                        f"  Step {step.step_id}: tool={step.tool_id}, mode={step.mode_id}, "
+                        f"params={step.params}, depends_on={step.depends_on}, reason={step.reason}"
+                    )
+                
                 # Convert brain plan format to orchestrator format
                 # Brain returns: {plan_id, steps: [{step_id, tool_id, mode_id, params, depends_on, reason, estimated_duration_sec}], timeline, metadata}
                 # Orchestrator expects: {waves: [{phase, tools: [{tool_id, mode_id, params}]}]}
@@ -1218,6 +1170,7 @@ def run_scan_for_job(job: "ScanJob") -> None:
                             ScanLevel.BASIC: [
                                 ("httpx", "low"),
                                 ("nuclei", "basic_web"),
+                                ("zap", "passive_spider"),
                             ],
                             ScanLevel.PRO: [
                                 ("httpx", "medium"),
@@ -1226,6 +1179,7 @@ def run_scan_for_job(job: "ScanJob") -> None:
                                 ("nmap", "top_ports"),
                                 ("sslscan", "standard"),
                                 ("dalfox", "constrained"),
+                                ("zap", "active_scan"),
                             ],
                             ScanLevel.ADVANCED: [
                                 ("httpx", "high"),
@@ -1235,6 +1189,7 @@ def run_scan_for_job(job: "ScanJob") -> None:
                                 ("sslscan", "standard"),
                                 ("dalfox", "standard"),
                                 ("sqlmap", "sqli_light"),
+                                ("zap", "ajax_spider"),
                             ],
                         }
                         
@@ -1392,6 +1347,16 @@ def run_scan_for_job(job: "ScanJob") -> None:
                 db.add(tool_result)
         db.commit()
         logger.info(f"Created {len(all_planned_tools)} PENDING tool records for scan {scan_job.id}")
+        
+        # Log the final plan before execution
+        logger.info(f"Executing scan plan for scan {scan_job.id}: {len(plan.get('waves', []))} wave(s)")
+        for wave_idx, wave in enumerate(plan.get("waves", [])):
+            logger.info(f"  Wave {wave_idx + 1} ({wave.get('phase', 'unknown')}): {len(wave.get('tools', []))} tool(s)")
+            for tool_cfg in wave.get("tools", []):
+                logger.info(
+                    f"    - tool_id={tool_cfg.get('tool_id')}, mode_id={tool_cfg.get('mode_id')}, "
+                    f"config={tool_cfg.get('config', {})}"
+                )
         
         # Execute tools from all waves in the plan
         # We'll collect all Nuclei outputs and ingest them at the end for idempotency

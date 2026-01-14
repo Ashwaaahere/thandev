@@ -65,20 +65,58 @@ class LocalSubprocessBackend(ExecutionBackend):
             
             # Execute using ToolExecutor.
             #
-            # IMPORTANT: ToolExecutor contains blocking subprocess calls. If we run it directly
-            # inside the runner's asyncio event loop, it blocks ALL concurrent scans/steps.
-            # Run it in a worker thread with its own event loop to allow real concurrency.
+            # IMPORTANT: ToolExecutor.run_step() is async but contains blocking subprocess calls.
+            # We run it in a thread pool to prevent blocking the main event loop.
+            # Use asyncio.run() in the thread to create a new event loop for the async function.
             def _run_step_sync() -> Dict[str, Any]:
-                return asyncio.run(
-                    self.executor.run_step(
-                        tool_id=tool_id,
-                        mode_id=mode_id,
-                        target_url=target,
-                        params=params,
-                        scan_job_id=scan_job_id,
-                        job_dir=job_dir,
+                # Create a new event loop in this thread (asyncio.run() does this)
+                # This is safe because we're in a separate thread via asyncio.to_thread()
+                try:
+                    return asyncio.run(
+                        self.executor.run_step(
+                            tool_id=tool_id,
+                            mode_id=mode_id,
+                            target_url=target,
+                            params=params,
+                            scan_job_id=scan_job_id,
+                            job_dir=job_dir,
+                        )
                     )
-                )
+                except RuntimeError as e:
+                    # Handle case where event loop already exists (shouldn't happen in thread)
+                    if "asyncio.run() cannot be called from a running event loop" in str(e):
+                        # Fallback: get or create event loop
+                        try:
+                            loop = asyncio.get_event_loop()
+                        except RuntimeError:
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                        try:
+                            return loop.run_until_complete(
+                                self.executor.run_step(
+                                    tool_id=tool_id,
+                                    mode_id=mode_id,
+                                    target_url=target,
+                                    params=params,
+                                    scan_job_id=scan_job_id,
+                                    job_dir=job_dir,
+                                )
+                            )
+                        finally:
+                            loop.close()
+                    raise
+                except Exception as e:
+                    # Catch any other exceptions and log them
+                    logger.error(f"Error in _run_step_sync for {tool_id}: {e}", exc_info=True)
+                    # Return error result instead of raising
+                    return {
+                        "tool_name": tool_id,
+                        "output": "",
+                        "exit_code": -1,
+                        "execution_time": 0.0,
+                        "success": False,
+                        "error": f"Tool execution failed: {str(e)}",
+                    }
 
             result = await asyncio.to_thread(_run_step_sync)
             

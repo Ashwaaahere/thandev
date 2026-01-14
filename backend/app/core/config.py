@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     INTERNAL_ENDPOINT_REQUIRE_PRIVATE_NETWORK: bool = False  # If True, only allow RFC1918 private IPs
     
     # Scan Execution Path Configuration
-    USE_CELERY_SCAN_EXECUTION: bool = False  # If True, use Celery for scan execution (legacy). Default: False (use Runner via Redis streams)
+    # NOTE: Celery has been removed. All scans use Runner via Redis streams or Brain service.
     
     # Scan Execution Configuration
     MAX_PARALLEL_TOOLS: int = 5  # Maximum number of tools to run in parallel

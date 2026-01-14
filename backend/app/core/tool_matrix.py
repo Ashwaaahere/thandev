@@ -36,23 +36,24 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
     ScanLevel.BASIC: [
         {"key": "httpx", "enabled": True, "intensity": "low"},
         {"key": "nuclei", "enabled": True, "profile": "basic_web"},
+        {"key": "zap", "enabled": True, "mode": "passive_spider", "timeout_seconds": 300},
     ],
     ScanLevel.PRO: [
         {"key": "httpx", "enabled": True, "intensity": "medium"},
         {"key": "nuclei", "enabled": True, "profile": "pro_web"},
-        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-pro.txt", "timeout_seconds": 300},
         {"key": "nmap", "enabled": True, "profile": "top_ports"},
         {"key": "sslscan", "enabled": True},
         {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
+        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 600},
     ],
     ScanLevel.ADVANCED: [
         {"key": "httpx", "enabled": True, "intensity": "high"},
         {"key": "nuclei", "enabled": True, "profile": "advanced_web"},
-        {"key": "ffuf", "enabled": True, "wordlist": "ffuf-advanced.txt", "timeout_seconds": 300},
+        {"key": "dalfox", "enabled": True, "aggressiveness": "high"},
         {"key": "nmap", "enabled": True, "profile": "full_ports_scripts"},
         {"key": "sslscan", "enabled": True},
-        {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
-        {"key": "sqlmap", "enabled": True, "timeout_seconds": 300, "profile": "sqli_light"},  # SQL Injection testing
+        {"key": "sqlmap", "enabled": True},
+        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 1200},
         # NOTE: Future/experimental tools removed from active matrix
         # These tools are not yet fully wired or stable:
         # - xss_experimental (Playwright-based XSS checks)

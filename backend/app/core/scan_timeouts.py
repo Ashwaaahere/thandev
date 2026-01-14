@@ -16,30 +16,34 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
         "max_total_seconds": 600,  # 10 minutes total
         "per_tool": {
             "httpx": 30,  # 30 seconds
-            "nuclei": 120,  # 2 minutes
+            "sslscan": 180,  # 3 minutes (increased from 120 for slow SSL connections)
+            "zap": 300,  # 5 minutes (passive scan + short spider)
+            "nuclei": 180,  # 3 minutes (safe tags, low rate)
         }
     },
     "pro": {
         "max_total_seconds": 1800,  # 30 minutes total
         "per_tool": {
             "httpx": 30,  # 30 seconds
-            "nuclei": 300,  # 5 minutes
-            "nmap": 300,  # 5 minutes
+            "nuclei": 1200,  # 20 minutes (comprehensive scanning)
+            "nmap": 300,  # 5 minutes (optimized port scan)
             "ffuf": 300,  # 5 minutes
-            "sslscan": 300,  # 5 minutes
-            "dalfox": 300,  # 5 minutes
+            "sslscan": 90,  # 90 seconds (normally 30s, 3x safety buffer)
+            "zap": 900,  # 15 minutes (passive + active scan)
+            "dalfox": 900,  # 15 minutes (increased from 10min - more time for XSS testing)
         }
     },
     "advanced": {
-        "max_total_seconds": 3600,  # 1 hour total
+        "max_total_seconds": 5400,  # 1.5 hours total (increased for complex targets)
         "per_tool": {
             "httpx": 30,  # 30 seconds
-            "nuclei": 600,  # 10 minutes
-            "nmap": 600,  # 10 minutes
+            "nuclei": 1800,  # 30 minutes (comprehensive template scanning - increased from 15min)
+            "nmap": 1800,  # 30 minutes (comprehensive port scan)
             "ffuf": 600,  # 10 minutes
-            "sslscan": 300,  # 5 minutes
-            "dalfox": 600,  # 10 minutes
-            "sqlmap": 900,  # 15 minutes
+            "sslscan": 180,  # 3 minutes (normally 30s, 6x safety buffer for thorough scan)
+            "dalfox": 2400,  # 40 minutes (thorough XSS testing - increased from 20min)
+            "sqlmap": 2400,  # 40 minutes (thorough SQLi testing - increased from 20min)
+            "zap": 1200,  # 20 minutes (passive + active + ajax spider)
         }
     }
 }
@@ -48,13 +52,13 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
 # Maximum number of tools to run concurrently
 SCAN_PARALLELISM: Dict[str, Dict] = {
     "basic": {
-        "max_concurrent": 2,  # Lightweight, can run 2 in parallel
+        "max_concurrent": 5,  # Lightweight, can run all basic tools in parallel
     },
     "pro": {
-        "max_concurrent": 3,  # Moderate parallelism
+        "max_concurrent": 10,  # Run all Pro tools in parallel (including ZAP's 2 modes)
     },
     "advanced": {
-        "max_concurrent": 4,  # Higher parallelism but still bounded
+        "max_concurrent": 10,  # Run all Advanced tools in parallel (including ZAP's 2 modes + SQLMap)
     }
 }
 

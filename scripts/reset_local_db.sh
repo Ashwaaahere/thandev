@@ -25,3 +25,4 @@ docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" run --rm backend ./entr
 echo "Infra ready. You can now start the full stack with scripts/up_fly_local.sh"
 
 
+

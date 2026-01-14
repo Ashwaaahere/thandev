@@ -2,6 +2,7 @@
 Security scanning tools service
 Handles execution of various security scanning tools
 """
+import asyncio
 import logging
 import subprocess
 import os
@@ -9,9 +10,11 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
+import tempfile
+from app.utils.crawler import SmartCrawler
 
 # Ensure PATH includes common tool locations when module loads
-# This helps subprocess.find_executable() and subprocess.run() find tools
+# This helps subprocess.find_executable() and await asyncio.to_thread(subprocess.run,) find tools
 _home_dir = os.path.expanduser("~")
 _go_bin = os.path.join(_home_dir, "go", "bin")
 _local_tools = os.path.join(_home_dir, ".local", "thandev-tools", "bin")
@@ -46,17 +49,20 @@ if 'logger' not in locals():
 
 # Nuclei profile to tags mapping
 # Maps profile names from tool_matrix to Nuclei -tags CLI argument
+# IMPORTANT: Tags must match exactly what Nuclei templates use
+# Use "cve" (singular) not "cves" - Nuclei templates use "cve" tag
+# NOTE: "headless" tag is VERY slow (Chrome-based DOM XSS tests), only use for advanced scans
 NUCLEI_PROFILE_TAGS = {
-    "basic_web": ["cves", "misconfig", "exposed-panels", "exposures"],
+    "basic_web": ["cve", "vulnerability", "exposure", "misconfig", "xss"],  # Fast for basic
     "pro_web": [
-        "cves", "misconfig", "exposed-panels", "exposures",
+        "cve", "vulnerability", "exposure", "misconfig", "exposed-panels",
         "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal",
-        "cmdi", "idor", "csrf", "cors", "cors-misconfig"
+        "cmdi", "idor", "csrf", "cors", "cors-misconfig"  # Removed headless - too slow (20+ min)
     ],
     "advanced_web": [
-        "cves", "misconfig", "exposed-panels", "exposures",
+        "cve", "vulnerability", "exposure", "misconfig", "exposed-panels",
         "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal",
-        "cmdi", "idor", "csrf", "cors", "cors-misconfig"
+        "cmdi", "idor", "csrf", "cors", "cors-misconfig", "tech", "ssl"  # Removed headless due to Chrome timeout issues
     ],
 }
 
@@ -108,7 +114,7 @@ def _normalize_dalfox_output(output_text: str) -> str:
     # Handle common placeholder patterns (exact matches)
     # Note: Also check normalized version (remove all whitespace) for cases like "[\n{}\n]"
     normalized_for_check = "".join(output_stripped.split())
-    if normalized_for_check in ["{}", "[{}]", "[]"] or output_stripped in ["{}", "[{}]", "[]"]:
+    if normalized_for_check in ["{}", "[]"] or output_stripped in ["{}", "[]"]:
         return "[]"
     
     # Try parsing as JSON to check for empty objects
@@ -116,16 +122,25 @@ def _normalize_dalfox_output(output_text: str) -> str:
     try:
         parsed = json.loads(output_stripped)
         
-        # If it's a list, filter out empty dicts
+        # If it's a list, filter out empty dicts BUT KEEP NON-EMPTY ONES
         if isinstance(parsed, list):
             # Filter out empty dicts (dicts with no keys or all None/empty values)
             filtered = []
             for item in parsed:
                 if isinstance(item, dict):
                     # Check if dict has any non-empty values
-                    if item and any(v for v in item.values() if v is not None and str(v).strip()):
-                        filtered.append(item)
-                    # Empty dict {} is skipped
+                    # CRITICAL FIX: Only filter if dict is COMPLETELY empty or has only None/empty string values
+                    # Do NOT filter dicts that have actual data
+                    if item:  # Dict is not empty
+                        # Check if it has any meaningful values (not just None or empty strings)
+                        has_meaningful_data = any(
+                            v is not None and str(v).strip() 
+                            for v in item.values()
+                        )
+                        if has_meaningful_data:
+                            filtered.append(item)
+                        # Empty dict {} or dict with only None/empty values is skipped
+                    # Completely empty dict {} is skipped
                 else:
                     # Non-dict items are kept (shouldn't happen in Dalfox output, but be safe)
                     filtered.append(item)
@@ -140,11 +155,13 @@ def _normalize_dalfox_output(output_text: str) -> str:
         if isinstance(parsed, dict) and not parsed:
             return "[]"
         
-        # Valid output, return as-is (re-serialize to ensure clean formatting)
+        # Valid output with data, return as-is (re-serialize to ensure clean formatting)
         return json.dumps(parsed) if not isinstance(parsed, str) else output_stripped
         
     except json.JSONDecodeError:
-        # Not valid JSON, return as-is (might be error message or other text)
+        # Not valid JSON - could be actual findings in non-JSON format
+        # DO NOT FILTER - return as-is to preserve findings
+        logger.warning(f"Dalfox output is not valid JSON, preserving as-is: {output_stripped[:100]}")
         return output_stripped
 
 
@@ -160,6 +177,7 @@ class ToolExecutor:
         "ffuf": "ffuf",
         "dalfox": "dalfox",
         "sqlmap": "sqlmap",  # sqlmap is in venv, checked separately
+        "zap": "zap",  # ZAP is accessed via API, not binary
     }
     
     def __init__(self, catalog_path: Optional[Path] = None):
@@ -174,34 +192,77 @@ class ToolExecutor:
             "nmap": self._run_nmap,
             "sslscan": self._run_sslscan,
             "httpx": self._run_httpx,
-            "ffuf": self._run_ffuf,
+            # "ffuf": self._run_ffuf,  # Removed - no longer used
             "dalfox": self._run_dalfox,
             "sqlmap": self._run_sqlmap,
+            "zap": self._run_zap,
         }
         
         # Load catalog for tool_id/mode_id mapping
         if catalog_path is None:
-            # Try multiple possible catalog paths
-            possible_paths = [
-                BASE_DIR / "services" / "thandev-brain" / "catalog" / "catalog.json",
-                Path("/services/thandev-brain/catalog/catalog.json"),
-                Path("/app/services/thandev-brain/catalog/catalog.json"),
-                BASE_DIR / "catalog" / "catalog.json",
+                # Try multiple possible catalog paths
+                possible_paths = [
+                    BASE_DIR / "services" / "thandev-brain" / "catalog" / "catalog.json",
+                    Path("/services/thandev-brain/catalog/catalog.json"),
+                    Path("/app/services/thandev-brain/catalog/catalog.json"),
+                    BASE_DIR / "catalog" / "catalog.json",
                 # Docker image path (runner Dockerfile copies to /app/catalog/catalog.json)
                 Path("/app/catalog/catalog.json"),
-            ]
-            catalog_path = None
-            for path in possible_paths:
-                if path.exists():
-                    catalog_path = path
-                    break
-            if catalog_path is None:
-                # Use first path as default (will log warning if not found)
-                catalog_path = possible_paths[0]
+                ]
+                catalog_path = None
+                for path in possible_paths:
+                    if path.exists():
+                        catalog_path = path
+                        break
+                if catalog_path is None:
+                    # Use first path as default (will log warning if not found)
+                    catalog_path = possible_paths[0]
         
         self.catalog_path = catalog_path
         self._catalog = self._load_catalog()
         self._tool_mode_map = self._build_tool_mode_map()
+        self._crawl_cache = {}  # Cache crawl results per scan_job_id (simple in-memory cache)
+
+    async def _crawl_target(self, target_url: str, scan_job_id: str, scan_level: str) -> Tuple[List[str], List[str]]:
+        """
+        Crawl the target URL to discover endpoints and parameters.
+        Returns: (all_urls, parameterized_urls)
+        """
+        # Return cached result if available for this scan job
+        if scan_job_id and scan_job_id in self._crawl_cache:
+            logger.info(f"Using cached crawl results for scan {scan_job_id}")
+            return self._crawl_cache[scan_job_id]
+
+        # Determine limits based on scan level
+        # Reduced limits to prevent nuclei timeouts
+        if scan_level == "advanced":
+            depth = 3
+            limit = 50  # Reduced from 100 to prevent timeouts
+        elif scan_level == "pro":
+            depth = 2
+            limit = 25  # Reduced from 50 to prevent timeouts (was finding 117 URLs)
+        else:
+            depth = 2
+            limit = 15  # Reduced from 20 for faster basic scans
+        
+        crawler = SmartCrawler(target_url, depth=depth, limit=limit)
+        try:
+            logger.info(f"Starting crawl for scan {scan_job_id}: {target_url} (depth={depth}, limit={limit})")
+            all_urls, parameterized_urls = await crawler.crawl()
+            
+            # Always include the root target_url
+            if target_url not in all_urls:
+                all_urls.insert(0, target_url)
+            
+            # Cache the result
+            if scan_job_id:
+                self._crawl_cache[scan_job_id] = (all_urls, parameterized_urls)
+                
+            return all_urls, parameterized_urls
+        except Exception as e:
+            logger.error(f"Crawl failed for scan {scan_job_id}: {e}")
+            # Return empty lists so tools know crawling failed completely
+            return [], []
     
     def check_tool_dependencies(self, tool_ids: List[str]) -> Tuple[bool, List[str]]:
         """
@@ -247,8 +308,8 @@ class ToolExecutor:
                 # Check common locations (same as individual tool methods)
                 possible_paths = []
                 
-                # Go tools (nuclei, httpx, ffuf, dalfox) are typically in ~/go/bin
-                if tool_id in ["nuclei", "httpx", "ffuf", "dalfox"]:
+                # Go tools (nuclei, httpx, dalfox) are typically in ~/go/bin
+                if tool_id in ["nuclei", "httpx", "dalfox"]:
                     possible_paths.extend([
                         os.path.expanduser("~/go/bin/" + binary_name),
                         os.path.expanduser("~/.local/thandev-tools/bin/" + binary_name),
@@ -281,6 +342,7 @@ class ToolExecutor:
                                 break
                         else:
                             # For commands in PATH, use 'which' to find them
+                            # Note: This is in a non-async function, so we use subprocess.run directly
                             check_result = subprocess.run(
                                 ["which", binary_path],
                                 capture_output=True,
@@ -401,13 +463,18 @@ class ToolExecutor:
             try:
                 from jsonschema import Draft202012Validator, ValidationError as SchemaValidationError
                 
+                # Filter out system properties (timeout_seconds, scan_level) before validation
+                # These are added by the planner but may not be in the schema
+                system_props = {"timeout_seconds", "scan_level", "timeout_sec"}
+                filtered_params = {k: v for k, v in params.items() if k not in system_props}
+                
                 # Ensure additionalProperties is false for strict validation
                 strict_schema = dict(params_schema)
                 if "additionalProperties" not in strict_schema:
                     strict_schema["additionalProperties"] = False
                 
                 validator = Draft202012Validator(strict_schema)
-                validator.validate(params)
+                validator.validate(filtered_params)
             except SchemaValidationError as e:
                 raise ValueError(
                     f"Invalid params for {tool_id}/{mode_id}: {e.message}. "
@@ -421,15 +488,25 @@ class ToolExecutor:
         # This is where we convert catalog modes to internal tool parameters
         internal_kwargs = self._map_mode_to_internal_params(tool_id, mode_id, params, mode_config)
         
+        # CRITICAL: Extract timeout_seconds and scan_level from params if provided
+        # These are passed from backend via runner_client.py
+        if "timeout_seconds" in params:
+            internal_kwargs["timeout_seconds"] = params["timeout_seconds"]
+            logger.info(f"Using timeout_seconds={params['timeout_seconds']} from params for {tool_id}")
+        
+        if "scan_level" in params:
+            # Use scan_level from params (more accurate than inferring from mode_id)
+            scan_level = params["scan_level"]
+            logger.info(f"Using scan_level={scan_level} from params for {tool_id}")
+        else:
+            # Fallback: Determine scan_level from mode_id (for backward compatibility)
+            scan_level = self._infer_scan_level_from_mode(mode_id)
+        
         # Add metadata
         if scan_job_id:
             internal_kwargs["scan_job_id"] = scan_job_id
         if job_dir:
             internal_kwargs["scan_job_dir"] = job_dir
-        
-        # Determine scan_level from mode_id (for backward compatibility)
-        # This is a temporary mapping until we fully remove scan_level dependency
-        scan_level = self._infer_scan_level_from_mode(mode_id)
         
         logger.info(f"Executing tool_id={tool_id}, mode_id={mode_id} on {target_url}")
         
@@ -441,9 +518,13 @@ class ToolExecutor:
             tool_runner = self.supported_tools[tool_id]
             result = await tool_runner(target_url, scan_level, **internal_kwargs)
             
-            # Calculate and add execution time
-            execution_time = (datetime.utcnow() - start_time).total_seconds()
-            result["execution_time"] = execution_time
+            # Calculate and add execution time ONLY if tool didn't provide it
+            # This prevents overwriting accurate subprocess-only timing with wall-clock time that includes setup overhead
+            if "execution_time" not in result:
+                execution_time = (datetime.utcnow() - start_time).total_seconds()
+                result["execution_time"] = execution_time
+                logger.debug(f"Tool {tool_id} did not provide execution_time, using wall-clock: {execution_time:.2f}s")
+            
             result["success"] = result.get("success", True)  # Default to True if not set
             
             return result
@@ -548,10 +629,33 @@ class ToolExecutor:
             elif mode_id == "aggressive":
                 internal["aggressiveness"] = "high"
         
-        # Pass through timeout if specified in constraints
-        constraints = mode_config.get("constraints", {})
-        if "max_timeout_sec" in constraints:
-            internal["timeout_seconds"] = constraints["max_timeout_sec"]
+        elif tool_id == "zap":
+            # Map mode_id and params
+            internal["mode_id"] = mode_id
+            if "max_depth" in params:
+                internal["max_depth"] = params["max_depth"]
+            if "max_children" in params:
+                internal["max_children"] = params["max_children"]
+            if "policy" in params:
+                internal["policy"] = params["policy"]
+            if "max_duration" in params:
+                internal["max_duration"] = params["max_duration"]
+        
+        # CRITICAL: Pass through timeout from params (set by backend via runner_client)
+        # This takes precedence over constraints since it's based on actual scan level
+        if "timeout_seconds" in params:
+            internal["timeout_seconds"] = params["timeout_seconds"]
+            logger.debug(f"Using timeout_seconds={params['timeout_seconds']} from params for {tool_id}/{mode_id}")
+        elif "timeout_sec" in params:
+            # Also check for timeout_sec (alternative naming)
+            internal["timeout_seconds"] = params["timeout_sec"]
+            logger.debug(f"Using timeout_seconds={params['timeout_sec']} from params (timeout_sec) for {tool_id}/{mode_id}")
+        else:
+            # Fallback: Pass through timeout if specified in constraints
+            constraints = mode_config.get("constraints", {})
+            if "max_timeout_sec" in constraints:
+                internal["timeout_seconds"] = constraints["max_timeout_sec"]
+                logger.debug(f"Using timeout_seconds={constraints['max_timeout_sec']} from constraints for {tool_id}/{mode_id}")
         
         return internal
     
@@ -635,6 +739,25 @@ class ToolExecutor:
             profile: profile name from tool config (e.g., "basic_web", "pro_web", "advanced_web")
                     If provided, uses NUCLEI_PROFILE_TAGS to determine which tags to use
         """
+        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        
+        # 1. Crawl first to get all endpoints
+        logger.info(f"Crawling target for Nuclei scan {scan_job_id}...")
+        all_urls, _ = await self._crawl_target(target_url, scan_job_id, scan_level)
+        logger.info(f"Nuclei will scan {len(all_urls)} URLs found by crawler")
+        
+        if not all_urls:
+            logger.warning(f"No URLs found for Nuclei scan {scan_job_id} (crawler failed or returned nothing). Skipping Nuclei.")
+            return {
+                "tool_name": "nuclei",
+                "output": "[]",
+                "exit_code": 0,
+                "command": "skipped",
+                "timed_out": False,
+                "error": "Crawler found no URLs (target likely unreachable)",
+                "success": False # Mark as failure to alert user, but cleanly
+            }
+        
         # Check if nuclei is installed
         # Try common locations for nuclei (in order of preference)
         nuclei_binary = None
@@ -655,7 +778,7 @@ class ToolExecutor:
                         break
                 else:
                     # Check if command exists in PATH
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=2,
@@ -669,16 +792,19 @@ class ToolExecutor:
                 continue
         
         if not nuclei_binary:
+            error_msg = "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest (ensure ~/go/bin is in PATH)"
+            logger.error(f"nuclei binary not found: {error_msg}")
             return {
                 "tool_name": "nuclei",
                 "output": "",
                 "exit_code": -1,
-                "error": "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest (ensure ~/go/bin is in PATH)",
+                "error": error_msg,
                 "command": "nuclei -version",
+                "success": False,
             }
         
         try:
-            check_result = subprocess.run(
+            check_result = await asyncio.to_thread(subprocess.run,
                 [nuclei_binary, "-version"],
                 capture_output=True,
                 timeout=5,
@@ -693,6 +819,7 @@ class ToolExecutor:
                 "exit_code": -1,
                 "error": "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
                 "command": "nuclei -version",
+                "success": False,
             }
         
         # Determine severity levels based on scan level
@@ -715,33 +842,37 @@ class ToolExecutor:
             logger.info(f"Using Nuclei profile '{profile}' with tags: {tags_list}")
         else:
             # Fallback to scan_level-based tags if profile not provided or not found
+            # CRITICAL: Always include "xss" tag to ensure XSS detection works
+            # NOTE: "headless" removed from both pro and advanced due to Chrome timeout issues
             tags_map = {
-                "basic": "cve,vulnerability,exposure",
-                "pro": "cve,vulnerability,exposure,misconfig,default-login",
-                "advanced": "cve,vulnerability,exposure,misconfig,default-login,tech,ssl",
+                "basic": "cve,vulnerability,exposure,xss",  # Fast for basic
+                "pro": "cve,vulnerability,exposure,misconfig,xss,sqli,ssrf,ssti,xxe,lfi,rfi,path-traversal,cmdi",  # Removed headless - completes in ~5-10 min
+                "advanced": "cve,vulnerability,exposure,misconfig,xss,sqli,ssrf,ssti,xxe,lfi,rfi,path-traversal,cmdi,idor,csrf,cors,tech,ssl",  # Removed headless due to Chrome timeout issues
             }
             template_tags = tags_map.get(scan_level, tags_map["basic"])
-            if profile:
-                logger.warning(f"Nuclei profile '{profile}' not found in NUCLEI_PROFILE_TAGS, falling back to scan_level-based tags")
+            
+            # Log the tags being used
+            logger.info(f"Using fallback tags for {scan_level} scan: {template_tags}")
         
         # Nuclei v3.4.10 command flags:
-        # -u: target URL (required)
         # -severity: filter by severity levels
-        # -tags: filter by template tags (cve, vulnerability, etc.) - only if tags are available
-        # -jsonl: output JSON Lines format (one JSON object per line)
-        # -silent: suppress non-JSON output (logs go to stderr)
-        # -rate-limit: limit requests per second (avoid overwhelming target)
+        # -tags: filter by template tags (cve, vulnerability, etc.)
+        # -jsonl: output JSON Lines format
+        # -silent: suppress non-JSON output
+        # -rate-limit: limit requests per second (lower for basic scans)
         # -timeout: timeout per request in seconds
         # -retries: number of retries for failed requests
-        # DO NOT use -json (not supported in v3.4.10)
-        # DO NOT use -t with template paths (causes template update output)
+        # NOTE: WE DO NOT USE -u HERE, we use STDIN to feed multiple URLs
+        
+        # Adjust rate limit based on scan level (basic = low rate, pro/advanced = higher)
+        rate_limit = "30" if scan_level == "basic" else "50"
+        
         cmd = [
             nuclei_binary,  # Use the found binary path
-            "-u", target_url,
             "-severity", severity_levels,
             "-jsonl",
             "-silent",
-            "-rate-limit", "50",  # 50 requests per second
+            "-rate-limit", rate_limit,  # Lower rate for basic scans
             "-timeout", "10",  # 10 second timeout per request
             "-retries", "1",  # Retry once on failure
         ]
@@ -750,20 +881,71 @@ class ToolExecutor:
         if template_tags:
             cmd.extend(["-tags", template_tags])
         
-        # Get scan job ID from kwargs if available for better logging
-        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        logger.info("Nuclei v3.4.10 command for scan %s: %s (targets: %d)", 
+                   scan_job_id, " ".join(cmd), len(all_urls))
         
-        logger.info("Nuclei v3.4.10 command for scan %s: %s", scan_job_id, " ".join(cmd))
+        # Get timeout from kwargs (set by backend via runner_client from scan_timeouts.py)
+        # CRITICAL: This MUST come from kwargs which is set by backend via runner_client
+        # If not provided, fall back to default but log a warning
+        base_timeout = kwargs.get("timeout_seconds")
+        if base_timeout is None:
+            logger.warning(
+                f"Nuclei scan {scan_job_id}: timeout_seconds not provided in kwargs! "
+                f"Using default 300s. This may cause premature timeouts. "
+                f"Available kwargs keys: {list(kwargs.keys())}, scan_level: {scan_level}"
+            )
+            base_timeout = 300
         
-        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        # Adjust timeout for multiple URLs if needed
+        # CRITICAL: Nuclei needs more time per URL when scanning with multiple templates
+        # Use at least 30 seconds per URL (was 10s, too short for comprehensive scanning)
+        timeout_seconds = max(base_timeout, min(3600, len(all_urls) * 30)) # Ensure at least 30s per URL, max 1h
+        logger.info(
+            f"Nuclei timeout for {len(all_urls)} URLs: {timeout_seconds}s "
+            f"(base from kwargs: {base_timeout}s, scan_level: {scan_level})"
+        )
         
         try:
-            result = subprocess.run(
+            # Feed URLs via stdin
+            urls_input = "\n".join(all_urls)
+            
+            # CRITICAL: Log what we're about to send to nuclei
+            logger.info(
+                f"Nuclei scan {scan_job_id}: About to execute with {len(all_urls)} URLs, timeout={timeout_seconds}s"
+            )
+            if len(all_urls) > 0:
+                logger.info(
+                    f"Nuclei scan {scan_job_id}: URLs to scan (first 10): {all_urls[:10]}"
+                )
+            logger.debug(
+                f"Nuclei scan {scan_job_id}: Full command: {' '.join(cmd)}"
+            )
+            
+            # Track execution start time
+            import time
+            exec_start_time = time.time()
+
+            # Use asyncio.to_thread to prevent blocking event loop
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
+                input=urls_input,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
+            )
+
+            exec_duration = time.time() - exec_start_time
+            logger.info(
+                f"Nuclei scan {scan_job_id}: Execution completed in {exec_duration:.2f}s "
+                f"(timeout was {timeout_seconds}s, exit_code={result.returncode})"
+            )
+            
+            # CRITICAL: If execution was suspiciously fast, log warning
+            if exec_duration < 5.0 and len(all_urls) > 5:
+                logger.warning(
+                    f"Nuclei scan {scan_job_id}: Execution completed in {exec_duration:.2f}s which is "
+                    f"suspiciously fast for {len(all_urls)} URLs. This might indicate an error."
             )
             
             # Calculate sizes
@@ -860,14 +1042,20 @@ class ToolExecutor:
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
                 "success": True,  # Explicitly mark as successful
+                "execution_time": exec_duration,  # Accurate subprocess-only execution time
             }
         except subprocess.TimeoutExpired:
+            # Calculate execution time even on timeout
+            exec_duration = time.time() - exec_start_time
+            logger.warning(f"Nuclei scan {scan_job_id} timed out after {timeout_seconds} seconds ({timeout_seconds // 60} minutes, actual: {exec_duration:.2f}s)")
             return {
                 "tool_name": "nuclei",
                 "output": "",
                 "exit_code": -1,
-                "error": "Tool execution timed out after 30 minutes",
+                "error": f"Tool execution timed out after {timeout_seconds} seconds ({timeout_seconds // 60} minutes)",
                 "command": " ".join(cmd),
+                "timed_out": True,
+                "execution_time": exec_duration,  # Actual time before timeout
             }
         except Exception as e:
             logger.error(f"Nuclei execution error: {e}")
@@ -897,10 +1085,38 @@ class ToolExecutor:
             raise ValueError(f"Invalid URL: {target_url}")
         
         # Determine scan intensity based on level
+        # OPTIMIZED: Reduced port counts to prevent timeouts while maintaining good coverage
+        # - Basic: Top 50 ports (fast, covers ~80% of common services)
+        # - Pro: Top 100 ports (balanced, covers ~95% of common services)
+        # - Advanced: Top 500 ports (comprehensive, covers ~99% of services)
         scan_map = {
-            "basic": ["--top-ports", "100", "-sT", "-Pn", "-sV"],
-            "pro": ["-sT", "-Pn", "-sV", "-sC", "--top-ports", "1000"],
-            "advanced": ["-sT", "-Pn", "-sV", "-sC", "-A", "-p-"],
+            "basic": [
+                "-sT",              # TCP connect scan (no root needed)
+                "-Pn",              # Skip host discovery
+                "--top-ports", "50",  # Reduced from 100 for speed
+                "-sV",              # Version detection
+                "--version-intensity", "2",  # Light version probing
+                "-T4",              # Aggressive timing (faster)
+            ],
+            "pro": [
+                "-sT",              # TCP connect scan
+                "-Pn",              # Skip host discovery
+                "--top-ports", "100",  # Reduced from 1000 (critical fix!)
+                "-sV",              # Version detection
+                "--version-intensity", "3",  # Medium version probing
+                "-sC",              # Default scripts
+                "-T4",              # Aggressive timing
+            ],
+            "advanced": [
+                "-sT",              # TCP connect scan
+                "-Pn",              # Skip host discovery
+                "--top-ports", "500",  # Reduced from 10000
+                "-sV",              # Version detection
+                "--version-intensity", "5",  # Thorough version probing
+                "-sC",              # Default scripts
+                "-A",               # Enable OS detection, traceroute
+                "-T4",              # Aggressive timing
+            ],
         }
         
         scan_args = scan_map.get(scan_level, scan_map["basic"])
@@ -911,12 +1127,21 @@ class ToolExecutor:
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            # Track execution start time
+            import time
+            exec_start_time = time.time()
+            
+            # Use asyncio.to_thread to prevent blocking event loop
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout_seconds,
             )
+            
+            exec_duration = time.time() - exec_start_time
+            logger.info(f"nmap execution completed in {exec_duration:.2f}s for {hostname}")
             
             return {
                 "tool_name": "nmap",
@@ -924,9 +1149,12 @@ class ToolExecutor:
                 "exit_code": result.returncode,
                 "command": " ".join(cmd),
                 "success": result.returncode == 0,
+                "execution_time": exec_duration,  # Accurate subprocess-only execution time
             }
         except subprocess.TimeoutExpired:
-            logger.warning(f"nmap execution timed out after {timeout_seconds} seconds for {hostname}")
+            # Calculate execution time even on timeout
+            exec_duration = time.time() - exec_start_time
+            logger.warning(f"nmap execution timed out after {timeout_seconds} seconds for {hostname} (actual: {exec_duration:.2f}s)")
             return {
                 "tool_name": "nmap",
                 "output": "",
@@ -935,6 +1163,7 @@ class ToolExecutor:
                 "command": " ".join(cmd),
                 "timed_out": True,
                 "success": False,
+                "execution_time": exec_duration,  # Actual time before timeout
             }
         except FileNotFoundError:
             logger.error("nmap binary not found in PATH")
@@ -970,13 +1199,14 @@ class ToolExecutor:
         
         target = f"{hostname}:{port}"
         
-        cmd = ["sslscan", "--json", target]
+        # Note: sslscan doesn't support --json flag, it outputs text with ANSI colors
+        cmd = ["sslscan", target]
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1010,7 +1240,7 @@ class ToolExecutor:
         ]
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1050,17 +1280,20 @@ class ToolExecutor:
         
         # Try common locations for ProjectDiscovery httpx
         # Check ~/go/bin first (most common location) before PATH to avoid Python httpx
+        # Also check ~/.local/bin which is common in user installations
         possible_paths = [
             os.path.expanduser("~/go/bin/httpx"),  # Go bin directory (check first!)
+            os.path.expanduser("~/.local/bin/httpx"),  # User local bin (common location)
             "/usr/local/bin/httpx",
             "/usr/local/bin/httpx-projectdiscovery",
+            "/usr/bin/httpx",  # System bin
             "httpx",  # In PATH (check last to avoid Python httpx)
         ]
         
         for binary_path in possible_paths:
             try:
                 test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
-                test_result = subprocess.run(
+                test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
                     timeout=5,
@@ -1083,13 +1316,15 @@ class ToolExecutor:
                 continue
         
         if not httpx_binary:
-            logger.warning("ProjectDiscovery httpx not found. System has Python httpx (HTTP client), not ProjectDiscovery httpx (security scanner)")
+            error_msg = "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH."
+            logger.error(f"httpx binary not found: {error_msg}")
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
-                "error": "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH.",
+                "error": error_msg,
                 "command": "httpx -u <url> -json",
+                "success": False,
             }
         
         # httpx (ProjectDiscovery) command flags:
@@ -1120,7 +1355,7 @@ class ToolExecutor:
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1177,6 +1412,7 @@ class ToolExecutor:
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
+                    "success": False,
                 }
             
             # Success case (even with non-zero exit if we have output)
@@ -1193,6 +1429,7 @@ class ToolExecutor:
                 "output": result.stdout,
                 "exit_code": exit_code,  # Return actual exit code even if we treat as success
                 "command": " ".join(cmd),
+                "success": True,  # Explicitly mark as successful
             }
         except subprocess.TimeoutExpired:
             return {
@@ -1201,15 +1438,18 @@ class ToolExecutor:
                 "exit_code": -1,
                 "error": "Tool execution timed out after 10 minutes",
                 "command": " ".join(cmd),
+                "success": False,
+                "timed_out": True,
             }
         except Exception as e:
-            logger.error(f"httpx execution error: {e}")
+            logger.error(f"httpx execution error: {e}", exc_info=True)
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
                 "error": f"httpx execution failed: {str(e)}",
                 "command": " ".join(cmd),
+                "success": False,
             }
     
     # TODO: Vulnerability classes covered by ffuf:
@@ -1248,7 +1488,7 @@ class ToolExecutor:
                         break
                 else:
                     # Check if command exists in PATH
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=2,
@@ -1275,7 +1515,7 @@ class ToolExecutor:
         
         # Verify ffuf works
         try:
-            check_result = subprocess.run(
+            check_result = await asyncio.to_thread(subprocess.run,
                 [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
@@ -1420,7 +1660,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -1537,8 +1777,71 @@ class ToolExecutor:
         Optional kwargs:
             timeout_seconds: timeout in seconds (default: 900 for Pro, 1800 for Advanced)
         """
-        # Check if dalfox is installed
+        from app.utils.param_harvester import ParamHarvester, create_fallback_targets
+        
         scan_job_id = kwargs.get("scan_job_id", "unknown")
+        scan_job_dir = kwargs.get("scan_job_dir")
+        
+        # 1. Harvest parameterized requests from ZAP/crawler outputs first
+        logger.info(f"Harvesting parameterized endpoints for Dalfox scan {scan_job_id}: {target_url}")
+        harvester = ParamHarvester(job_dir=scan_job_dir)
+        
+        # Try to harvest from job directory (ZAP output, etc.)
+        if scan_job_dir:
+            harvested_count = harvester.harvest_from_job_dir()
+            logger.info(f"Dalfox scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
+        
+        # 2. Also crawl to get additional endpoints
+        logger.info(f"Crawling target for Dalfox scan {scan_job_id}: {target_url} (scan_level: {scan_level})")
+        all_urls, parameterized_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
+        
+        # Add crawler results to harvester
+        if parameterized_urls:
+            crawler_count = harvester.harvest_from_crawler_output(parameterized_urls)
+            logger.info(f"Dalfox scan {scan_job_id}: Added {crawler_count} URLs from crawler")
+        
+        # Get all harvested parameterized URLs
+        harvested_param_urls = harvester.get_parameterized_urls()
+        
+        # Combine harvested URLs with crawler results
+        combined_urls = set(all_urls)
+        combined_urls.update(harvested_param_urls)
+        
+        # CRITICAL: If no parameterized URLs were found, create fallback targets
+        if not harvested_param_urls and not parameterized_urls:
+            logger.warning(
+                f"Dalfox scan {scan_job_id}: No parameterized URLs found from harvester or crawler! "
+                f"Creating fallback test parameters."
+            )
+            fallback_urls = create_fallback_targets(target_url)
+            combined_urls.update(fallback_urls)
+            logger.info(f"Dalfox scan {scan_job_id}: Added {len(fallback_urls)} fallback parameterized URLs")
+        
+        # Convert back to list and ensure target URL is included
+        all_urls = list(combined_urls)
+        
+        # CRITICAL: Always ensure we have at least the target URL
+        if not all_urls:
+            logger.warning(
+                f"Dalfox scan {scan_job_id}: No URLs found at all! "
+                f"Will test target URL directly: {target_url}"
+            )
+            all_urls = [target_url]
+        
+        # Ensure target URL is in the list
+        if target_url not in all_urls:
+            all_urls.append(target_url)
+            logger.info(f"Dalfox scan {scan_job_id}: Added target URL to scan list: {target_url}")
+        
+        # Get stats
+        harvester_stats = harvester.get_stats()
+        logger.info(
+            f"Dalfox scan {scan_job_id}: Will scan {len(all_urls)} URLs total "
+            f"({harvester_stats['total_requests']} from harvester with {harvester_stats['total_parameters']} params, "
+            f"{len(parameterized_urls)} from crawler)."
+        )
+        
+        # Check if dalfox is installed
         logger.info(f"Checking dalfox availability for scan {scan_job_id}")
         
         # Try common locations for dalfox
@@ -1562,7 +1865,7 @@ class ToolExecutor:
                         break
                 else:
                     # For commands in PATH, use 'which' to find them
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=5,
@@ -1590,47 +1893,85 @@ class ToolExecutor:
                 "timed_out": False,
             }
         
-        # Get timeout from config (default: 900 for Pro, 1800 for Advanced)
-        default_timeout = 300  # 5 minutes for all scan levels
-        timeout = kwargs.get("timeout_seconds", default_timeout)
+        # Determine aggressiveness level (default: medium)
+        aggressiveness = kwargs.get("aggressiveness", "medium")
         
-        # Dalfox command flags:
-        # url: target URL (required)
-        # --silence: suppress banner and non-essential output
-        # --format json: output JSON format (one JSON object per line)
-        # --mining-dict: use parameter mining dictionary
-        # --mining-dom: enable DOM-based parameter mining
-        # --follow-redirects: follow HTTP redirects
-        # --deep-domxss: enable deep DOM XSS analysis
-        # --detailed-analysis: perform detailed parameter analysis
-        # --grep: filter results by grep patterns (common XSS indicators)
-        # --only-poc: only show findings with proof-of-concept (more reliable findings)
-        # --waf-evasion: use WAF evasion techniques
-        # --user-agent: set custom user agent to avoid blocking
+        # Determine timeout based on scan level and number of URLs
+        # CRITICAL: Use timeout from kwargs (set by backend via runner_client from scan_timeouts.py)
+        # If not provided, calculate based on URLs and scan level but log a warning
+        timeout = kwargs.get("timeout_seconds")
+        if timeout is None:
+            logger.warning(
+                f"Dalfox scan {scan_job_id}: timeout_seconds not provided in kwargs! "
+                f"Using calculated default. This may cause premature timeouts. "
+                f"Available kwargs keys: {list(kwargs.keys())}"
+            )
+            base_timeout_per_url = 30  # 30 seconds per URL
+            # Calculate dynamic timeout based on number of URLs
+            timeout = min(3600, max(300, len(all_urls) * base_timeout_per_url))
+        else:
+            logger.info(
+                f"Dalfox scan {scan_job_id}: Using timeout_seconds={timeout}s from kwargs "
+                f"(scan_level: {scan_level})"
+            ) 
+            
+        # Enforce minimums for high-intensity scans with headless browser
+        # Always apply this check to override any low default passed in kwargs
+        # Ensure case-insensitive comparison
+        scan_level_lower = scan_level.lower() if scan_level else "standard"
         
-        # Check if URL has query parameters - if not, Dalfox will use mining-dict to discover them
-        from urllib.parse import urlparse, parse_qs
-        parsed_url = urlparse(target_url)
-        has_query_params = bool(parse_qs(parsed_url.query))
+        # Check if deep-domxss is enabled (adds browser overhead)
+        has_deep_domxss = scan_level_lower in ("pro", "advanced")
         
-        # Build comprehensive Dalfox command with all XSS testing options
+        if scan_level_lower == "advanced":
+            timeout = max(timeout, 900)  # Min 15m for advanced with headless browser
+        elif scan_level_lower == "pro":
+            timeout = max(timeout, 600)  # Min 10m for pro with headless browser
+            
+        logger.info(f"Dalfox timeout calculated: {timeout} seconds (level: {scan_level})")
+        
+        # Build dalfox command
+        # Use PIPE mode to scan multiple URLs found by crawler
+        # CRITICAL: Include all XSS detection flags for maximum coverage
+        # Note: Dalfox has built-in grepping that detects XSS indicators automatically
+        # Note: --mining-all flag doesn't exist, use --mining-dict and --mining-dom instead
         cmd = [
             dalfox_binary,
-            "url", target_url,
-            "--silence",
-            "--format", "json",
-            "--mining-dict",  # Dictionary-based parameter mining
-            "--mining-dom",  # DOM-based parameter mining for better discovery
-            "--follow-redirects",
-            "--deep-domxss",  # Deep DOM XSS analysis
-            # Note: --grep expects a file path, not a string, so we skip it
-            # Dalfox has built-in grepping that will detect XSS indicators
+            "pipe",
+            "--silence",  # Suppress banner/progress
+            "--format", "json",  # JSON output for parsing
+            "--follow-redirects",  # Follow redirects to find XSS
+            "--mining-dict",  # Parameter mining from dictionaries
+            "--mining-dom",  # DOM-based parameter mining (lightweight)
+            # Note: --mining-all doesn't exist in dalfox, removed
             "--only-poc", "g,v",  # Only show findings with proof-of-concept (grep + verified)
-            "--waf-evasion",  # Use WAF evasion techniques
-            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid blocking
-            "--remote-payloads", "portswigger,payloadbox",  # Use comprehensive payload lists from PortSwigger and PayloadBox
-            "--worker", "50",  # Use 50 parallel workers for faster scanning
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",  # Realistic UA to avoid blocking
         ]
+        
+        # Add scan-level specific options
+        if scan_level_lower == "advanced":
+            cmd.extend([
+                "--worker", "100",  # More workers for aggressive mode
+                "--waf-evasion",  # WAF evasion techniques
+                "--remote-payloads", "portswigger,payloadbox",  # Use remote payload lists
+                # NOTE: --deep-domxss removed due to headless Chrome timeout issues
+                # Headless browsers spawn child processes that don't respect subprocess timeout
+                # causing orphaned Chrome processes and early termination
+                "--context-aware",  # Context-aware payload selection
+            ])
+            logger.info(f"Dalfox Advanced scan without headless (timeout: {timeout}s)")
+        elif scan_level_lower == "pro":
+            cmd.extend([
+                "--worker", "50",  # Moderate workers
+                "--waf-evasion",  # WAF evasion techniques
+                # NOTE: --deep-domxss removed due to headless Chrome timeout issues
+            ])
+            logger.info(f"Dalfox Pro scan without headless (timeout: {timeout}s)")
+        else:  # basic
+            cmd.extend([
+                "--worker", "25",  # Fewer workers for basic scan
+            ])
+            # Basic scans don't use headless (faster, but won't detect DOM XSS)
         
         # Add custom payload file if it exists
         payload_file = Path(os.getenv("PAYLOADS_DIR", "/opt/thandev/payloads")) / "xss-payloads.txt"
@@ -1641,28 +1982,65 @@ class ToolExecutor:
                 extra={"scan_job_id": scan_job_id, "payload_file": str(payload_file)}
             )
         
-        # If URL has no query parameters, add common parameter hints
-        # Dalfox will still discover parameters, but this helps with sites that need specific params
-        if not has_query_params:
-            logger.debug(
-                "Target URL has no query parameters, Dalfox will use parameter mining to discover them",
-                extra={"scan_job_id": scan_job_id, "target_url": target_url}
-            )
-        
-        logger.info("dalfox command for scan %s: %s (timeout: %d seconds)", 
-                   scan_job_id, " ".join(cmd), timeout)
+        logger.info("dalfox command for scan %s: %s (timeout: %d seconds, targets: %d)", 
+                   scan_job_id, " ".join(cmd), timeout, len(all_urls))
         
         try:
-            result = subprocess.run(
+            # Join URLs with newlines for pipe input
+            urls_input = "\n".join(all_urls)
+            
+            # CRITICAL: Log what we're about to send to dalfox
+            logger.info(
+                f"Dalfox scan {scan_job_id}: About to execute with {len(all_urls)} URLs, timeout={timeout}s"
+            )
+            logger.debug(
+                f"Dalfox scan {scan_job_id}: URLs to scan (first 5): {all_urls[:5]}"
+            )
+            logger.debug(
+                f"Dalfox scan {scan_job_id}: Full command: {' '.join(cmd)}"
+            )
+            
+            # Track execution start time
+            import time
+            exec_start_time = time.time()
+
+            # Use asyncio.to_thread to prevent blocking event loop
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
+                input=urls_input,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+            )
+
+            exec_duration = time.time() - exec_start_time
+            logger.info(
+                f"Dalfox scan {scan_job_id}: Execution completed in {exec_duration:.2f}s "
+                f"(timeout was {timeout}s, exit_code={result.returncode})"
             )
             
             exit_code = result.returncode
             stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
             stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
+            
+            # CRITICAL: If execution was suspiciously fast (< 1 second), log warning
+            if exec_duration < 1.0 and len(all_urls) > 0:
+                logger.warning(
+                    f"Dalfox scan {scan_job_id}: Execution completed in {exec_duration:.2f}s which is "
+                    f"suspiciously fast for {len(all_urls)} URLs. This might indicate an error or that "
+                    f"dalfox didn't actually scan. stdout_length={stdout_bytes}, stderr_length={stderr_bytes}, "
+                    f"exit_code={exit_code}"
+                )
+            
+            # Check for suspiciously fast completion (might indicate an error or no actual scanning)
+            if stdout_bytes == 0 and stderr_bytes == 0 and exit_code == 0:
+                logger.warning(
+                    f"Dalfox scan {scan_job_id} completed with no output (stdout/stderr empty). "
+                    f"This might indicate the scan didn't actually run or URLs were invalid. "
+                    f"URLs scanned: {len(all_urls)}"
+                )
+            
             logger.info(
                 "Dalfox scan completed",
                 extra={
@@ -1671,14 +2049,13 @@ class ToolExecutor:
                     "stdout_bytes": stdout_bytes,
                     "stderr_bytes": stderr_bytes,
                     "target_url": target_url,
-                    "has_query_params": has_query_params,
+                    "crawled_urls": len(all_urls),
                     "stdout_preview": result.stdout[:500] if result.stdout else None,
                     "stderr_preview": result.stderr[:500] if result.stderr else None,
                 }
             )
             
-            # Dalfox may exit with non-zero even when it finds XSS issues
-            # Consider it successful if we have output
+            # Rest of the processing logic remains the same...
             is_error = False
             error_msg = None
             
@@ -1712,53 +2089,55 @@ class ToolExecutor:
                         scan_job_id, exit_code
                     )
             
-            # Normalize Dalfox output before returning (for all cases)
-            # This ensures empty placeholder outputs are converted to [] before file writing
+            # Normalize Dalfox output before returning
             normalized_output = _normalize_dalfox_output(result.stdout) if result.stdout else "[]"
             
             if is_error:
                 return {
                     "tool_name": "dalfox",
-                    "output": normalized_output,  # Normalized output
+                    "output": normalized_output,
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
                     "timed_out": False,
+                    "targets_count": len(all_urls),
+                    "meta": {
+                        "harvested_requests": harvester_stats.get("total_requests", 0),
+                        "total_parameters": harvester_stats.get("total_parameters", 0),
+                        "crawler_urls": len(parameterized_urls),
+                    },
                 }
             
-            # Success case
-            if stdout_bytes > 0:
-                logger.info(
-                    "dalfox scan %s successful: found %d bytes of output (XSS issues detected)",
-                    scan_job_id, stdout_bytes
-                )
-            else:
-                logger.info("dalfox scan %s completed: no XSS issues detected (exit_code=%s, stderr_bytes=%d)", 
-                           scan_job_id, exit_code, stderr_bytes)
-            
+            # Mark as successful if we have findings or if exit code is 0
+            # Dalfox may return non-zero even with findings, so check output
+            has_findings = normalized_output and normalized_output.strip() not in ["[]", "[{}]", ""]
             return {
                 "tool_name": "dalfox",
                 "output": normalized_output,
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
                 "timed_out": False,
+                "success": has_findings or exit_code == 0,  # Success if we have findings or exit code is 0
+                "execution_time": exec_duration,  # Accurate subprocess-only execution time
+                "targets_count": len(all_urls),  # Number of URLs scanned
+                "meta": {
+                    "harvested_requests": harvester_stats.get("total_requests", 0),
+                    "total_parameters": harvester_stats.get("total_parameters", 0),
+                    "crawler_urls": len(parameterized_urls),
+                },
             }
         except subprocess.TimeoutExpired as exc:
-            logger.warning("dalfox scan %s timed out after %d seconds (%d minutes). Results may be partial.", 
-                          scan_job_id, timeout, timeout // 60)
-            logger.warning("  Command: %s", " ".join(cmd))
+            logger.warning("dalfox scan %s timed out after %d seconds. Results may be partial.", scan_job_id, timeout)
             return {
                 "tool_name": "dalfox",
-                "output": "[]",  # Normalized empty output
-                "exit_code": None,  # None indicates timeout (not a normal exit code)
-                "error": f"Tool execution timed out after {timeout} seconds ({timeout // 60} minutes)",
+                "output": "[]",
+                "exit_code": None,
+                "error": f"Tool execution timed out after {timeout} seconds",
                 "command": " ".join(cmd),
                 "timed_out": True,
             }
         except Exception as e:
             logger.error(f"dalfox execution error for scan {scan_job_id}: {e}", exc_info=True)
-            logger.error(f"  Command: {' '.join(cmd)}")
-            logger.error(f"  Target URL: {target_url}")
             return {
                 "tool_name": "dalfox",
                 "output": "",
@@ -1773,6 +2152,878 @@ class ToolExecutor:
     # - Database fingerprinting (MySQL, PostgreSQL, Oracle, MSSQL, etc.)
     # - Database enumeration (tables, columns, data extraction)
     # Note: sqlmap is specifically designed for SQL injection detection and exploitation
+    async def _run_zap(self, target_url: str, scan_level: str, **kwargs) -> Dict:
+        """
+        Run OWASP ZAP scans (passive, active, ajax spider) via ZAP API.
+        
+        Optional kwargs:
+            mode_id: "passive_spider", "active_scan", "ajax_spider"
+            max_depth: for spider
+            max_children: for spider
+            policy: for active scan
+            max_duration: for active scan
+        """
+        import requests
+        import time
+        import subprocess
+        from urllib.parse import urlparse
+        from datetime import datetime, timezone
+        import json
+        
+        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        mode_id = kwargs.get("mode_id", "passive_spider")
+        timeout_seconds = kwargs.get("timeout_seconds", 300)  # Default to 5 minutes
+        
+        logger.info(f"Starting ZAP scan {scan_job_id} for {target_url} with mode {mode_id}")
+        
+        # ZAP API URL from environment variable
+        # Default to zap hostname (Docker network DNS resolution)
+        zap_api_url = os.getenv("ZAP_API_URL", "http://zap:8090")
+        
+        # If using hostname, try to resolve it first, fallback to IP
+        if "zap:" in zap_api_url:
+            try:
+                import socket
+                zap_ip = socket.gethostbyname("zap")
+                logger.info(f"Resolved ZAP hostname to IP: {zap_ip}")
+            except (socket.gaierror, Exception) as e:
+                logger.warning(f"Could not resolve 'zap' hostname ({e}), trying to get IP from Docker network")
+                # Try to get ZAP IP from Docker network inspection or use direct IP
+                # For now, we'll increase retries and wait time for DNS to resolve
+                import time
+                time.sleep(2)  # Give DNS a moment to catch up
+        
+        # Ensure ZAP is running and accessible - retry with backoff
+        # Note: ZAP API may require apikey parameter even if disabled, so we add it as empty
+        # CRITICAL: ZAP container may need time to fully start, so we increase retries and delays
+        health_check_url = f"{zap_api_url}/JSON/core/view/version/?apikey="
+        max_retries = 5  # Increased from 3 to 5
+        retry_delay = 3  # Increased from 2 to 3 seconds
+        zap_accessible = False
+        http_session = None
+        
+        for attempt in range(max_retries):
+            try:
+                http_session = requests.Session()
+                http_session.mount('http://', requests.adapters.HTTPAdapter(max_retries=1))
+                response = await asyncio.to_thread(http_session.get, health_check_url, timeout=15)  # Increased timeout from 10 to 15
+                response.raise_for_status()
+                logger.info(f"ZAP API is accessible: {response.json().get('version')}")
+                zap_accessible = True
+                break
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"ZAP health check attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 1.5  # Reduced multiplier from 2 to 1.5 for faster convergence
+                else:
+                    error_msg = f"ZAP API not accessible at {zap_api_url} after {max_retries} attempts: {e}. Ensure ZAP Docker container is running and healthy."
+                    logger.error(error_msg, exc_info=True)
+                    return {
+                        "tool_name": "zap",
+                        "output": "[]",
+                        "exit_code": -1,
+                        "error": error_msg,
+                        "command": f"ZAP API call to {health_check_url}",
+                        "success": False,
+                    }
+        
+        if not zap_accessible or not http_session:
+            return {
+                "tool_name": "zap",
+                "output": "[]",
+                "exit_code": -1,
+                "error": "ZAP API not accessible after retries",
+                "command": f"ZAP API call to {health_check_url}",
+                "success": False,
+            }
+        
+        # CRITICAL FIX: Don't create a new session for each scan
+        # Creating a new session clears the scan tree, preventing URLs from accumulating
+        # ZAP's spider discovers URLs but they're only added to scan tree when accessed through proxy
+        # Since proxy is not accessible, we need URLs to accumulate across scans in the same session
+        # We'll use the default session and not create a new one
+        logger.info("Using default ZAP session (not creating new session to preserve scan tree)")
+        
+        # CRITICAL ISSUE: ZAP's proxy (port 8080) is not accessible in daemon mode
+        # This means URLs cannot be added to scan tree via proxy access
+        # ZAP spider discovers URLs but doesn't automatically add them to scan tree
+        # WORKAROUND: Don't create new session, let URLs accumulate if spider somehow adds them
+        # Also try accessing URLs directly via ZAP's internal HTTP client if available
+        logger.warning("ZAP proxy (port 8080) is not accessible - using workaround: no new session, relying on spider")
+        
+        # Set target context
+        # CRITICAL: Include both the target URL and base URL in context
+        # This ensures spider can work with base URL even if target is a specific page
+        from urllib.parse import urlparse
+        target_parsed = urlparse(target_url)
+        base_url = f"{target_parsed.scheme}://{target_parsed.netloc}/"
+        
+        context_name = f"context_{scan_job_id}"
+        await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/context/action/newContext/?contextName={context_name}&apikey=", timeout=10)
+        
+        # Include base URL in context (for spider starting from root)
+        # Escape special regex characters in URLs (., /, etc.)
+        import re
+        base_url_escaped = re.escape(base_url)
+        await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/context/action/includeInContext/?contextName={context_name}&regex={base_url_escaped}.*&apikey=", timeout=10)
+        # Also include specific target URL if different from base
+        if target_url != base_url:
+            target_url_escaped = re.escape(target_url)
+            await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/context/action/includeInContext/?contextName={context_name}&regex={target_url_escaped}.*&apikey=", timeout=10)
+        
+        logger.info(f"Created ZAP context '{context_name}' for target {target_url} (base: {base_url})")
+        
+        # Enable all passive scanners by default
+        await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/pscan/action/enableAllScanners/?apikey=", timeout=10)
+        
+        # CRITICAL: Configure ZAP to accept invalid SSL certificates for HTTPS targets
+        # This is necessary when ZAP cannot validate certificates due to networking issues
+        try:
+            await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/network/action/setUseClientSockets/?useClientSockets=true&apikey=", timeout=10)
+            logger.info("Configured ZAP to use client sockets for better HTTPS support")
+        except Exception as socket_config_error:
+            logger.debug(f"Failed to configure ZAP client sockets (non-critical): {socket_config_error}")
+        
+        # Try to configure ZAP to accept invalid certificates (if API available)
+        try:
+            # This API may not exist in all ZAP versions, so we catch and continue
+            await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/network/action/setValidateServerCertificates/?validate=false&apikey=", timeout=10)
+            logger.info("Configured ZAP to accept invalid SSL certificates")
+        except Exception as cert_config_error:
+            logger.debug(f"Failed to configure ZAP certificate validation (API may not exist): {cert_config_error}")
+        
+        # CRITICAL: Access the target URL through ZAP proxy BEFORE spidering
+        # This ensures the URL is in ZAP's scan tree and passive scanners can analyze it
+        # ZAP only adds URLs to scan tree when they're accessed through the proxy
+        # Try both 8080 and 8090 as proxy ports (8090 might work if proxy chain is configured)
+        proxy_ports_to_try = [8080, 8090]
+        proxy_accessed = False
+        for proxy_port in proxy_ports_to_try:
+            try:
+                # With host network mode, use localhost instead of zap hostname
+                if "localhost" in zap_api_url or "127.0.0.1" in zap_api_url:
+                    proxy_url = f"http://localhost:{proxy_port}"
+                else:
+                    proxy_url = zap_api_url.replace("/JSON", "").replace(":8090", f":{proxy_port}")
+                logger.info(f"Attempting to access {target_url} via ZAP proxy {proxy_url} to add to scan tree...")
+                
+                # #region agent log
+                try:
+                    debug_log_path = "/app/data/debug.log"
+                    with open(debug_log_path, "a") as f:
+                        import json as json_lib
+                        import time
+                        f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2","location":"tools.py:2190","message":"Before proxy access","data":{"target_url":target_url,"proxy_url":proxy_url,"proxy_port":proxy_port},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+                
+                # Use requests directly for proxy access (this is the proper way to add URLs to scan tree)
+                import requests
+                proxy_dict = {"http": proxy_url, "https": proxy_url}
+                try:
+                    proxy_response = requests.get(target_url, proxies=proxy_dict, timeout=10, allow_redirects=True, verify=False)
+                    logger.info(f"Successfully accessed {target_url} via ZAP proxy on port {proxy_port}, status: {proxy_response.status_code}")
+                    proxy_accessed = True
+                    
+                    # #region agent log
+                    try:
+                        debug_log_path = "/app/data/debug.log"
+                        with open(debug_log_path, "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2","location":"tools.py:2210","message":"After proxy access success","data":{"target_url":target_url,"proxy_url":proxy_url,"status_code":proxy_response.status_code},"timestamp":int(time.time()*1000)})+"\n")
+                    except: pass
+                    # #endregion
+                except Exception as proxy_err:
+                    # #region agent log
+                    try:
+                        debug_log_path = "/app/data/debug.log"
+                        with open(debug_log_path, "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2","location":"tools.py:2223","message":"Proxy access failed","data":{"target_url":target_url,"proxy_url":proxy_url,"error":str(proxy_err),"error_type":type(proxy_err).__name__},"timestamp":int(time.time()*1000)})+"\n")
+                    except: pass
+                    # #endregion
+                    error_str = str(proxy_err)
+                    # Check if this is a network connectivity issue
+                    if "Connection refused" in error_str or "Failed to connect" in error_str or "Name or service not known" in error_str:
+                        logger.error(
+                            f"CRITICAL: Cannot access {target_url} via ZAP proxy on port {proxy_port}: {proxy_err}. "
+                            f"This indicates ZAP container cannot make outbound HTTPS connections. "
+                            f"This is a WSL2/Docker networking or Java TLS configuration issue. "
+                            f"ZAP may still work for HTTP targets or if networking is configured correctly."
+                        )
+                    else:
+                        logger.warning(f"Failed to access {target_url} via ZAP proxy on port {proxy_port}: {proxy_err}")
+                    continue
+                
+                # Wait for ZAP to process and add to scan tree
+                await asyncio.sleep(3)
+                
+                # Verify target URL is now in scan tree
+                try:
+                    urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                    urls_in_tree = urls_check.json().get("urls", [])
+                    target_in_tree = any(target_url in url for url in urls_in_tree)
+                    logger.info(f"After proxy access on port {proxy_port}: scan tree contains {len(urls_in_tree)} URLs, target in tree: {target_in_tree}")
+                    if target_in_tree:
+                        break  # Success - URL is in scan tree
+                except Exception as check_error:
+                    logger.debug(f"Failed to check URLs after proxy access: {check_error}")
+                break  # If we got a response (even if not 200), the proxy is working
+            except requests.exceptions.ProxyError as proxy_error:
+                logger.debug(f"Proxy on port {proxy_port} not accessible: {proxy_error}")
+                continue  # Try next port
+            except Exception as proxy_error:
+                logger.warning(f"Error accessing URL via ZAP proxy on port {proxy_port}: {proxy_error}")
+                # If we got a response (even error), proxy might be working, so break
+                if "status_code" in str(proxy_error) or "502" in str(proxy_error) or "503" in str(proxy_error):
+                    proxy_accessed = True
+                    break
+                continue  # Try next port
+        
+        if not proxy_accessed:
+            logger.warning(f"Could not access URL via ZAP proxy on any port (tried {proxy_ports_to_try}) - will try spider")
+            # Continue - spider will discover URLs (but won't add them to scan tree without proxy)
+        
+        # Start spidering (always do a basic spider first to discover URLs)
+        # CRITICAL: For better spider results, use base URL if target is a specific page
+        # ZAP spider works better when starting from the root of a site
+        from urllib.parse import urlparse
+        target_parsed = urlparse(target_url)
+        spider_start_url = target_url
+        # If target is a specific page (has path beyond root), try using base URL for spider
+        # Check if path has more than just the root (e.g., /login.php has 2 parts: ['', 'login.php'])
+        if target_parsed.path and target_parsed.path != "/" and len([p for p in target_parsed.path.split("/") if p]) > 0:
+            base_url = f"{target_parsed.scheme}://{target_parsed.netloc}/"
+            logger.info(f"Target is a specific page ({target_url}), using base URL for spider: {base_url}")
+            spider_start_url = base_url
+        
+        spider_id = None
+        try:
+            logger.info(f"Starting ZAP spider for {spider_start_url} (original target: {target_url})...")
+            max_depth = kwargs.get("max_depth", 5)
+            max_children = kwargs.get("max_children", 50)
+            # CRITICAL: Always run spider WITH context to ensure discovered URLs are added to scan tree
+            # URLs discovered by spider without context may not be added to scan tree automatically
+            # Using context ensures URLs are in scope and will be added to scan tree
+            spider_response = None
+            spider_id = None
+            try:
+                # Run spider WITH context to ensure URLs are added to scan tree
+                spider_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/spider/action/scan/?url={spider_start_url}&contextName={context_name}&maxDepth={max_depth}&maxChildren={max_children}&apikey=", timeout=timeout_seconds)
+                spider_result = spider_response.json()
+                if "code" in spider_result and spider_result.get("code") != "OK":
+                    # If context fails, try without context as fallback
+                    logger.warning(f"Spider with context failed ({spider_result}), trying without context...")
+                    spider_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/spider/action/scan/?url={spider_start_url}&maxDepth={max_depth}&maxChildren={max_children}&apikey=", timeout=timeout_seconds)
+                    spider_result = spider_response.json()
+                    if "code" in spider_result and spider_result.get("code") != "OK":
+                        raise ValueError(f"Failed to start ZAP spider (tried with and without context): {spider_result}")
+                spider_id = spider_result.get("scan")
+            except Exception as spider_start_error:
+                raise ValueError(f"Failed to start ZAP spider: {spider_start_error}")
+            
+            if not spider_id:
+                raise ValueError(f"Failed to start ZAP spider: {spider_response.text if spider_response else 'No response'}")
+            
+            # Poll spider status
+            start_time = time.time()
+            while True:
+                status_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/spider/view/status/?scanId={spider_id}&apikey=", timeout=10)
+                status_result = status_response.json()
+                status_percent = int(status_result.get("status", "0"))
+                
+                # Also check results count to see if spider is finding URLs
+                try:
+                    results_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/spider/view/results/?scanId={spider_id}&apikey=", timeout=10)
+                    results = results_response.json().get("results", [])
+                    logger.debug(f"ZAP Spider status: {status_percent}%, URLs found so far: {len(results)}")
+                except:
+                    logger.debug(f"ZAP Spider status: {status_percent}%")
+                
+                if status_percent >= 100:
+                    break
+                if time.time() - start_time > timeout_seconds:
+                    raise subprocess.TimeoutExpired(cmd="ZAP Spider", timeout=timeout_seconds)
+                await asyncio.sleep(5)
+            
+            # Check final spider results
+            spider_urls = []
+            try:
+                final_results_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/spider/view/results/?scanId={spider_id}&apikey=", timeout=10)
+                final_results = final_results_response.json().get("results", [])
+                spider_urls = final_results
+                logger.info(f"ZAP Spider completed for {target_url}. Found {len(spider_urls)} URLs via spider results API")
+                
+                # #region agent log
+                try:
+                    debug_log_path = "/app/data/debug.log"
+                    with open(debug_log_path, "a") as f:
+                        import json as json_lib
+                        import time
+                        f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H4","location":"tools.py:2320","message":"Spider results","data":{"target_url":target_url,"spider_urls_count":len(spider_urls),"spider_urls_sample":spider_urls[:5]},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+            except Exception as spider_results_error:
+                logger.warning(f"Failed to get spider results: {spider_results_error}")
+                logger.info(f"ZAP Spider completed for {target_url}")
+            
+            # CRITICAL: Wait a moment for ZAP to process spider results and add URLs to scan tree
+            # Spider results API returns URLs found, but they need time to be added to scan tree
+            if spider_urls:
+                logger.info(f"Waiting 3 seconds for ZAP to process {len(spider_urls)} spider-discovered URLs into scan tree...")
+                await asyncio.sleep(3)
+            
+            # DEBUG: Check how many URLs are in scan tree after waiting
+            urls_in_tree = []
+            try:
+                urls_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                urls_in_tree = urls_response.json().get("urls", [])
+                logger.info(f"ZAP scan tree now contains {len(urls_in_tree)} URLs after spidering (spider found {len(spider_urls)}). Sample URLs: {urls_in_tree[:5]}")
+                # #region agent log
+                try:
+                    debug_log_path = "/app/data/debug.log"
+                    with open(debug_log_path, "a") as f:
+                        import json as json_lib
+                        import time
+                        f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H8","location":"tools.py:2238","message":"After spider - URLs in scan tree","data":{"spider_urls_count":len(spider_urls),"scan_tree_urls_count":len(urls_in_tree),"sample_urls":urls_in_tree[:5]},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+            except Exception as url_check_error:
+                logger.warning(f"Failed to check URLs after spider: {url_check_error}")
+            
+            # CRITICAL: Access discovered URLs through ZAP proxy to ensure they're in scan tree
+            # Spider discovers URLs but doesn't automatically add them - they must be accessed through proxy
+            # Use spider_urls if available (even if not in scan tree yet), otherwise use urls_in_tree
+            urls_to_access = spider_urls if spider_urls else urls_in_tree
+            if urls_to_access and len(urls_in_tree) == 0:
+                # Only access URLs if they're not already in scan tree
+                logger.info(f"Accessing {min(10, len(urls_to_access))} discovered URLs via ZAP proxy to add to scan tree...")
+                accessed_count = 0
+                failed_count = 0
+                import requests
+                # Try both 8080 and 8090 as proxy ports
+                proxy_ports_to_try = [8080, 8090]
+                working_proxy_port = None
+                for proxy_port in proxy_ports_to_try:
+                    try:
+                        test_proxy_url = zap_api_url.replace("/JSON", "").replace(":8090", f":{proxy_port}")
+                        test_proxy_dict = {"http": test_proxy_url, "https": test_proxy_url}
+                        # Test if proxy works
+                        test_response = requests.get("http://testphp.vulnweb.com/", proxies=test_proxy_dict, timeout=3, verify=False)
+                        working_proxy_port = proxy_port
+                        logger.info(f"Found working ZAP proxy on port {proxy_port}")
+                        break
+                    except:
+                        continue
+                
+                if working_proxy_port:
+                    proxy_url = zap_api_url.replace("/JSON", "").replace(":8090", f":{working_proxy_port}")
+                    proxy_dict = {"http": proxy_url, "https": proxy_url}
+                    for url in urls_to_access[:10]:  # Limit to first 10 URLs to avoid timeout
+                        try:
+                            # Access URL through ZAP proxy (this is the proper way to add URLs to scan tree)
+                            proxy_response = requests.get(url, proxies=proxy_dict, timeout=5, allow_redirects=True, verify=False)
+                            accessed_count += 1
+                            logger.debug(f"Successfully accessed {url} via ZAP proxy on port {working_proxy_port}, status: {proxy_response.status_code}")
+                        except Exception as proxy_error:
+                            failed_count += 1
+                            logger.debug(f"Exception accessing {url} via proxy: {proxy_error}")
+                    logger.info(f"Accessed {accessed_count} URLs via ZAP proxy on port {working_proxy_port} (failed: {failed_count})")
+                else:
+                    logger.warning(f"Could not find working ZAP proxy on ports {proxy_ports_to_try} - URLs will not be added to scan tree")
+                # #region agent log
+                try:
+                    debug_log_path = "/app/data/debug.log"
+                    with open(debug_log_path, "a") as f:
+                        import json as json_lib
+                        import time
+                        f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H11","location":"tools.py:2294","message":"After proxy access of spider URLs","data":{"accessed_count":accessed_count,"failed_count":failed_count,"urls_attempted":min(10, len(urls_to_access))},"timestamp":int(time.time()*1000)})+"\n")
+                except: pass
+                # #endregion
+                # Wait for URLs to be processed and passive scanners to analyze
+                await asyncio.sleep(5)
+                
+                # Verify URLs are now in scan tree
+                try:
+                    verify_urls_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                    verify_urls = verify_urls_response.json().get("urls", [])
+                    logger.info(f"After proxy access: scan tree now contains {len(verify_urls)} URLs")
+                    # #region agent log
+                    try:
+                        debug_log_path = "/app/data/debug.log"
+                        with open(debug_log_path, "a") as f:
+                            import json as json_lib
+                            import time
+                            f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H11","location":"tools.py:2315","message":"Scan tree after proxy access","data":{"urls_count":len(verify_urls),"sample_urls":verify_urls[:5]},"timestamp":int(time.time()*1000)})+"\n")
+                    except: pass
+                    # #endregion
+                except Exception as verify_error:
+                    logger.debug(f"Failed to verify URLs after proxy access: {verify_error}")
+            elif len(urls_in_tree) > 0:
+                logger.info(f"URLs already in scan tree ({len(urls_in_tree)}), skipping proxy access")
+        except Exception as e:
+            logger.warning(f"ZAP Spider failed or timed out for {target_url}: {e}", exc_info=True)
+            # Continue with passive scan even if spider fails
+        
+        # Passive Scan (always runs implicitly as ZAP proxies traffic)
+        # CRITICAL: The proxy on port 8090 returns 502 errors, which means ZAP isn't seeing actual HTTP responses
+        # Without real responses, passive scanners can't analyze them and generate alerts
+        # WORKAROUND: Use ZAP's accessUrl API to manually access URLs in scan tree
+        # This should trigger passive scanning on those URLs even if proxy isn't working
+        try:
+            urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+            urls_in_tree = urls_check.json().get("urls", [])
+            if len(urls_in_tree) > 0:
+                logger.info(f"Found {len(urls_in_tree)} URLs in scan tree - accessing them via ZAP API to trigger passive scanning...")
+                accessed_count = 0
+                for url in urls_in_tree[:10]:  # Limit to first 10 URLs
+                    try:
+                        # Use ZAP's accessUrl API to access the URL - this should trigger passive scanning
+                        access_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/accessUrl/?url={url}&followRedirects=true&apikey=", timeout=10)
+                        access_result = access_response.json()
+                        if access_result.get("Result") == "OK":
+                            accessed_count += 1
+                            logger.debug(f"Successfully accessed {url} via ZAP accessUrl API")
+                        else:
+                            logger.debug(f"Failed to access {url}: {access_result}")
+                    except Exception as access_error:
+                        logger.debug(f"Exception accessing {url}: {access_error}")
+                logger.info(f"Accessed {accessed_count} URLs via ZAP accessUrl API to trigger passive scanning")
+                # Wait for passive scanners to process the newly accessed URLs
+                await asyncio.sleep(5)
+            else:
+                logger.warning("ZAP has 0 URLs in scan tree - passive scanners have nothing to analyze")
+        except Exception as url_access_error:
+            logger.warning(f"Failed to access URLs via ZAP API: {url_access_error}")
+        
+        # Wait for passive scan to finish processing alerts
+        logger.info("Waiting for ZAP Passive Scan to complete processing alerts...")
+        start_time = time.time()
+        max_wait_time = 60  # Maximum 60 seconds for passive scan to process
+        while True:
+            records_to_scan = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/pscan/view/recordsToScan/?apikey=", timeout=10)
+            records_count = int(records_to_scan.json().get("recordsToScan", "0"))
+            logger.debug(f"ZAP Passive Scan: {records_count} records remaining to scan")
+            if records_count == 0:
+                break
+            if time.time() - start_time > max_wait_time:
+                logger.warning(f"ZAP Passive Scan timeout after {max_wait_time}s, {records_count} records still pending")
+                break
+            await asyncio.sleep(5)
+        logger.info("ZAP Passive Scan completed processing alerts.")
+        
+        # CRITICAL: Wait additional time after passive scan completes to ensure alerts are fully processed
+        # ZAP may need a moment to finalize alert generation after recordsToScan reaches 0
+        # Also check if we have URLs in scan tree - if not, passive scanners might not have analyzed anything
+        logger.info("Waiting additional 10 seconds for ZAP to finalize alert processing...")
+        await asyncio.sleep(10)
+        
+        # DEBUG: Check scan tree one more time to see if URLs were added
+        try:
+            final_urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+            final_urls = final_urls_check.json().get("urls", [])
+            logger.info(f"Final check: ZAP scan tree contains {len(final_urls)} URLs after passive scan completion")
+        except Exception as final_check_error:
+            logger.debug(f"Failed to check final URLs: {final_check_error}")
+        
+        # CRITICAL WORKAROUND: For passive_spider mode, if we have URLs in scan tree but 0 alerts FOR THIS TARGET,
+        # it means passive scanning isn't working (likely due to proxy issues).
+        # In this case, fall back to active scanning which doesn't require a working proxy.
+        if mode_id == "passive_spider":
+            # Check if we have URLs but no alerts FOR THE CURRENT TARGET - if so, passive scanning isn't working
+            try:
+                alerts_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?apikey=", timeout=10)
+                all_alerts = alerts_check.json().get("alerts", [])
+                urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                current_urls = urls_check.json().get("urls", [])
+                
+                # Filter alerts by target domain to check if we have alerts FOR THIS SPECIFIC TARGET
+                # This prevents false positives from previous scans in the same ZAP session
+                from urllib.parse import urlparse
+                target_parsed = urlparse(target_url)
+                target_domain = target_parsed.netloc or target_parsed.hostname
+                
+                target_alerts = []
+                for alert in all_alerts:
+                    alert_url = alert.get("url", "")
+                    if alert_url:
+                        alert_parsed = urlparse(alert_url)
+                        alert_domain = alert_parsed.netloc or alert_parsed.hostname
+                        # Match if same domain OR if alert URL starts with target URL
+                        if alert_domain == target_domain or alert_url.startswith(target_url):
+                            target_alerts.append(alert)
+                
+                if len(current_urls) > 0 and len(target_alerts) == 0:
+                    logger.warning(
+                        f"ZAP has {len(current_urls)} URLs in scan tree but 0 alerts for target {target_domain}. "
+                        f"Passive scanning isn't working (likely proxy issue). "
+                        f"Falling back to active scanning as workaround."
+                    )
+                    # Fall through to active scan logic below
+                    mode_id = "active_scan"
+                    logger.info("Switching to active scan mode as workaround for passive scanning failure")
+            except Exception as fallback_check_error:
+                logger.debug(f"Failed to check for fallback to active scan: {fallback_check_error}")
+                # Continue with passive_spider mode
+        
+        # Conditional Active Scan or AJAX Spider
+        if mode_id == "active_scan":
+            logger.info(f"Starting ZAP Active Scan for {target_url}...")
+            max_duration = kwargs.get("max_duration", 0)  # 0 means no limit
+            
+            # CRITICAL: Ensure URLs are in scan tree before starting active scan
+            # Active scan requires URLs to be in scan tree, so verify they're there
+            try:
+                urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                urls_in_tree = urls_check.json().get("urls", [])
+                target_in_tree = any(target_url in url or url in target_url for url in urls_in_tree)
+                logger.info(f"Before active scan: scan tree has {len(urls_in_tree)} URLs, target in tree: {target_in_tree}")
+                
+                # If target is not in scan tree, try to add it using ZAP's accessUrl API
+                if not target_in_tree:
+                    logger.warning(f"Target URL {target_url} not in scan tree - attempting to add it via accessUrl API")
+                    try:
+                        access_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/accessUrl/?url={target_url}&followRedirects=true&apikey=", timeout=10)
+                        access_result = access_response.json()
+                        if access_result.get("Result") == "OK":
+                            logger.info(f"Successfully added {target_url} to scan tree via accessUrl API")
+                            await asyncio.sleep(2)  # Wait for URL to be processed
+                        else:
+                            logger.warning(f"Failed to add URL via accessUrl API: {access_result}")
+                    except Exception as access_error:
+                        logger.warning(f"Failed to add URL via accessUrl API: {access_error}")
+                    
+                    # Verify URL is now in scan tree
+                    urls_check2 = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                    urls_in_tree2 = urls_check2.json().get("urls", [])
+                    target_in_tree2 = any(target_url in url or url in target_url for url in urls_in_tree2)
+                    logger.info(f"After accessUrl: scan tree has {len(urls_in_tree2)} URLs, target in tree: {target_in_tree2}")
+            except Exception as url_check_error:
+                logger.debug(f"Failed to check URLs before active scan: {url_check_error}")
+            
+            # Start active scan - URL should now be in scan tree
+            # CRITICAL: Use recurse=true to scan all URLs in the scan tree, not just the target URL
+            # This ensures all discovered URLs are scanned, not just the entry point
+            # CRITICAL: Use inScopeOnly=false to scan all URLs, not just those in scope
+            # This ensures all discovered URLs are scanned
+            active_scan_url = f"{zap_api_url}/JSON/ascan/action/scan/?url={target_url}&recurse=true&inScopeOnly=false"
+            if context_name:
+                active_scan_url += f"&contextName={context_name}"
+            if max_duration > 0:
+                active_scan_url += f"&maxDuration={max_duration}"
+            active_scan_url += "&apikey="
+            
+            logger.info(f"ZAP Active Scan URL: {active_scan_url.replace('apikey=', 'apikey=***')}")
+            
+            active_scan_response = await asyncio.to_thread(http_session.get, active_scan_url, timeout=timeout_seconds)
+            active_scan_result = active_scan_response.json()
+            
+            logger.info(f"ZAP Active Scan API response: {active_scan_result}")
+            
+            # Check for error in response
+            active_scan_id = None
+            if "code" in active_scan_result:
+                error_code = active_scan_result.get("code")
+                if error_code != "OK":
+                    error_msg = active_scan_result.get("message", "Unknown error")
+                    logger.warning(f"ZAP Active Scan failed with code {error_code}: {error_msg}")
+                    # If URL still not found, the spider may not have completed or URL format is wrong
+                    if error_code == "url_not_found":
+                        # Try using just the base URL without path
+                        from urllib.parse import urlparse
+                        parsed = urlparse(target_url)
+                        base_url = f"{parsed.scheme}://{parsed.netloc}"
+                        logger.warning(f"URL not in scan tree, trying base URL: {base_url}")
+                        base_scan_url = f"{zap_api_url}/JSON/ascan/action/scan/?url={base_url}&apikey="
+                        base_scan_response = await asyncio.to_thread(http_session.get, base_scan_url, timeout=timeout_seconds)
+                        base_scan_result = base_scan_response.json()
+                        logger.info(f"ZAP Active Scan base URL API response: {base_scan_result}")
+                        if base_scan_result.get("code") == "OK":
+                            active_scan_id = base_scan_result.get("scan")
+                            logger.info(f"Started ZAP Active Scan using base URL: {base_url}, scanId: {active_scan_id}")
+                        else:
+                            logger.error(f"Failed to start ZAP Active Scan with base URL: {base_scan_result}")
+                            raise ValueError(f"Failed to start ZAP Active Scan: {error_msg} (code: {error_code}). URL may not be accessible or spider didn't complete.")
+                    else:
+                        logger.error(f"ZAP Active Scan failed: {error_msg} (code: {error_code})")
+                        raise ValueError(f"Failed to start ZAP Active Scan: {error_msg} (code: {error_code})")
+                else:
+                    active_scan_id = active_scan_result.get("scan")
+                    logger.info(f"Started ZAP Active Scan for {target_url}, scanId: {active_scan_id}")
+            else:
+                active_scan_id = active_scan_result.get("scan")
+                if active_scan_id:
+                    logger.info(f"Started ZAP Active Scan for {target_url}, scanId: {active_scan_id}")
+                else:
+                    logger.warning(f"ZAP Active Scan response missing scanId: {active_scan_result}")
+            
+            if not active_scan_id:
+                logger.error(f"Failed to start ZAP Active Scan: No scanId in response. Response: {active_scan_response.text}")
+                raise ValueError(f"Failed to start ZAP Active Scan: {active_scan_response.text}")
+            
+            # Poll active scan status
+            logger.info(f"Polling ZAP Active Scan status for scanId: {active_scan_id}")
+            start_time = time.time()
+            poll_count = 0
+            
+            # CRITICAL: Wait a moment after starting the scan before checking status
+            # ZAP needs time to initialize the scan and start making requests
+            # Also verify the scan actually started by checking if it's in the scans list
+            await asyncio.sleep(3)
+            
+            # Verify scan actually started
+            try:
+                verify_scans_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
+                verify_scans = verify_scans_response.json().get("scans", [])
+                verify_scan = next((s for s in verify_scans if s.get("id") == str(active_scan_id)), None)
+                if verify_scan:
+                    initial_req_count = int(verify_scan.get("reqCount", "0"))
+                    initial_state = verify_scan.get("state", "UNKNOWN")
+                    initial_progress = verify_scan.get("progress", "0")
+                    logger.info(f"Verified active scan {active_scan_id} started: state={initial_state}, progress={initial_progress}%, reqCount={initial_req_count}")
+                    if initial_state == "FINISHED" and initial_req_count == 0:
+                        logger.error(
+                            f"Active scan {active_scan_id} finished immediately with 0 requests - ZAP cannot access URLs to test them. "
+                            f"This indicates a network/configuration issue. ZAP container may not be able to reach external URLs. "
+                            f"Target: {target_url}"
+                        )
+                        # CRITICAL: Since active scan can't access URLs, we should still try to get any alerts that might exist
+                        # from passive scanning or previous scans
+                        try:
+                            # Get all alerts and filter by target
+                            alerts_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?baseurl={target_url}&apikey=", timeout=10)
+                            alerts_data = alerts_response.json()
+                            all_alerts = alerts_data.get("alerts", [])
+                            logger.info(f"Retrieved {len(all_alerts)} total alerts from ZAP (may include alerts from other targets)")
+                            
+                            # Filter alerts by target domain
+                            from urllib.parse import urlparse
+                            target_parsed = urlparse(target_url)
+                            target_domain = target_parsed.netloc or target_parsed.hostname
+                            
+                            target_alerts = []
+                            for alert in all_alerts:
+                                alert_url = alert.get("url", "")
+                                if alert_url:
+                                    alert_parsed = urlparse(alert_url)
+                                    alert_domain = alert_parsed.netloc or alert_parsed.hostname
+                                    if alert_domain == target_domain or alert_url.startswith(target_url):
+                                        target_alerts.append(alert)
+                            
+                            if len(target_alerts) > 0:
+                                logger.info(f"Found {len(target_alerts)} alerts for target {target_domain} despite active scan failure")
+                            else:
+                                logger.warning(f"No alerts found for target {target_domain} - ZAP cannot access this URL")
+                        except Exception as alerts_error:
+                            logger.debug(f"Failed to get alerts after active scan failure: {alerts_error}")
+                        
+                        # Try to get more details about why the scan failed
+                        try:
+                            scan_progress_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scanProgress/?scanId={active_scan_id}&apikey=", timeout=10)
+                            scan_progress = scan_progress_response.json()
+                            logger.error(f"Active scan progress details: {json.dumps(scan_progress, indent=2)[:500]}")
+                        except Exception as progress_error:
+                            logger.debug(f"Failed to get scan progress: {progress_error}")
+                else:
+                    logger.warning(f"Active scan {active_scan_id} not found in scans list after 3 seconds")
+            except Exception as verify_error:
+                logger.debug(f"Failed to verify scan start: {verify_error}")
+            
+            while True:
+                poll_count += 1
+                status_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/status/?scanId={active_scan_id}&apikey=", timeout=10)
+                status_result = status_response.json()
+                status_percent = int(status_result.get("status", "0"))
+                
+                # Also check scan details to see if it's actually running
+                try:
+                    scans_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
+                    scans_data = scans_response.json().get("scans", [])
+                    current_scan = next((s for s in scans_data if s.get("id") == str(active_scan_id)), None)
+                    if current_scan:
+                        req_count = int(current_scan.get("reqCount", "0"))
+                        alert_count = int(current_scan.get("alertCount", "0"))
+                        state = current_scan.get("state", "UNKNOWN")
+                        # Log status every 5 polls (every ~25 seconds) or on first poll, or if reqCount changes
+                        if poll_count == 1 or poll_count % 5 == 0 or req_count > 0:
+                            logger.info(f"ZAP Active Scan status (poll {poll_count}): {status_percent}%, state={state}, reqCount={req_count}, alertCount={alert_count}")
+                        
+                        # If scan is finished but made no requests, this is suspicious
+                        if state == "FINISHED" and req_count == 0 and poll_count == 1:
+                            logger.warning(f"ZAP Active Scan finished immediately with 0 requests - scan may not have run properly")
+                    else:
+                        logger.warning(f"ZAP Active Scan {active_scan_id} not found in scans list")
+                except Exception as scan_detail_error:
+                    logger.debug(f"Failed to get scan details: {scan_detail_error}")
+                    # Fall back to simple status logging
+                    if poll_count == 1 or poll_count % 5 == 0:
+                        logger.info(f"ZAP Active Scan status (poll {poll_count}): {status_percent}%")
+                
+                if status_percent >= 100:
+                    logger.info(f"ZAP Active Scan reached 100% after {poll_count} polls ({time.time() - start_time:.1f}s)")
+                    break
+                if time.time() - start_time > timeout_seconds:
+                    logger.warning(f"ZAP Active Scan timeout after {timeout_seconds}s (status: {status_percent}%)")
+                    raise subprocess.TimeoutExpired(cmd="ZAP Active Scan", timeout=timeout_seconds)
+                await asyncio.sleep(5)
+            logger.info(f"ZAP Active Scan completed for {target_url} (total time: {time.time() - start_time:.1f}s)")
+            
+        elif mode_id == "ajax_spider":
+            logger.info(f"Starting ZAP AJAX Spider for {target_url}...")
+            max_depth = kwargs.get("max_depth", 10)
+            max_children = kwargs.get("max_children", 100)
+            
+            # AJAX Spider API - contextName is optional
+            ajax_spider_url = f"{zap_api_url}/JSON/ajaxSpider/action/scan/?url={target_url}&maxDepth={max_depth}&maxChildren={max_children}&apikey="
+            
+            ajax_spider_response = await asyncio.to_thread(http_session.get, ajax_spider_url, timeout=timeout_seconds)
+            ajax_spider_result = ajax_spider_response.json()
+            
+            # ZAP AJAX Spider API returns {"Result":"OK"} on success, not {"code":"OK"}
+            # Check for both formats
+            if "Result" in ajax_spider_result:
+                if ajax_spider_result.get("Result") != "OK":
+                    raise ValueError(f"Failed to start ZAP AJAX Spider: {ajax_spider_result}")
+                # Success - continue
+            elif "code" in ajax_spider_result and ajax_spider_result.get("code") != "OK":
+                raise ValueError(f"Failed to start ZAP AJAX Spider: {ajax_spider_result}")
+            
+            # AJAX Spider doesn't return a scan ID like active scan
+            # It runs immediately and we poll the status
+            ajax_spider_id = None  # AJAX Spider doesn't use scan IDs
+            
+            # Poll AJAX spider status (no scanId needed for AJAX Spider)
+            start_time = time.time()
+            while True:
+                # AJAX Spider status endpoint doesn't require scanId
+                status_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ajaxSpider/view/status/?apikey=", timeout=10)
+                status_result = status_response.json()
+                # Status can be in "status" field or "Result" field
+                status_text = status_result.get("status", status_result.get("Result", "running"))
+                logger.debug(f"ZAP AJAX Spider status: {status_text}")
+                if status_text in ["stopped", "OK"]:
+                    break
+                if time.time() - start_time > timeout_seconds:
+                    raise subprocess.TimeoutExpired(cmd="ZAP AJAX Spider", timeout=timeout_seconds)
+                await asyncio.sleep(5)
+            logger.info(f"ZAP AJAX Spider completed for {target_url}")
+        
+        # Retrieve alerts - try without baseurl first to get all alerts, then filter
+        # ZAP's baseurl filter can be too restrictive, so we get all alerts and filter client-side
+        try:
+            # #region agent log
+            try:
+                debug_log_path = "/app/data/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H7","location":"tools.py:2333","message":"Before retrieving ZAP alerts","data":{"target_url":target_url,"mode_id":mode_id,"scan_job_id":scan_job_id},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            
+            alerts_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?apikey=", timeout=timeout_seconds)
+            all_alerts = alerts_response.json().get("alerts", [])
+            
+            # #region agent log
+            try:
+                debug_log_path = "/app/data/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H7","location":"tools.py:2338","message":"Retrieved all alerts from ZAP","data":{"total_alerts":len(all_alerts),"sample_alert_urls":[a.get("url","")[:100] for a in all_alerts[:3]]},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            
+            # Filter alerts by target URL (check if alert URL starts with target_url)
+            from urllib.parse import urlparse
+            target_parsed = urlparse(target_url)
+            target_domain = target_parsed.netloc or target_parsed.hostname
+            
+            # CRITICAL: For passive_spider mode, we should include ALL alerts from the same domain
+            # The target_url might be a specific page, but ZAP finds issues across the entire site
+            alerts = []
+            filtered_out = []
+            for alert in all_alerts:
+                alert_url = alert.get("url", "")
+                if alert_url:
+                    alert_parsed = urlparse(alert_url)
+                    alert_domain = alert_parsed.netloc or alert_parsed.hostname
+                    # Match if same domain (for passive_spider, include all pages on the domain)
+                    # OR if alert URL starts with target URL (for specific page scans)
+                    if alert_domain == target_domain or alert_url.startswith(target_url):
+                        alerts.append(alert)
+                    else:
+                        filtered_out.append({"url": alert_url[:100], "domain": alert_domain})
+            
+            logger.info(
+                f"Retrieved {len(alerts)} ZAP alerts for {target_url} "
+                f"(total alerts: {len(all_alerts)}, scan_job_id: {scan_job_id}, target_domain: {target_domain})"
+            )
+            
+            # #region agent log
+            try:
+                debug_log_path = "/app/data/debug.log"
+                with open(debug_log_path, "a") as f:
+                    import json as json_lib
+                    import time
+                    f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H7","location":"tools.py:2365","message":"After filtering alerts","data":{"total_alerts":len(all_alerts),"filtered_alerts":len(alerts),"target_domain":target_domain,"filtered_out_sample":filtered_out[:3]},"timestamp":int(time.time()*1000)})+"\n")
+            except: pass
+            # #endregion
+            
+            # DEBUG: Log if we're filtering out alerts
+            if len(all_alerts) > 0 and len(alerts) == 0:
+                logger.warning(
+                    f"ZAP found {len(all_alerts)} total alerts but filtered to 0 for {target_url}. "
+                    f"Target domain: {target_domain}. Sample alert domains: {[urlparse(a.get('url', '')).netloc for a in all_alerts[:3]]}"
+                )
+        except Exception as e:
+            logger.error(f"Failed to retrieve ZAP alerts: {e}", exc_info=True)
+            alerts = []
+        
+        # Convert ZAP alerts to findings format
+        findings = []
+        for alert in alerts:
+            # Map ZAP severity to Thandev severity
+            severity_map = {
+                "0": "info",      # Informational
+                "1": "low",       # Low
+                "2": "medium",    # Medium
+                "3": "high",      # High
+                "4": "critical",  # Critical
+            }
+            severity = severity_map.get(alert.get("riskcode"), "info")
+            
+            findings.append({
+                "tool_id": "zap",
+                "title": alert.get("alert"),
+                "severity": severity,
+                "description": alert.get("description"),
+                "evidence": alert.get("solution"),
+                "url": alert.get("url"),
+                "host": urlparse(alert.get("url")).hostname,
+                "port": urlparse(alert.get("url")).port,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "raw": json.dumps(alert),
+            })
+        
+        # Return findings as JSON string
+        # CRITICAL: Always return findings array, even if empty, so parser can process it
+        findings_json = json.dumps(findings)
+        logger.info(
+            f"ZAP scan {scan_job_id} completed: {len(findings)} findings generated. "
+            f"Output length: {len(findings_json)} bytes"
+        )
+        return {
+            "tool_name": "zap",
+            "output": findings_json,
+            "exit_code": 0,
+            "command": f"ZAP API calls for {mode_id}",
+            "success": True,
+        }
+
     async def _run_sqlmap(self, target_url: str, scan_level: str, **kwargs) -> Dict:
         """
         Run sqlmap SQL injection scanner
@@ -1781,10 +3032,74 @@ class ToolExecutor:
             timeout_seconds: timeout in seconds (default: 900 for 15 minutes)
             profile: profile name (e.g., "sqli_light") - currently not used but available
         """
-        # Check if sqlmap is installed
+        from app.utils.param_harvester import ParamHarvester, create_fallback_targets
+        
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         mode_id = kwargs.get("mode_id", "sqli_light")
+        scan_job_dir = kwargs.get("scan_job_dir")
         logger.info(f"Checking sqlmap availability for scan {scan_job_id}, mode={mode_id}")
+        
+        # 1. Harvest parameterized requests from ZAP/crawler outputs first
+        logger.info(f"Harvesting parameterized endpoints for SQLMap scan {scan_job_id}: {target_url}")
+        harvester = ParamHarvester(job_dir=scan_job_dir)
+        
+        # Try to harvest from job directory (ZAP output, etc.)
+        parameterized_urls = []
+        harvested_requests = []
+        if scan_job_dir:
+            harvested_count = harvester.harvest_from_job_dir()
+            logger.info(f"SQLMap scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
+            harvested_requests = harvester.get_all_requests()
+        
+        # 2. Also crawl to get additional endpoints (only if in generic scan mode)
+        if mode_id in ["sqli_light", "sqli_get_basic"]:
+            logger.info(f"Crawling target for SQLMap scan {scan_job_id}...")
+            try:
+                _, parameterized_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
+                logger.info(f"SQLMap found {len(parameterized_urls)} parameterized URLs from crawler")
+                
+                # Add crawler results to harvester
+                if parameterized_urls:
+                    crawler_count = harvester.harvest_from_crawler_output(parameterized_urls)
+                    logger.info(f"SQLMap scan {scan_job_id}: Added {crawler_count} URLs from crawler")
+            except Exception as crawl_error:
+                logger.warning(f"SQLMap crawler failed for {scan_job_id}: {crawl_error}. Will test target URL directly.")
+                parameterized_urls = []
+        
+        # Get all harvested parameterized URLs
+        harvested_param_urls = harvester.get_parameterized_urls()
+        
+        # Combine all sources
+        combined_urls = set(parameterized_urls)
+        combined_urls.update(harvested_param_urls)
+        parameterized_urls = list(combined_urls)
+        
+        # Always include the target URL if it's a login page or has parameters
+        # For login pages, we MUST test them even if crawler found nothing
+        if target_url not in parameterized_urls:
+            # Check if it's a login page (common patterns)
+            if 'login' in target_url.lower() or 'signin' in target_url.lower() or 'auth' in target_url.lower():
+                parameterized_urls.append(target_url)
+                logger.info(f"SQLMap: Added login page {target_url} to parameterized URLs (will test with --forms)")
+            elif '?' in target_url:
+                parameterized_urls.append(target_url)
+        
+        # If still no URLs, create fallback targets with common parameters
+        if not parameterized_urls:
+            logger.warning(
+                f"SQLMap scan {scan_job_id}: No parameterized URLs found from harvester or crawler! "
+                f"Creating fallback test parameters."
+            )
+            fallback_urls = create_fallback_targets(target_url)
+            parameterized_urls.extend(fallback_urls)
+            logger.info(f"SQLMap scan {scan_job_id}: Added {len(fallback_urls)} fallback parameterized URLs")
+        
+        # Get stats
+        harvester_stats = harvester.get_stats()
+        logger.info(
+            f"SQLMap scan {scan_job_id}: Will test {len(parameterized_urls)} URLs total "
+            f"({harvester_stats['total_requests']} from harvester with {harvester_stats['total_parameters']} params)."
+        )
         
         # Try to find sqlmap in common locations (container installation first)
         sqlmap_path = None
@@ -1798,7 +3113,7 @@ class ToolExecutor:
         
         for path in possible_paths:
             try:
-                check_result = subprocess.run(
+                check_result = await asyncio.to_thread(subprocess.run,
                     [path, "--version"],
                     capture_output=True,
                     timeout=5,
@@ -1824,14 +3139,17 @@ class ToolExecutor:
             }
         
         # Get timeout from kwargs or default to 900 seconds (15 minutes)
-        timeout = kwargs.get("timeout_seconds", 300)
+        # Increase timeout if we have many URLs
+        base_timeout = kwargs.get("timeout_seconds", 300)
+        timeout = base_timeout
+        if parameterized_urls:
+            timeout = max(base_timeout, len(parameterized_urls) * 60) # 1 min per URL minimum
         
         # Get output directory from kwargs (scan_job_dir)
         # This should be the same job_dir used by other tools (backend/data/jobs/scan_job_id)
         scan_job_dir = kwargs.get("scan_job_dir")
         if not scan_job_dir:
             # Fallback: try to infer from scan_job_id or create temp directory
-            scan_job_id = kwargs.get("scan_job_id", "unknown")
             # Use same canonical path as other tools: backend/data/jobs/scan_job_id
             scan_job_dir = Path(os.getenv("JOBS_DIR", "/tmp/jobs")) / scan_job_id
             logger.warning(
@@ -1856,14 +3174,38 @@ class ToolExecutor:
         # Get mode-specific parameters
         level = kwargs.get("level", 2)
         risk = kwargs.get("risk", 1)
-        timeout_sec = kwargs.get("timeout_seconds", 300)
-        request_timeout = min(60, timeout_sec // 5)  # Request timeout, max 60s
+        
+        # For Advanced scans, force stronger checks if not specified
+        if scan_level == "advanced":
+            level = max(level, 5)
+            risk = max(risk, 3)
+            
+        request_timeout = 120  # Increased from 60 to 120 for slow/unstable connections
         
         # Build sqlmap command based on mode
         cmd = [sqlmap_path, "--batch"]
         
         # Mode-specific command building
-        if mode_id == "sqli_raw_request":
+        # CRITICAL: For login pages, always use --forms directly, don't use bulk mode
+        is_login_page = 'login' in target_url.lower() or 'signin' in target_url.lower() or 'auth' in target_url.lower()
+        
+        if is_login_page and mode_id in ["sqli_light", "sqli_get_basic"]:
+            # For login pages, test directly with --forms (POST parameters)
+            cmd.extend(["-u", target_url, "--forms"])
+            logger.info(f"SQLMap: Testing login form at {target_url} directly with --forms (bypassing bulk mode)")
+        elif parameterized_urls and mode_id in ["sqli_light", "sqli_get_basic"] and not is_login_page:
+            # Use bulk mode only for non-login pages with multiple URLs
+            bulk_file = sqlmap_output_dir / "bulk_targets.txt"
+            with open(bulk_file, "w") as f:
+                f.write("\n".join(parameterized_urls))
+            
+            cmd.extend(["-m", str(bulk_file)])
+            # Use smart heuristics
+            cmd.extend(["--smart"])
+            
+            logger.info(f"Using bulk mode for SQLMap with {len(parameterized_urls)} targets")
+            
+        elif mode_id == "sqli_raw_request":
             # Use raw request file (-r)
             raw_request_ref = kwargs.get("raw_request_ref")
             if not raw_request_ref:
@@ -1912,7 +3254,7 @@ class ToolExecutor:
                 cmd.extend(["-p", ",".join(param_names)])
                 
         elif mode_id == "sqli_get_basic":
-            # Basic GET request with URL
+            # Basic GET request with URL (fallback if no params found or logic above skipped)
             cmd.extend(["-u", target_url])
             
             # Test specific parameters if provided
@@ -1921,8 +3263,27 @@ class ToolExecutor:
                 cmd.extend(["-p", ",".join(param_names)])
                 
         else:
-            # Legacy mode: sqli_light (uses --forms)
-            cmd.extend(["-u", target_url, "--forms", "--crawl=1"])
+            # Legacy mode: sqli_light (fallback)
+            # For login pages, use --forms to test form parameters
+            # Don't use --crawl=1 if we already crawled (it causes connection issues)
+            if parameterized_urls:
+                # Use bulk mode with crawled URLs
+                bulk_file = sqlmap_output_dir / "bulk_targets.txt"
+                with open(bulk_file, "w") as f:
+                    f.write("\n".join(parameterized_urls))
+                cmd.extend(["-m", str(bulk_file), "--smart"])
+            else:
+                # Test the target URL directly with forms
+                # For login pages, use --forms to test POST parameters
+                # CRITICAL: Don't use --crawl=0 as it might prevent form testing
+                is_login_page = 'login' in target_url.lower() or 'signin' in target_url.lower() or 'auth' in target_url.lower()
+                if is_login_page:
+                    # For login pages, explicitly test forms (POST parameters)
+                    cmd.extend(["-u", target_url, "--forms"])
+                    logger.info(f"SQLMap: Testing login form at {target_url} with --forms flag (no --crawl to avoid connection issues)")
+                else:
+                    # For other pages, test URL directly with forms
+                    cmd.extend(["-u", target_url, "--forms", "--crawl=0"])
         
         # Add common flags
         cmd.extend([
@@ -1930,10 +3291,11 @@ class ToolExecutor:
             "--level", str(level),
             "--timeout", str(request_timeout),
             "--time-sec", "5",  # Time-based injection delay
+            "--retries", "3",  # Retry failed requests up to 3 times
             "--random-agent",
             "--technique", "BEUSTQ",  # Test all techniques
             "--fresh-queries",
-            "--threads", "1",  # Single thread
+            "--threads", "2",  # Slightly more threads
             "-v", "3",  # Verbosity level 3
             "--output-dir", str(sqlmap_output_dir),
         ])
@@ -1947,13 +3309,20 @@ class ToolExecutor:
         )
         
         try:
-            result = subprocess.run(
+            # Track execution start time
+            import time
+            exec_start_time = time.time()
+
+            # Use asyncio.to_thread to prevent blocking event loop
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
                 timeout=timeout,
             )
-            
+
+            exec_duration = time.time() - exec_start_time
             stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
             stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
             exit_code = result.returncode
@@ -2054,6 +3423,13 @@ class ToolExecutor:
                     "command": " ".join(cmd),
                     "timed_out": False,
                     "output_dir": str(sqlmap_output_dir),
+                    "execution_time": exec_duration,  # Accurate subprocess-only execution time
+                    "targets_count": len(parameterized_urls),
+                    "meta": {
+                        "harvested_requests": harvester_stats.get("total_requests", 0),
+                        "total_parameters": harvester_stats.get("total_parameters", 0),
+                        "mode_id": mode_id,
+                    },
                 }
             
             # Success case - log findings status
@@ -2078,10 +3454,19 @@ class ToolExecutor:
                 "output_dir": str(sqlmap_output_dir),
                 "stderr": result.stderr[:4000] if result.stderr else None,
                 "success": True,  # Always mark as success if we got here (even if no SQLi found)
+                "execution_time": exec_duration,  # Accurate subprocess-only execution time
+                "targets_count": len(parameterized_urls),  # Number of URLs tested
+                "meta": {
+                    "harvested_requests": harvester_stats.get("total_requests", 0),
+                    "total_parameters": harvester_stats.get("total_parameters", 0),
+                    "mode_id": mode_id,
+                },
             }
         except subprocess.TimeoutExpired as exc:
-            logger.warning("sqlmap scan %s timed out after %d seconds (%d minutes). Checking for partial results...", 
-                          scan_job_id, timeout, timeout // 60)
+            # Calculate execution time even on timeout
+            exec_duration = time.time() - exec_start_time
+            logger.warning("sqlmap scan %s timed out after %d seconds (%d minutes, actual: %.2fs). Checking for partial results...", 
+                          scan_job_id, timeout, timeout // 60, exec_duration)
             logger.warning("  Command: %s", " ".join(cmd))
             
             # Check for partial results even on timeout
@@ -2104,6 +3489,7 @@ class ToolExecutor:
                     "timed_out": True,
                     "output_dir": str(sqlmap_output_dir),
                     "success": True,  # Mark as success if we have results
+                    "execution_time": exec_duration,  # Actual time before timeout
                 }
             else:
                 return {
@@ -2114,6 +3500,7 @@ class ToolExecutor:
                     "command": " ".join(cmd),
                     "timed_out": True,
                     "output_dir": str(sqlmap_output_dir),
+                    "execution_time": exec_duration,  # Actual time before timeout
                 }
         except Exception as e:
             logger.error(f"sqlmap execution error for scan {scan_job_id}: {e}", exc_info=True)
@@ -2142,13 +3529,14 @@ class ToolExecutor:
         
         target = f"{hostname}:{port}"
         
-        cmd = ["sslscan", "--json", target]
+        # Note: sslscan doesn't support --json flag, it outputs text with ANSI colors
+        cmd = ["sslscan", target]
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2182,7 +3570,7 @@ class ToolExecutor:
         ]
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2222,17 +3610,20 @@ class ToolExecutor:
         
         # Try common locations for ProjectDiscovery httpx
         # Check ~/go/bin first (most common location) before PATH to avoid Python httpx
+        # Also check ~/.local/bin which is common in user installations
         possible_paths = [
             os.path.expanduser("~/go/bin/httpx"),  # Go bin directory (check first!)
+            os.path.expanduser("~/.local/bin/httpx"),  # User local bin (common location)
             "/usr/local/bin/httpx",
             "/usr/local/bin/httpx-projectdiscovery",
+            "/usr/bin/httpx",  # System bin
             "httpx",  # In PATH (check last to avoid Python httpx)
         ]
         
         for binary_path in possible_paths:
             try:
                 test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
-                test_result = subprocess.run(
+                test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
                     timeout=5,
@@ -2255,13 +3646,15 @@ class ToolExecutor:
                 continue
         
         if not httpx_binary:
-            logger.warning("ProjectDiscovery httpx not found. System has Python httpx (HTTP client), not ProjectDiscovery httpx (security scanner)")
+            error_msg = "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH."
+            logger.error(f"httpx binary not found: {error_msg}")
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
-                "error": "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH.",
+                "error": error_msg,
                 "command": "httpx -u <url> -json",
+                "success": False,
             }
         
         # httpx (ProjectDiscovery) command flags:
@@ -2292,7 +3685,7 @@ class ToolExecutor:
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2337,10 +3730,19 @@ class ToolExecutor:
                         )
                 else:
                     # No output and no stderr - might be unreachable target
-                    logger.info(
-                        "httpx scan %s completed with exit_code=%s and no output (target may be unreachable, treating as success)",
+                    logger.warning(
+                        "httpx scan %s completed with exit_code=%s and no output (target unreachable). Skipping as success.",
                         scan_job_id, exit_code
                     )
+                    return {
+                        "tool_name": "httpx",
+                        "output": "[]",
+                        "exit_code": 0,
+                        "command": " ".join(cmd),
+                        "timed_out": False,
+                        "error": "Target unreachable (no output from httpx)",
+                        "success": True 
+                    }
             
             if is_error:
                 return {
@@ -2349,6 +3751,7 @@ class ToolExecutor:
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
+                    "success": False,
                 }
             
             # Success case (even with non-zero exit if we have output)
@@ -2365,6 +3768,7 @@ class ToolExecutor:
                 "output": result.stdout,
                 "exit_code": exit_code,  # Return actual exit code even if we treat as success
                 "command": " ".join(cmd),
+                "success": True,  # Explicitly mark as successful
             }
         except subprocess.TimeoutExpired:
             return {
@@ -2373,15 +3777,18 @@ class ToolExecutor:
                 "exit_code": -1,
                 "error": "Tool execution timed out after 10 minutes",
                 "command": " ".join(cmd),
+                "success": False,
+                "timed_out": True,
             }
         except Exception as e:
-            logger.error(f"httpx execution error: {e}")
+            logger.error(f"httpx execution error: {e}", exc_info=True)
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
                 "error": f"httpx execution failed: {str(e)}",
                 "command": " ".join(cmd),
+                "success": False,
             }
     
     # TODO: Vulnerability classes covered by ffuf:
@@ -2420,7 +3827,7 @@ class ToolExecutor:
                         break
                 else:
                     # Check if command exists in PATH
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=2,
@@ -2447,7 +3854,7 @@ class ToolExecutor:
         
         # Verify ffuf works
         try:
-            check_result = subprocess.run(
+            check_result = await asyncio.to_thread(subprocess.run,
                 [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
@@ -2592,7 +3999,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2705,13 +4112,14 @@ class ToolExecutor:
         
         target = f"{hostname}:{port}"
         
-        cmd = ["sslscan", "--json", target]
+        # Note: sslscan doesn't support --json flag, it outputs text with ANSI colors
+        cmd = ["sslscan", target]
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2745,7 +4153,7 @@ class ToolExecutor:
         ]
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2785,17 +4193,20 @@ class ToolExecutor:
         
         # Try common locations for ProjectDiscovery httpx
         # Check ~/go/bin first (most common location) before PATH to avoid Python httpx
+        # Also check ~/.local/bin which is common in user installations
         possible_paths = [
             os.path.expanduser("~/go/bin/httpx"),  # Go bin directory (check first!)
+            os.path.expanduser("~/.local/bin/httpx"),  # User local bin (common location)
             "/usr/local/bin/httpx",
             "/usr/local/bin/httpx-projectdiscovery",
+            "/usr/bin/httpx",  # System bin
             "httpx",  # In PATH (check last to avoid Python httpx)
         ]
         
         for binary_path in possible_paths:
             try:
                 test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
-                test_result = subprocess.run(
+                test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
                     timeout=5,
@@ -2818,13 +4229,15 @@ class ToolExecutor:
                 continue
         
         if not httpx_binary:
-            logger.warning("ProjectDiscovery httpx not found. System has Python httpx (HTTP client), not ProjectDiscovery httpx (security scanner)")
+            error_msg = "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH."
+            logger.error(f"httpx binary not found: {error_msg}")
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
-                "error": "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH.",
+                "error": error_msg,
                 "command": "httpx -u <url> -json",
+                "success": False,
             }
         
         # httpx (ProjectDiscovery) command flags:
@@ -2855,7 +4268,7 @@ class ToolExecutor:
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -2912,6 +4325,7 @@ class ToolExecutor:
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
+                    "success": False,
                 }
             
             # Success case (even with non-zero exit if we have output)
@@ -2928,6 +4342,7 @@ class ToolExecutor:
                 "output": result.stdout,
                 "exit_code": exit_code,  # Return actual exit code even if we treat as success
                 "command": " ".join(cmd),
+                "success": True,  # Explicitly mark as successful
             }
         except subprocess.TimeoutExpired:
             return {
@@ -2936,15 +4351,18 @@ class ToolExecutor:
                 "exit_code": -1,
                 "error": "Tool execution timed out after 10 minutes",
                 "command": " ".join(cmd),
+                "success": False,
+                "timed_out": True,
             }
         except Exception as e:
-            logger.error(f"httpx execution error: {e}")
+            logger.error(f"httpx execution error: {e}", exc_info=True)
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
                 "error": f"httpx execution failed: {str(e)}",
                 "command": " ".join(cmd),
+                "success": False,
             }
     
     # TODO: Vulnerability classes covered by ffuf:
@@ -2983,7 +4401,7 @@ class ToolExecutor:
                         break
                 else:
                     # Check if command exists in PATH
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=2,
@@ -3010,7 +4428,7 @@ class ToolExecutor:
         
         # Verify ffuf works
         try:
-            check_result = subprocess.run(
+            check_result = await asyncio.to_thread(subprocess.run,
                 [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
@@ -3155,7 +4573,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -3268,13 +4686,14 @@ class ToolExecutor:
         
         target = f"{hostname}:{port}"
         
-        cmd = ["sslscan", "--json", target]
+        # Note: sslscan doesn't support --json flag, it outputs text with ANSI colors
+        cmd = ["sslscan", target]
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -3308,7 +4727,7 @@ class ToolExecutor:
         ]
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -3348,17 +4767,20 @@ class ToolExecutor:
         
         # Try common locations for ProjectDiscovery httpx
         # Check ~/go/bin first (most common location) before PATH to avoid Python httpx
+        # Also check ~/.local/bin which is common in user installations
         possible_paths = [
             os.path.expanduser("~/go/bin/httpx"),  # Go bin directory (check first!)
+            os.path.expanduser("~/.local/bin/httpx"),  # User local bin (common location)
             "/usr/local/bin/httpx",
             "/usr/local/bin/httpx-projectdiscovery",
+            "/usr/bin/httpx",  # System bin
             "httpx",  # In PATH (check last to avoid Python httpx)
         ]
         
         for binary_path in possible_paths:
             try:
                 test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
-                test_result = subprocess.run(
+                test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
                     timeout=5,
@@ -3381,13 +4803,15 @@ class ToolExecutor:
                 continue
         
         if not httpx_binary:
-            logger.warning("ProjectDiscovery httpx not found. System has Python httpx (HTTP client), not ProjectDiscovery httpx (security scanner)")
+            error_msg = "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH."
+            logger.error(f"httpx binary not found: {error_msg}")
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
-                "error": "ProjectDiscovery httpx binary not found. The system has Python httpx (HTTP client) installed, but we need ProjectDiscovery httpx (security scanner). Install with: go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest (or download from https://github.com/projectdiscovery/httpx/releases). After installation, ensure ~/go/bin is in your PATH.",
+                "error": error_msg,
                 "command": "httpx -u <url> -json",
+                "success": False,
             }
         
         # httpx (ProjectDiscovery) command flags:
@@ -3418,7 +4842,7 @@ class ToolExecutor:
         timeout_seconds = kwargs.get("timeout_seconds", 300)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
@@ -3475,6 +4899,7 @@ class ToolExecutor:
                     "exit_code": exit_code,
                     "error": error_msg,
                     "command": " ".join(cmd),
+                    "success": False,
                 }
             
             # Success case (even with non-zero exit if we have output)
@@ -3491,6 +4916,7 @@ class ToolExecutor:
                 "output": result.stdout,
                 "exit_code": exit_code,  # Return actual exit code even if we treat as success
                 "command": " ".join(cmd),
+                "success": True,  # Explicitly mark as successful
             }
         except subprocess.TimeoutExpired:
             return {
@@ -3499,15 +4925,18 @@ class ToolExecutor:
                 "exit_code": -1,
                 "error": "Tool execution timed out after 10 minutes",
                 "command": " ".join(cmd),
+                "success": False,
+                "timed_out": True,
             }
         except Exception as e:
-            logger.error(f"httpx execution error: {e}")
+            logger.error(f"httpx execution error: {e}", exc_info=True)
             return {
                 "tool_name": "httpx",
                 "output": "",
                 "exit_code": -1,
                 "error": f"httpx execution failed: {str(e)}",
                 "command": " ".join(cmd),
+                "success": False,
             }
     
     # TODO: Vulnerability classes covered by ffuf:
@@ -3546,7 +4975,7 @@ class ToolExecutor:
                         break
                 else:
                     # Check if command exists in PATH
-                    check_result = subprocess.run(
+                    check_result = await asyncio.to_thread(subprocess.run,
                         ["which", binary_path],
                         capture_output=True,
                         timeout=2,
@@ -3573,7 +5002,7 @@ class ToolExecutor:
         
         # Verify ffuf works
         try:
-            check_result = subprocess.run(
+            check_result = await asyncio.to_thread(subprocess.run,
                 [ffuf_binary, "-V"],
                 capture_output=True,
                 timeout=5,
@@ -3718,7 +5147,7 @@ class ToolExecutor:
                    scan_job_id, " ".join(cmd), timeout, wordlist_path)
         
         try:
-            result = subprocess.run(
+            result = await asyncio.to_thread(subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,

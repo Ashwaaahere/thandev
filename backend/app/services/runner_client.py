@@ -233,15 +233,81 @@ async def publish_scan_steps_to_runner(
             return False
         
         # Publish step request for each enabled tool
+        # CRITICAL: Import timeout configuration to pass to runner
+        from app.core.scan_timeouts import get_tool_timeout
+        
         published_count = 0
         for tool_config in tools:
             if not tool_config.get("enabled", True):
                 continue
             
             tool_id = tool_config.get("key") or tool_config.get("name")
-            mode_id = tool_config.get("mode", f"{tool_id}-default")
+            
+            # CRITICAL: Convert tool_matrix fields to mode_id
+            # tool_matrix uses different field names than catalog mode_id
+            mode_id = tool_config.get("mode")
+            if not mode_id:
+                # For nuclei/nmap: profile field maps to mode_id
+                if tool_id in ["nuclei", "nmap"]:
+                    mode_id = tool_config.get("profile")
+                # For httpx: intensity field maps to mode_id
+                elif tool_id == "httpx":
+                    mode_id = tool_config.get("intensity")
+                # For sslscan: default to "standard" mode
+                elif tool_id == "sslscan":
+                    mode_id = "standard"
+                # For dalfox: check for aggressiveness field, otherwise default to "standard"
+                elif tool_id == "dalfox":
+                    # dalfox uses "aggressiveness" field in tool_matrix, but catalog uses mode_id
+                    # For now, always use "standard" mode (aggressiveness is handled via params)
+                    mode_id = "standard"
+                # For sqlmap: default to "sqli_light" mode
+                elif tool_id == "sqlmap":
+                    mode_id = "sqli_light"
+                # For zap: mode field should be present, but fallback to "passive_spider" if missing
+                elif tool_id == "zap":
+                    mode_id = "passive_spider"  # Safe default
+                    logger.warning(
+                        f"ZAP tool_config missing 'mode' field, using default: {mode_id}. "
+                        f"tool_config: {tool_config}"
+                    )
+                # Fallback: use tool_id-default (should not happen for known tools)
+                else:
+                    mode_id = f"{tool_id}-default"
+                    logger.warning(
+                        f"No mode_id found for {tool_id} in tool_config. "
+                        f"Using fallback: {mode_id}. This may cause catalog validation errors. "
+                        f"tool_config: {tool_config}"
+                    )
+            
+            # Log mode_id selection for debugging
+            logger.debug(
+                f"Selected mode_id={mode_id} for tool_id={tool_id} "
+                f"(scan_level={scan_level.value if hasattr(scan_level, 'value') else scan_level})"
+            )
+            
             params = tool_config.get("params", {})
+            
+            # Handle special fields that should be passed as params
+            # dalfox: aggressiveness field should be passed as param
+            if tool_id == "dalfox" and "aggressiveness" in tool_config:
+                params["aggressiveness"] = tool_config["aggressiveness"]
+            
+            # CRITICAL: Add timeout_seconds to params so runner service can use it
+            # This ensures tools get the correct timeout based on scan level
+            scan_level_str = scan_level.value if hasattr(scan_level, 'value') else str(scan_level)
+            timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+            params["timeout_seconds"] = timeout_seconds
+            
+            # Also pass scan_level so runner can use it for tool-specific logic
+            params["scan_level"] = scan_level_str
+            
             reason = f"Scan level {scan_level.value} requires {tool_id}"
+            
+            logger.info(
+                f"Publishing step for {tool_id} with timeout_seconds={timeout_seconds} "
+                f"(scan_level={scan_level_str})"
+            )
             
             success = await publish_step_request(
                 session_id=scan_job_id,
@@ -284,7 +350,57 @@ async def publish_scan_steps_to_runner(
             pass
         # #endregion
         
-        return published_count > 0
+        if published_count == 0:
+            logger.warning(
+                f"No steps published for scan {scan_job_id}. "
+                f"Total tools: {len(tools)}, Enabled tools: {sum(1 for t in tools if t.get('enabled', True))}"
+            )
+            return False
+        
+        logger.info(
+            f"Successfully published {published_count}/{len([t for t in tools if t.get('enabled', True)])} steps for scan {scan_job_id}"
+        )
+        
+        # CRITICAL: Create PENDING ToolResult records so UI can show tool status
+        # This ensures the UI displays tools as "Pending" before runner starts executing them
+        try:
+            from app.core.database import SessionLocal
+            from app.models.finding import ToolResult, ToolExecutionStatus
+            
+            db = SessionLocal()
+            try:
+                for tool_config in tools:
+                    if not tool_config.get("enabled", True):
+                        continue
+                    
+                    tool_id = tool_config.get("key") or tool_config.get("name")
+                    
+                    # Check if ToolResult already exists (idempotent)
+                    existing = db.query(ToolResult).filter(
+                        ToolResult.scan_job_id == scan_job_id,
+                        ToolResult.tool_name == tool_id
+                    ).first()
+                    
+                    if not existing:
+                        tool_result = ToolResult(
+                            scan_job_id=scan_job_id,
+                            tool_name=tool_id,
+                            status=ToolExecutionStatus.PENDING,
+                        )
+                        db.add(tool_result)
+                
+                db.commit()
+                logger.info(f"Created PENDING ToolResult records for {published_count} tools in scan {scan_job_id}")
+            except Exception as e:
+                logger.error(f"Failed to create PENDING ToolResult records: {e}", exc_info=True)
+                db.rollback()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning(f"Failed to create PENDING ToolResult records (non-critical): {e}", exc_info=True)
+            # Don't fail the entire operation if this fails - tools will still execute
+        
+        return True
         
     except Exception as e:
         logger.error(f"Failed to publish scan steps to Runner: {e}", exc_info=True)

@@ -4,7 +4,7 @@ Handles recovery of scans that were interrupted by system downtime.
 
 On system startup, this service:
 1. Finds scans in RUNNING or QUEUED status
-2. Checks if their Celery tasks are still active
+2. Checks if their Brain sessions or Runner steps are still active
 3. Either requeues them or marks them as failed based on configuration
 """
 import logging
@@ -21,38 +21,8 @@ from app.services.scan_orchestrator import ScanOrchestrator
 logger = logging.getLogger(__name__)
 
 
-def check_celery_task_status(celery_task_id: str) -> Optional[str]:
-    """
-    Check if a Celery task is still active.
-    
-    Args:
-        celery_task_id: The Celery task ID to check
-        
-    Returns:
-        Task status string (PENDING, STARTED, SUCCESS, FAILURE, REVOKED, etc.)
-        or None if task doesn't exist or can't be checked
-    """
-    try:
-        from celery.result import AsyncResult
-        from app.tasks.celery_app import celery
-        
-        task_result = AsyncResult(celery_task_id, app=celery)
-        status = task_result.status
-        
-        # Check if task is in a terminal state
-        # Terminal states: SUCCESS, FAILURE, REVOKED, REJECTED
-        if status in ['SUCCESS', 'FAILURE', 'REVOKED', 'REJECTED']:
-            return status
-        
-        # Active states: PENDING, STARTED, RETRY
-        # If task is PENDING but was created a while ago, it might be stale
-        if status in ['PENDING', 'STARTED', 'RETRY']:
-            return status
-        
-        return status
-    except Exception as e:
-        logger.warning(f"Failed to check Celery task status for {celery_task_id}: {e}")
-        return None
+# NOTE: check_celery_task_status removed - Celery has been removed.
+# Scans are now tracked via Runner (Redis streams) or Brain service.
 
 
 def check_brain_session_status(brain_session_id: str, org_id: Optional[str] = None, 
@@ -151,49 +121,8 @@ def recover_stale_scans(
         recovery_action = None
         
         try:
-            # Check Celery task status if present
-            if scan_job.celery_task_id:
-                task_status = check_celery_task_status(scan_job.celery_task_id)
-                
-                if task_status is None:
-                    # Can't check status - don't assume stale, might be temporary issue
-                    # Only mark as stale if scan is definitely old (more than 30 minutes)
-                    if scan_job.created_at < datetime.utcnow() - timedelta(minutes=30):
-                        is_stale = True
-                        logger.info(
-                            f"Scan {scan_job.id}: Cannot check Celery task status and scan is older than 30 minutes, "
-                            f"assuming stale (task_id: {scan_job.celery_task_id})"
-                        )
-                    else:
-                        logger.debug(
-                            f"Scan {scan_job.id}: Cannot check Celery task status but scan is recent, "
-                            f"skipping (task_id: {scan_job.celery_task_id})"
-                        )
-                elif task_status in ['SUCCESS', 'FAILURE', 'REVOKED', 'REJECTED']:
-                    # Task is in terminal state but scan is still RUNNING/QUEUED
-                    is_stale = True
-                    logger.info(
-                        f"Scan {scan_job.id}: Celery task is in terminal state "
-                        f"({task_status}) but scan status is {scan_job.status.value}"
-                    )
-                elif task_status == 'PENDING':
-                    # Task is pending - check if it's been pending too long
-                    # If scan was created more than 1 hour ago and still pending, it's likely stale
-                    if scan_job.created_at < datetime.utcnow() - timedelta(hours=1):
-                        is_stale = True
-                        logger.info(
-                            f"Scan {scan_job.id}: Celery task is PENDING but scan "
-                            f"was created {datetime.utcnow() - scan_job.created_at} ago"
-                        )
-                # If task_status is 'STARTED' or 'RETRY', assume it's still active
-                else:
-                    logger.debug(
-                        f"Scan {scan_job.id}: Celery task is {task_status}, "
-                        f"assuming still active"
-                    )
-            
             # Check brain session status if present
-            elif scan_job.brain_session_id:
+            if scan_job.brain_session_id:
                 # Load project to get org_id
                 if not scan_job.project:
                     db.refresh(scan_job, ["project"])
@@ -238,13 +167,13 @@ def recover_stale_scans(
                     )
             
             else:
-                # No celery_task_id or brain_session_id - check if scan is old
-                # If scan has been RUNNING/QUEUED for more than 1 hour without a task ID,
-                # it's likely stale
+                # No brain_session_id - check if scan is old
+                # If scan has been RUNNING/QUEUED for more than 1 hour without a session ID,
+                # it's likely stale (Runner-based scans should have started by then)
                 if scan_job.created_at < datetime.utcnow() - timedelta(hours=1):
                     is_stale = True
                     logger.info(
-                        f"Scan {scan_job.id}: No task/session ID and scan is older "
+                        f"Scan {scan_job.id}: No session ID and scan is older "
                         f"than 1 hour, assuming stale"
                     )
             
@@ -266,32 +195,39 @@ def recover_stale_scans(
                         scan_level = scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else str(scan_job.scan_level)
                         user_id = scan_job.project.owner_id if scan_job.project else None
                         
-                        # Requeue using orchestrator
+                        # Requeue using Runner via Redis streams
                         try:
+                            from app.services.runner_client import publish_scan_steps_to_runner
+                            
                             loop = asyncio.get_event_loop()
                         except RuntimeError:
                             loop = asyncio.new_event_loop()
                             asyncio.set_event_loop(loop)
                         
-                        celery_task_id = loop.run_until_complete(
-                            orchestrator.queue_scan(
-                                scan_job.id,
-                                target_url,
-                                scan_level,
-                                user_id=user_id
+                        org_id = scan_job.project.tenant_id if scan_job.project and scan_job.project.tenant else None
+                        project_id = scan_job.project_id
+                        
+                        success = loop.run_until_complete(
+                            publish_scan_steps_to_runner(
+                                scan_job_id=scan_job.id,
+                                target_url=target_url,
+                                scan_level=scan_job.scan_level,
+                                org_id=org_id,
+                                project_id=project_id,
                             )
                         )
                         
-                        scan_job.celery_task_id = celery_task_id
-                        scan_job.status = ScanStatus.QUEUED
-                        scan_job.error_message = None  # Clear any previous error
-                        db.commit()
-                        
-                        stats["requeued"] += 1
-                        logger.info(
-                            f"Scan {scan_job.id}: Requeued successfully "
-                            f"(new task_id: {celery_task_id})"
-                        )
+                        if success:
+                            scan_job.status = ScanStatus.RUNNING
+                            scan_job.error_message = None  # Clear any previous error
+                            db.commit()
+                            
+                            stats["requeued"] += 1
+                            logger.info(
+                                f"Scan {scan_job.id}: Requeued successfully via Runner"
+                            )
+                        else:
+                            raise Exception("Failed to publish steps to Runner")
                     except Exception as e:
                         logger.error(f"Failed to requeue scan {scan_job.id}: {e}", exc_info=True)
                         stats["errors"] += 1
