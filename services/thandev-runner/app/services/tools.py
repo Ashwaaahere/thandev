@@ -2231,8 +2231,8 @@ class ToolExecutor:
         # Note: ZAP API may require apikey parameter even if disabled, so we add it as empty
         # CRITICAL: ZAP container may need time to fully start, so we increase retries and delays
         health_check_url = f"{zap_api_url}/JSON/core/view/version/?apikey="
-        max_retries = 5  # Increased from 3 to 5
-        retry_delay = 3  # Increased from 2 to 3 seconds
+        max_retries = 10  # Increased from 5 to 10 for better reliability
+        retry_delay = 5  # Increased from 3 to 5 seconds
         zap_accessible = False
         http_session = None
         
@@ -2240,16 +2240,49 @@ class ToolExecutor:
             try:
                 http_session = requests.Session()
                 http_session.mount('http://', requests.adapters.HTTPAdapter(max_retries=1))
-                response = await asyncio.to_thread(http_session.get, health_check_url, timeout=15)  # Increased timeout from 10 to 15
+                # Increased timeout to 30s for better reliability on slow networks
+                response = await asyncio.to_thread(http_session.get, health_check_url, timeout=30)
                 response.raise_for_status()
                 logger.info(f"ZAP API is accessible: {response.json().get('version')}")
                 zap_accessible = True
                 break
+            except requests.exceptions.ConnectionError as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"ZAP connection error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.3, 20)  # Cap at 20s max delay
+                else:
+                    error_msg = f"ZAP API connection failed at {zap_api_url} after {max_retries} attempts: {e}. Check if ZAP service is running."
+                    logger.error(error_msg)
+                    return {
+                        "tool_name": "zap",
+                        "output": "[]",
+                        "exit_code": -1,
+                        "error": error_msg,
+                        "command": f"ZAP API call to {health_check_url}",
+                        "success": False,
+                    }
+            except requests.exceptions.Timeout as e:
+                if attempt < max_retries - 1:
+                    logger.warning(f"ZAP timeout (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
+                    retry_delay = min(retry_delay * 1.3, 20)
+                else:
+                    error_msg = f"ZAP API timeout at {zap_api_url} after {max_retries} attempts: {e}. ZAP may be overloaded or unreachable."
+                    logger.error(error_msg)
+                    return {
+                        "tool_name": "zap",
+                        "output": "[]",
+                        "exit_code": -1,
+                        "error": error_msg,
+                        "command": f"ZAP API call to {health_check_url}",
+                        "success": False,
+                    }
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.warning(f"ZAP health check attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
                     await asyncio.sleep(retry_delay)
-                    retry_delay *= 1.5  # Reduced multiplier from 2 to 1.5 for faster convergence
+                    retry_delay = min(retry_delay * 1.3, 20)
                 else:
                     error_msg = f"ZAP API not accessible at {zap_api_url} after {max_retries} attempts: {e}. ZAP is not deployed to Fly.io - skipping ZAP scan."
                     logger.warning(error_msg)

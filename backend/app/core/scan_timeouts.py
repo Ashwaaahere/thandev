@@ -22,15 +22,15 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
         }
     },
     "pro": {
-        "max_total_seconds": 1800,  # 30 minutes total
+        "max_total_seconds": 2400,  # 40 minutes total (increased to accommodate longer tool runs)
         "per_tool": {
             "httpx": 30,  # 30 seconds
-            "nuclei": 1200,  # 20 minutes (comprehensive scanning)
-            "nmap": 300,  # 5 minutes (optimized port scan)
+            "nuclei": 1500,  # 25 minutes (increased from 20min - comprehensive scanning needs more time)
+            "nmap": 600,  # 10 minutes (increased from 5min - port scans can take longer)
             "ffuf": 300,  # 5 minutes
             "sslscan": 90,  # 90 seconds (normally 30s, 3x safety buffer)
-            "zap": 900,  # 15 minutes (passive + active scan)
-            "dalfox": 900,  # 15 minutes (increased from 10min - more time for XSS testing)
+            "zap": 1200,  # 20 minutes (increased from 15min - active scans need more time)
+            "dalfox": 1200,  # 20 minutes (increased from 15min - XSS testing needs more time)
         }
     },
     "advanced": {
