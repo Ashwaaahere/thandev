@@ -828,30 +828,62 @@ class ToolExecutor:
         
         try:
             # Verify binary is actually executable by running version check
+            # CRITICAL: Some versions of nuclei may exit with non-zero even on success
+            # So we check stdout for version info, not just exit code
             check_result = await asyncio.to_thread(subprocess.run,
                 [nuclei_binary, "-version"],
                 capture_output=True,
-                timeout=5,
+                timeout=10,  # Increased timeout to 10s
                 text=True
             )
-            if check_result.returncode != 0:
-                # If version check fails, log the error but don't fail yet - might still work
-                logger.warning(f"nuclei version check failed (exit_code={check_result.returncode}): {check_result.stderr}")
-                # Check if it's a real error or just a version display issue
-                if check_result.stderr and any(keyword in check_result.stderr.lower() for keyword in ["not found", "cannot execute", "permission denied"]):
-                    raise FileNotFoundError(f"nuclei binary not executable: {check_result.stderr}")
-                # If stdout has version info, it's probably fine
-                if not check_result.stdout or "nuclei" not in check_result.stdout.lower():
+            
+            # Check if we got version output (this is the real indicator of success)
+            has_version_output = check_result.stdout and "nuclei" in check_result.stdout.lower()
+            
+            if not has_version_output:
+                # No version output - check stderr for errors
+                if check_result.stderr:
+                    stderr_lower = check_result.stderr.lower()
+                    if any(keyword in stderr_lower for keyword in ["not found", "cannot execute", "permission denied", "no such file"]):
+                        raise FileNotFoundError(f"nuclei binary not executable: {check_result.stderr}")
+                    # Log stderr but don't fail if it's just a warning
+                    logger.warning(f"nuclei version check stderr: {check_result.stderr[:200]}")
+                
+                # If no stdout and no clear error in stderr, still fail
+                if not check_result.stdout:
                     raise FileNotFoundError("nuclei version check returned no output")
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError):
+            
+            # If we have version output, log it and continue (even if exit code is non-zero)
+            if has_version_output:
+                logger.info(f"nuclei version check successful: {check_result.stdout.strip()[:100]}")
+            else:
+                # This shouldn't happen due to check above, but be safe
+                logger.warning(f"nuclei version check ambiguous: exit_code={check_result.returncode}, stdout={check_result.stdout[:100] if check_result.stdout else 'None'}, stderr={check_result.stderr[:100] if check_result.stderr else 'None'}")
+                
+        except subprocess.TimeoutExpired:
+            logger.error(f"nuclei version check timed out after 10s - binary may be slow or unresponsive")
             return {
                 "tool_name": "nuclei",
                 "output": "",
                 "exit_code": -1,
-                "error": "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest",
+                "error": "Nuclei binary version check timed out. The binary may be corrupted or incompatible.",
                 "command": "nuclei -version",
                 "success": False,
             }
+        except FileNotFoundError as e:
+            logger.error(f"nuclei binary verification failed: {e}")
+            return {
+                "tool_name": "nuclei",
+                "output": "",
+                "exit_code": -1,
+                "error": f"Nuclei binary not found or not executable: {str(e)}. Please ensure nuclei is installed correctly.",
+                "command": "nuclei -version",
+                "success": False,
+            }
+        except Exception as e:
+            logger.error(f"Unexpected error during nuclei version check: {e}", exc_info=True)
+            # Don't fail completely - try to continue if binary exists
+            logger.warning(f"Continuing despite version check error - will attempt to run nuclei anyway")
         
         # Determine severity levels based on scan level
         # Using only flags supported by Nuclei v3.4.10
