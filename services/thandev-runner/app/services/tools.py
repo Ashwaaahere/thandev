@@ -2057,6 +2057,11 @@ class ToolExecutor:
             is_error = False
             error_msg = None
             
+            # Normalize Dalfox output BEFORE checking exit code
+            # This ensures we can properly detect if there are findings even with non-zero exit codes
+            normalized_output = _normalize_dalfox_output(result.stdout) if result.stdout else "[]"
+            has_findings = normalized_output and normalized_output.strip() not in ["[]", "[{}]", ""]
+            
             if exit_code != 0:
                 stdout_lower = (result.stdout or "").lower()
                 # Treat CLI/flag/config errors as real failures even if they were printed to stdout.
@@ -2064,12 +2069,28 @@ class ToolExecutor:
                     is_error = True
                     error_msg = f"dalfox exited with code {exit_code}: {result.stdout[:200] if result.stdout else ''}"
                     logger.warning("dalfox scan %s failed (cli error): %s", scan_job_id, error_msg)
-                elif stdout_bytes > 0:
-                    # We have output; dalfox sometimes returns non-zero even on findings.
+                elif stdout_bytes > 0 and has_findings:
+                    # We have output AND findings; dalfox sometimes returns non-zero even on findings.
+                    # This is normal - treat as success, don't set error
+                    try:
+                        findings_count = len(json.loads(normalized_output)) if normalized_output.startswith("[") else 0
+                    except (json.JSONDecodeError, ValueError):
+                        findings_count = 0
                     logger.info(
-                        "dalfox scan %s completed with exit_code=%s but produced %d bytes of output (treating as success)",
+                        "dalfox scan %s completed with exit_code=%s but found %d findings (treating as success)",
+                        scan_job_id, exit_code, findings_count
+                    )
+                    is_error = False  # Explicitly clear error flag when we have findings
+                    error_msg = None  # Don't show error message when we have findings
+                elif stdout_bytes > 0:
+                    # We have output but no valid findings (might be malformed JSON or empty)
+                    logger.warning(
+                        "dalfox scan %s completed with exit_code=%s and %d bytes of output but no valid findings",
                         scan_job_id, exit_code, stdout_bytes
                     )
+                    # Don't treat as error - might be no XSS found
+                    is_error = False
+                    error_msg = None
                 elif result.stderr:
                     stderr_lower = result.stderr.lower()
                     if any(keyword in stderr_lower for keyword in ["error", "failed", "fatal", "cannot", "not found"]):
@@ -2081,14 +2102,15 @@ class ToolExecutor:
                             "dalfox scan %s completed with exit_code=%s (no XSS found, treating as success)",
                             scan_job_id, exit_code
                         )
+                        is_error = False
+                        error_msg = None
                 else:
                     logger.info(
                         "dalfox scan %s completed with exit_code=%s and no output (no XSS found, treating as success)",
                         scan_job_id, exit_code
                     )
-            
-            # Normalize Dalfox output before returning
-            normalized_output = _normalize_dalfox_output(result.stdout) if result.stdout else "[]"
+                    is_error = False
+                    error_msg = None
             
             if is_error:
                 return {
@@ -2098,6 +2120,7 @@ class ToolExecutor:
                     "error": error_msg,
                     "command": " ".join(cmd),
                     "timed_out": False,
+                    "success": False,
                     "targets_count": len(all_urls),
                     "meta": {
                         "harvested_requests": harvester_stats.get("total_requests", 0),
@@ -2108,7 +2131,6 @@ class ToolExecutor:
             
             # Mark as successful if we have findings or if exit code is 0
             # Dalfox may return non-zero even with findings, so check output
-            has_findings = normalized_output and normalized_output.strip() not in ["[]", "[{}]", ""]
             return {
                 "tool_name": "dalfox",
                 "output": normalized_output,
