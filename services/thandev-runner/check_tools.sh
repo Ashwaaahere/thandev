@@ -27,11 +27,24 @@ check_tool() {
             local version=$(eval "$version_cmd" 2>&1 | head -1)
             echo "  Version: $version"
         else
-            echo "  Version: (unable to get version)"
+            echo "  Version: (unable to get version, but binary exists)"
+            # Don't exit - binary exists, version check might fail for other reasons
         fi
     else
         echo "  ERROR: $tool_name not found in PATH"
-        exit 1
+        echo "  Checking common locations..."
+        # Check common locations before failing
+        if [ "$tool_name" = "nuclei" ]; then
+            if [ -f "/usr/local/bin/nuclei" ]; then
+                echo "  Found at /usr/local/bin/nuclei"
+                /usr/local/bin/nuclei -version 2>&1 | head -1 || echo "  Warning: Binary exists but version check failed"
+            else
+                echo "  ERROR: nuclei not found in PATH or /usr/local/bin"
+                exit 1
+            fi
+        else
+            exit 1
+        fi
     fi
 }
 

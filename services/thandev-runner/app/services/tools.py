@@ -2206,18 +2206,24 @@ class ToolExecutor:
         
         # ZAP API URL from environment variable
         # Default to zap hostname (Docker network DNS resolution)
-        zap_api_url = os.getenv("ZAP_API_URL", "http://zap:8090")
+        # In Fly.io, use .flycast DNS
+        zap_api_url = os.getenv("ZAP_API_URL", "http://thandev-zap.flycast:8090")
+        
+        logger.info(f"ZAP API URL from environment: {zap_api_url}")
         
         # If using hostname, try to resolve it first, fallback to IP
-        if "zap:" in zap_api_url:
+        if "zap:" in zap_api_url or "thandev-zap" in zap_api_url:
             try:
                 import socket
-                zap_ip = socket.gethostbyname("zap")
-                logger.info(f"Resolved ZAP hostname to IP: {zap_ip}")
+                from urllib.parse import urlparse
+                parsed = urlparse(zap_api_url)
+                hostname = parsed.hostname
+                if hostname:
+                    zap_ip = socket.gethostbyname(hostname)
+                    logger.info(f"Resolved ZAP hostname {hostname} to IP: {zap_ip}")
             except (socket.gaierror, Exception) as e:
-                logger.warning(f"Could not resolve 'zap' hostname ({e}), trying to get IP from Docker network")
-                # Try to get ZAP IP from Docker network inspection or use direct IP
-                # For now, we'll increase retries and wait time for DNS to resolve
+                logger.warning(f"Could not resolve ZAP hostname ({e}), will retry connection attempts")
+                # Don't fail here - connection attempts will handle DNS resolution
                 import time
                 time.sleep(2)  # Give DNS a moment to catch up
         
