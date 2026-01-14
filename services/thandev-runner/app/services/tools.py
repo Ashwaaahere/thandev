@@ -7,6 +7,7 @@ import logging
 import subprocess
 import os
 import json
+import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime
@@ -761,10 +762,11 @@ class ToolExecutor:
         # Check if nuclei is installed
         # Try common locations for nuclei (in order of preference)
         nuclei_binary = None
+        # Check /usr/local/bin first (where Dockerfile installs it)
         possible_paths = [
-            os.path.expanduser("~/go/bin/nuclei"),  # Go bin directory (most common)
+            "/usr/local/bin/nuclei",  # Dockerfile installs here (check first)
+            os.path.expanduser("~/go/bin/nuclei"),  # Go bin directory
             os.path.expanduser("~/.local/thandev-tools/bin/nuclei"),  # Local tools directory
-            "/usr/local/bin/nuclei",
             "nuclei",  # In PATH
         ]
         
@@ -777,18 +779,14 @@ class ToolExecutor:
                         logger.info(f"Found nuclei binary at: {nuclei_binary}")
                         break
                 else:
-                    # Check if command exists in PATH
-                    check_result = await asyncio.to_thread(subprocess.run,
-                        ["which", binary_path],
-                        capture_output=True,
-                        timeout=2,
-                        text=True
-                    )
-                    if check_result.returncode == 0:
-                        nuclei_binary = check_result.stdout.strip()
-                        logger.info(f"Found nuclei binary at: {nuclei_binary}")
+                    # Check if command exists in PATH using shutil.which (more reliable)
+                    found_path = shutil.which(binary_path)
+                    if found_path:
+                        nuclei_binary = found_path
+                        logger.info(f"Found nuclei binary in PATH at: {nuclei_binary}")
                         break
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Error checking nuclei path {binary_path}: {e}")
                 continue
         
         if not nuclei_binary:
