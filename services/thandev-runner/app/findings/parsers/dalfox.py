@@ -41,12 +41,51 @@ def parse_dalfox_output(output_file: Path) -> List[Dict[str, Any]]:
             logger.info(f"Dalfox output file has no content: {output_file}")
             return []
         
-        # Parse JSON
+        # Parse JSON - handle malformed JSON by trying to repair it
         try:
             data = json.loads(content)
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse dalfox JSON from {output_file}: {e}")
-            return []
+            logger.warning(f"Failed to parse dalfox JSON from {output_file}: {e}. Attempting to repair...")
+            # Try to repair common JSON issues:
+            # 1. Truncated JSON - try to find last complete object
+            # 2. Missing closing bracket
+            # 3. Trailing comma
+            try:
+                # Try to find the last complete JSON object/array
+                # Look for the last '}' or ']' that might close the structure
+                repaired = content.rstrip()
+                # Remove trailing comma if present
+                if repaired.rstrip().endswith(','):
+                    repaired = repaired.rstrip()[:-1]
+                # Try to close unclosed arrays/objects
+                open_braces = repaired.count('{') - repaired.count('}')
+                open_brackets = repaired.count('[') - repaired.count(']')
+                if open_braces > 0:
+                    repaired += '}' * open_braces
+                if open_brackets > 0:
+                    repaired += ']' * open_brackets
+                # Try parsing repaired JSON
+                data = json.loads(repaired)
+                logger.info(f"Successfully repaired and parsed dalfox JSON from {output_file}")
+            except (json.JSONDecodeError, ValueError) as repair_error:
+                # If repair fails, try NDJSON parsing (line-by-line)
+                logger.warning(f"JSON repair failed, trying NDJSON parsing: {repair_error}")
+                data = []
+                for line_no, line in enumerate(content.splitlines(), 1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        line_data = json.loads(line)
+                        if isinstance(line_data, dict):
+                            data.append(line_data)
+                        elif isinstance(line_data, list):
+                            data.extend(line_data)
+                    except json.JSONDecodeError:
+                        continue
+                if not data:
+                    logger.error(f"Failed to parse dalfox output from {output_file} as JSON or NDJSON")
+                    return []
         
         # Dalfox outputs an array of findings
         if not isinstance(data, list):

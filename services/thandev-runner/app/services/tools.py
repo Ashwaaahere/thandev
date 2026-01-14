@@ -765,6 +765,7 @@ class ToolExecutor:
         # Check /usr/local/bin first (where Dockerfile installs it)
         possible_paths = [
             "/usr/local/bin/nuclei",  # Dockerfile installs here (check first)
+            "/usr/local/go/bin/nuclei",  # Go bin directory (if GOBIN is set)
             os.path.expanduser("~/go/bin/nuclei"),  # Go bin directory
             os.path.expanduser("~/.local/thandev-tools/bin/nuclei"),  # Local tools directory
             "nuclei",  # In PATH
@@ -788,6 +789,30 @@ class ToolExecutor:
             except Exception as e:
                 logger.debug(f"Error checking nuclei path {binary_path}: {e}")
                 continue
+        
+        # CRITICAL: If still not found, check if Go is installed and try to install nuclei
+        if not nuclei_binary:
+            # Check if Go is available
+            go_binary = shutil.which("go") or "/usr/local/go/bin/go"
+            if os.path.exists(go_binary) and os.access(go_binary, os.X_OK):
+                logger.warning(f"nuclei binary not found, but Go is available. Attempting to install nuclei...")
+                try:
+                    # Try to install nuclei using Go
+                    install_result = await asyncio.to_thread(
+                        subprocess.run,
+                        [go_binary, "install", "-v", "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,  # 2 minutes for installation
+                        env={**os.environ, "GOBIN": "/usr/local/bin", "GOPATH": "/tmp/go"}
+                    )
+                    if install_result.returncode == 0 and os.path.exists("/usr/local/bin/nuclei"):
+                        nuclei_binary = "/usr/local/bin/nuclei"
+                        logger.info(f"Successfully installed and found nuclei binary at: {nuclei_binary}")
+                    else:
+                        logger.error(f"Failed to install nuclei: {install_result.stderr}")
+                except Exception as install_error:
+                    logger.error(f"Error installing nuclei: {install_error}")
         
         if not nuclei_binary:
             error_msg = "Nuclei binary not found or not executable. Please install nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest (ensure ~/go/bin is in PATH)"
