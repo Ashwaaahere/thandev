@@ -10,6 +10,7 @@ primary_region = "iad"
   ENVIRONMENT = "production"
   WEB_CONCURRENCY = "1"
 
+# Public HTTP service
 [http_service]
   internal_port = 8000
   force_https = true
@@ -29,6 +30,16 @@ primary_region = "iad"
     grace_period = "60s"
     method = "GET"
     path = "/healthz"
+
+# Internal service for .internal DNS access
+[[services]]
+  protocol = "tcp"
+  internal_port = 8000
+  processes = ["app"]
+  
+  [[services.ports]]
+    handlers = ["http"]
+    port = 8000
 
 [[vm]]
   cpu_kind = "shared"

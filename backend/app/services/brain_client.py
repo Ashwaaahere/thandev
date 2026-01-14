@@ -112,7 +112,9 @@ class BrainClient:
         logger.debug(f"Plan request: target_url={target_url}, scan_level={scan_level}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     json=request_data.model_dump(exclude_none=True),
@@ -183,7 +185,9 @@ class BrainClient:
         logger.info(f"Requesting report prompt from brain service: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     json=request_data.model_dump(exclude_none=True),
@@ -256,7 +260,9 @@ class BrainClient:
         logger.info(f"Starting brain session for scan_job {scan_job_id}: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     json=payload,
@@ -310,7 +316,9 @@ class BrainClient:
         logger.info(f"Getting brain session status: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.get(
                     endpoint,
                     params=params,
@@ -369,7 +377,9 @@ class BrainClient:
         logger.info(f"Stopping brain session: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     params=params,
@@ -439,7 +449,9 @@ class BrainClient:
         logger.info(f"Stopping brain session {session_id}: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     params=params,
@@ -502,7 +514,9 @@ class BrainClient:
         logger.debug(f"Payload: {len(findings or [])} findings, {len(artifact_summaries or [])} artifacts, {len(tech_fingerprints or [])} fingerprints")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     json=payload,
@@ -573,7 +587,9 @@ class BrainClient:
         logger.info(f"Enriching {len(findings)} findings via brain service: {endpoint}")
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            # Use explicit connect timeout for internal DNS resolution
+            timeout_config = httpx.Timeout(self.timeout, connect=10.0)
+            async with httpx.AsyncClient(timeout=timeout_config) as client:
                 response = await client.post(
                     endpoint,
                     json=payload,

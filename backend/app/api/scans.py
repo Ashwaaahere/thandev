@@ -508,9 +508,11 @@ async def create_scan(
             if not error_detail:
                 error_detail = f"Unknown error: {type(e).__name__}"
             
+            # CRITICAL: Log full error details including connection info
             logger.error(
-                f"Failed to start brain session for scan {scan_job.id}: {error_detail}. "
-                f"BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL}, BRAIN_URL={settings.BRAIN_URL}",
+                f"[BRAIN-SESSION-FAILED] Failed to start brain session for scan {scan_job.id}: {error_detail}. "
+                f"BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL}, BRAIN_URL={settings.BRAIN_URL}, "
+                f"BRAIN_SERVICE_ENABLED={settings.BRAIN_SERVICE_ENABLED}, Error type: {type(e).__name__}",
                 exc_info=True
             )
             
@@ -1017,9 +1019,11 @@ async def quick_scan(
                 if not error_detail:
                     error_detail = f"Unknown error: {type(e).__name__}"
                 
+                # CRITICAL: Log full error details including connection info
                 logger.error(
-                    f"Failed to start brain session for scan {scan_job.id}: {error_detail}. "
-                    f"BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL}, BRAIN_URL={settings.BRAIN_URL}",
+                    f"[BRAIN-SESSION-FAILED] Failed to start brain session for scan {scan_job.id}: {error_detail}. "
+                    f"BRAIN_SERVICE_URL={settings.BRAIN_SERVICE_URL}, BRAIN_URL={settings.BRAIN_URL}, "
+                    f"BRAIN_SERVICE_ENABLED={settings.BRAIN_SERVICE_ENABLED}, Error type: {type(e).__name__}",
                     exc_info=True
                 )
                 

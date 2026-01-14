@@ -21,6 +21,8 @@ MAX_RETRY_DELAY = 60.0  # seconds
 RETRY_EXPONENT = 2.0
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}  # Rate limit, Bad Gateway, Service Unavailable, Gateway Timeout
 REQUEST_TIMEOUT = 60.0  # seconds
+# Connection timeout for initial connection (separate from request timeout)
+CONNECT_TIMEOUT = 10.0  # seconds
 
 
 async def get_scan_status(scan_job_id: str) -> Optional[Dict[str, Any]]:
@@ -39,7 +41,9 @@ async def get_scan_status(scan_job_id: str) -> Optional[Dict[str, Any]]:
         headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
 
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        # Use longer timeout and explicit connect timeout for internal DNS
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.get(endpoint, headers=headers)
             resp.raise_for_status()
             return resp.json()
@@ -72,7 +76,8 @@ async def mark_scan_started(scan_job_id: str) -> bool:
         headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
 
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(endpoint, headers=headers)
             resp.raise_for_status()
             return True
@@ -111,7 +116,8 @@ async def post_tool_started(
         payload["command"] = command
 
     try:
-        async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(endpoint, headers=headers, json=payload)
             resp.raise_for_status()
             return True
@@ -241,7 +247,8 @@ async def post_tool_result(
     last_exception = None
     for attempt in range(MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+            timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.post(
                     endpoint,
                     json=payload,
@@ -279,8 +286,8 @@ async def post_tool_result(
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
                 logger.warning(
-                    f"Network error during tool result POST (attempt {attempt + 1}/{MAX_RETRIES}): {e}. "
-                    f"Retrying in {delay:.2f}s..."
+                    f"Network error during tool result POST (attempt {attempt + 1}/{MAX_RETRIES}): {type(e).__name__}: {e}. "
+                    f"Endpoint: {endpoint}, BACKEND_URL: {settings.BACKEND_URL}. Retrying in {delay:.2f}s..."
                 )
                 await asyncio.sleep(delay)
                 continue
