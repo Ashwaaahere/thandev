@@ -2217,8 +2217,9 @@ class ToolExecutor:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 1.5  # Reduced multiplier from 2 to 1.5 for faster convergence
                 else:
-                    error_msg = f"ZAP API not accessible at {zap_api_url} after {max_retries} attempts: {e}. Ensure ZAP Docker container is running and healthy."
-                    logger.error(error_msg, exc_info=True)
+                    error_msg = f"ZAP API not accessible at {zap_api_url} after {max_retries} attempts: {e}. ZAP is not deployed to Fly.io - skipping ZAP scan."
+                    logger.warning(error_msg)
+                    # Return empty results instead of failing - ZAP is optional in Fly.io deployment
                     return {
                         "tool_name": "zap",
                         "output": "[]",
