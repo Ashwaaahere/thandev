@@ -881,6 +881,8 @@ class ToolExecutor:
             "-rate-limit", rate_limit,  # Lower rate for basic scans
             "-timeout", "10",  # 10 second timeout per request
             "-retries", "1",  # Retry once on failure
+            "-bulk-size", "25",  # Reduce bulk size to lower memory usage (default is 25, but explicit helps)
+            "-c", "50",  # Reduce concurrency to 50 (default is 25, but we want to be conservative for memory)
         ]
         
         # Add -tags argument only if we have tags
@@ -2092,13 +2094,46 @@ class ToolExecutor:
                     error_msg = None  # Don't show error message when we have findings
                 elif stdout_bytes > 0:
                     # We have output but no valid findings (might be malformed JSON or empty)
-                    logger.warning(
-                        "dalfox scan %s completed with exit_code=%s and %d bytes of output but no valid findings",
-                        scan_job_id, exit_code, stdout_bytes
-                    )
-                    # Don't treat as error - might be no XSS found
-                    is_error = False
-                    error_msg = None
+                    # Try to parse the raw output to see if there's any useful data
+                    try:
+                        raw_parsed = json.loads(result.stdout) if result.stdout else None
+                        if raw_parsed and isinstance(raw_parsed, list) and len(raw_parsed) > 0:
+                            # Check if any item has meaningful data
+                            has_any_data = any(
+                                isinstance(item, dict) and item and 
+                                any(v for v in item.values() if v is not None and str(v).strip())
+                                for item in raw_parsed
+                            )
+                            if has_any_data:
+                                logger.info(
+                                    "dalfox scan %s completed with exit_code=%s and output containing data (treating as success, will parse in ingestion)",
+                                    scan_job_id, exit_code
+                                )
+                                is_error = False
+                                error_msg = None
+                            else:
+                                logger.warning(
+                                    "dalfox scan %s completed with exit_code=%s and %d bytes of output but no valid findings",
+                                    scan_job_id, exit_code, stdout_bytes
+                                )
+                                is_error = False
+                                error_msg = None
+                        else:
+                            logger.warning(
+                                "dalfox scan %s completed with exit_code=%s and %d bytes of output but no valid findings",
+                                scan_job_id, exit_code, stdout_bytes
+                            )
+                            is_error = False
+                            error_msg = None
+                    except (json.JSONDecodeError, ValueError) as parse_err:
+                        logger.warning(
+                            "dalfox scan %s completed with exit_code=%s and %d bytes of non-JSON output: %s",
+                            scan_job_id, exit_code, stdout_bytes, str(parse_err)[:100]
+                        )
+                        # Log raw output for debugging
+                        logger.debug("Dalfox raw output (first 500 chars): %s", result.stdout[:500] if result.stdout else "")
+                        is_error = False
+                        error_msg = None
                 elif result.stderr:
                     stderr_lower = result.stderr.lower()
                     if any(keyword in stderr_lower for keyword in ["error", "failed", "fatal", "cannot", "not found"]):
@@ -2211,19 +2246,31 @@ class ToolExecutor:
         
         logger.info(f"ZAP API URL from environment: {zap_api_url}")
         
-        # If using hostname, try to resolve it first, fallback to IP
+        # If using hostname, try to resolve it first, fallback to alternative DNS
+        # Try .flycast first, then .internal as fallback
+        zap_api_urls_to_try = [zap_api_url]
+        if "thandev-zap.flycast" in zap_api_url:
+            # Add .internal fallback
+            zap_api_urls_to_try.append(zap_api_url.replace(".flycast", ".internal"))
+        
         if "zap:" in zap_api_url or "thandev-zap" in zap_api_url:
-            try:
-                import socket
-                from urllib.parse import urlparse
-                parsed = urlparse(zap_api_url)
-                hostname = parsed.hostname
-                if hostname:
-                    zap_ip = socket.gethostbyname(hostname)
-                    logger.info(f"Resolved ZAP hostname {hostname} to IP: {zap_ip}")
-            except (socket.gaierror, Exception) as e:
-                logger.warning(f"Could not resolve ZAP hostname ({e}), will retry connection attempts")
-                # Don't fail here - connection attempts will handle DNS resolution
+            for url_to_try in zap_api_urls_to_try:
+                try:
+                    import socket
+                    from urllib.parse import urlparse
+                    parsed = urlparse(url_to_try)
+                    hostname = parsed.hostname
+                    if hostname:
+                        zap_ip = socket.gethostbyname(hostname)
+                        logger.info(f"Resolved ZAP hostname {hostname} to IP: {zap_ip}")
+                        zap_api_url = url_to_try  # Use the working URL
+                        break
+                except (socket.gaierror, Exception) as e:
+                    logger.debug(f"Could not resolve ZAP hostname {hostname} ({e}), trying next URL...")
+                    continue
+            else:
+                # All DNS resolutions failed, will retry in connection attempts
+                logger.warning(f"Could not resolve ZAP hostname for any URL, will retry connection attempts")
                 import time
                 time.sleep(2)  # Give DNS a moment to catch up
         

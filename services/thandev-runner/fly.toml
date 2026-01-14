@@ -8,8 +8,8 @@ primary_region = "iad"
   CONSUMER_GROUP = "runner-workers"
   CONSUMER_NAME = "runner-1"
   EXECUTION_ADAPTER = "local"
-  MAX_CONCURRENT_STEPS = "10"
-  MAX_INFLIGHT_PER_SESSION = "6"
+  MAX_CONCURRENT_STEPS = "6"
+  MAX_INFLIGHT_PER_SESSION = "4"
   WORDLISTS_DIR = "/opt/thandev/wordlists"
   TOOL_CATALOG_PATH = "/app/catalog/catalog.json"
 
@@ -23,6 +23,6 @@ primary_region = "iad"
 
 [[vm]]
   cpu_kind = "shared"
-  cpus = 2
-  memory_mb = 2048
+  cpus = 4
+  memory_mb = 4096
 
