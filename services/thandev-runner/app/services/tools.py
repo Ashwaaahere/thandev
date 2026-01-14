@@ -2266,17 +2266,20 @@ class ToolExecutor:
         
         # ZAP API URL from environment variable
         # Default to zap hostname (Docker network DNS resolution)
-        # In Fly.io, use .flycast DNS
-        zap_api_url = os.getenv("ZAP_API_URL", "http://thandev-zap.flycast:8090")
+        # In Fly.io, use .internal DNS (same as other services like brain, backend)
+        zap_api_url = os.getenv("ZAP_API_URL", "http://thandev-zap.internal:8090")
         
         logger.info(f"ZAP API URL from environment: {zap_api_url}")
         
         # If using hostname, try to resolve it first, fallback to alternative DNS
-        # Try .flycast first, then .internal as fallback
+        # Try .internal first (standard for Fly.io private networking), then .flycast as fallback
         zap_api_urls_to_try = [zap_api_url]
-        if "thandev-zap.flycast" in zap_api_url:
-            # Add .internal fallback
-            zap_api_urls_to_try.append(zap_api_url.replace(".flycast", ".internal"))
+        if "thandev-zap.internal" in zap_api_url:
+            # Add .flycast fallback (though .internal should work)
+            zap_api_urls_to_try.append(zap_api_url.replace(".internal", ".flycast"))
+        elif "thandev-zap.flycast" in zap_api_url:
+            # Add .internal fallback (preferred)
+            zap_api_urls_to_try.insert(0, zap_api_url.replace(".flycast", ".internal"))
         
         if "zap:" in zap_api_url or "thandev-zap" in zap_api_url:
             for url_to_try in zap_api_urls_to_try:
