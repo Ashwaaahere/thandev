@@ -1065,6 +1065,64 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
             "raw_data": content_clean[:1000],
         })
     
+    # Check for weak ciphers
+    weak_cipher_patterns = [
+        (r'RC4', "high", "RC4 cipher is weak and should be disabled"),
+        (r'DES', "high", "DES cipher is weak and should be disabled"),
+        (r'3DES|Triple DES', "medium", "3DES cipher is deprecated and should be disabled"),
+        (r'MD5', "high", "MD5 hash algorithm is weak and should not be used"),
+        (r'SHA1', "medium", "SHA1 hash algorithm is deprecated and should be disabled"),
+    ]
+    
+    for pattern, severity, description in weak_cipher_patterns:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Weak cipher/hash detected on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-327",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # Check for certificate issues
+    cert_issues = [
+        (r'Certificate.*expired', "high", "SSL certificate has expired"),
+        (r'Certificate.*self.signed', "medium", "Self-signed certificate detected"),
+        (r'Certificate.*invalid', "high", "Invalid SSL certificate detected"),
+        (r'Certificate.*chain.*incomplete', "medium", "Incomplete certificate chain"),
+    ]
+    
+    for pattern, severity, description in cert_issues:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Certificate issue on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-295",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # If we have output but no findings, create an informational finding
+    # This helps users understand that SSLscan ran but found no issues
+    if not findings and content_clean and len(content_clean) > 100:
+        # Only create info finding if we have substantial output
+        findings.append({
+            "severity": "info",
+            "title": f"SSL/TLS scan completed for {target}",
+            "description": f"SSLscan completed successfully. No critical SSL/TLS issues detected. Review raw output for details.",
+            "cve_id": None,
+            "cwe_id": None,
+            "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+            "tool_name": "sslscan",
+            "raw_data": content_clean[:2000],  # Store more data for info findings
+        })
+    
     return findings
 
 
@@ -3665,6 +3723,64 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
             "raw_data": content_clean[:1000],
         })
     
+    # Check for weak ciphers
+    weak_cipher_patterns = [
+        (r'RC4', "high", "RC4 cipher is weak and should be disabled"),
+        (r'DES', "high", "DES cipher is weak and should be disabled"),
+        (r'3DES|Triple DES', "medium", "3DES cipher is deprecated and should be disabled"),
+        (r'MD5', "high", "MD5 hash algorithm is weak and should not be used"),
+        (r'SHA1', "medium", "SHA1 hash algorithm is deprecated and should be disabled"),
+    ]
+    
+    for pattern, severity, description in weak_cipher_patterns:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Weak cipher/hash detected on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-327",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # Check for certificate issues
+    cert_issues = [
+        (r'Certificate.*expired', "high", "SSL certificate has expired"),
+        (r'Certificate.*self.signed', "medium", "Self-signed certificate detected"),
+        (r'Certificate.*invalid', "high", "Invalid SSL certificate detected"),
+        (r'Certificate.*chain.*incomplete', "medium", "Incomplete certificate chain"),
+    ]
+    
+    for pattern, severity, description in cert_issues:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Certificate issue on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-295",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # If we have output but no findings, create an informational finding
+    # This helps users understand that SSLscan ran but found no issues
+    if not findings and content_clean and len(content_clean) > 100:
+        # Only create info finding if we have substantial output
+        findings.append({
+            "severity": "info",
+            "title": f"SSL/TLS scan completed for {target}",
+            "description": f"SSLscan completed successfully. No critical SSL/TLS issues detected. Review raw output for details.",
+            "cve_id": None,
+            "cwe_id": None,
+            "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+            "tool_name": "sslscan",
+            "raw_data": content_clean[:2000],  # Store more data for info findings
+        })
+    
     return findings
 
 
@@ -4366,6 +4482,64 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
             "raw_data": content_clean[:1000],
         })
     
+    # Check for weak ciphers
+    weak_cipher_patterns = [
+        (r'RC4', "high", "RC4 cipher is weak and should be disabled"),
+        (r'DES', "high", "DES cipher is weak and should be disabled"),
+        (r'3DES|Triple DES', "medium", "3DES cipher is deprecated and should be disabled"),
+        (r'MD5', "high", "MD5 hash algorithm is weak and should not be used"),
+        (r'SHA1', "medium", "SHA1 hash algorithm is deprecated and should be disabled"),
+    ]
+    
+    for pattern, severity, description in weak_cipher_patterns:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Weak cipher/hash detected on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-327",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # Check for certificate issues
+    cert_issues = [
+        (r'Certificate.*expired', "high", "SSL certificate has expired"),
+        (r'Certificate.*self.signed', "medium", "Self-signed certificate detected"),
+        (r'Certificate.*invalid', "high", "Invalid SSL certificate detected"),
+        (r'Certificate.*chain.*incomplete', "medium", "Incomplete certificate chain"),
+    ]
+    
+    for pattern, severity, description in cert_issues:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Certificate issue on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-295",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # If we have output but no findings, create an informational finding
+    # This helps users understand that SSLscan ran but found no issues
+    if not findings and content_clean and len(content_clean) > 100:
+        # Only create info finding if we have substantial output
+        findings.append({
+            "severity": "info",
+            "title": f"SSL/TLS scan completed for {target}",
+            "description": f"SSLscan completed successfully. No critical SSL/TLS issues detected. Review raw output for details.",
+            "cve_id": None,
+            "cwe_id": None,
+            "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+            "tool_name": "sslscan",
+            "raw_data": content_clean[:2000],  # Store more data for info findings
+        })
+    
     return findings
 
 
@@ -5068,6 +5242,64 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
             "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
             "tool_name": "sslscan",
             "raw_data": content_clean[:1000],
+        })
+    
+    # Check for weak ciphers
+    weak_cipher_patterns = [
+        (r'RC4', "high", "RC4 cipher is weak and should be disabled"),
+        (r'DES', "high", "DES cipher is weak and should be disabled"),
+        (r'3DES|Triple DES', "medium", "3DES cipher is deprecated and should be disabled"),
+        (r'MD5', "high", "MD5 hash algorithm is weak and should not be used"),
+        (r'SHA1', "medium", "SHA1 hash algorithm is deprecated and should be disabled"),
+    ]
+    
+    for pattern, severity, description in weak_cipher_patterns:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Weak cipher/hash detected on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-327",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # Check for certificate issues
+    cert_issues = [
+        (r'Certificate.*expired', "high", "SSL certificate has expired"),
+        (r'Certificate.*self.signed', "medium", "Self-signed certificate detected"),
+        (r'Certificate.*invalid', "high", "Invalid SSL certificate detected"),
+        (r'Certificate.*chain.*incomplete', "medium", "Incomplete certificate chain"),
+    ]
+    
+    for pattern, severity, description in cert_issues:
+        if re.search(pattern, content_clean, re.IGNORECASE):
+            findings.append({
+                "severity": severity,
+                "title": f"Certificate issue on {target}",
+                "description": f"{description}",
+                "cve_id": None,
+                "cwe_id": "CWE-295",
+                "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+                "tool_name": "sslscan",
+                "raw_data": content_clean[:1000],
+            })
+    
+    # If we have output but no findings, create an informational finding
+    # This helps users understand that SSLscan ran but found no issues
+    if not findings and content_clean and len(content_clean) > 100:
+        # Only create info finding if we have substantial output
+        findings.append({
+            "severity": "info",
+            "title": f"SSL/TLS scan completed for {target}",
+            "description": f"SSLscan completed successfully. No critical SSL/TLS issues detected. Review raw output for details.",
+            "cve_id": None,
+            "cwe_id": None,
+            "url": f"https://{host}:{port}" if port == 443 else f"{host}:{port}",
+            "tool_name": "sslscan",
+            "raw_data": content_clean[:2000],  # Store more data for info findings
         })
     
     return findings
