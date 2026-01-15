@@ -1175,16 +1175,14 @@ def run_scan_for_job(job: "ScanJob") -> None:
                             ScanLevel.PRO: [
                                 ("httpx", "medium"),
                                 ("nuclei", "pro_web"),
-                                ("ffuf", "pro"),
                                 ("nmap", "top_ports"),
                                 ("sslscan", "standard"),
-                                ("dalfox", "constrained"),
+                                ("dalfox", "standard"),
                                 ("zap", "active_scan"),
                             ],
                             ScanLevel.ADVANCED: [
                                 ("httpx", "high"),
                                 ("nuclei", "advanced_web"),
-                                ("ffuf", "advanced"),
                                 ("nmap", "full_ports_scripts"),
                                 ("sslscan", "standard"),
                                 ("dalfox", "standard"),
