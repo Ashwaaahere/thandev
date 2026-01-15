@@ -35,11 +35,25 @@ check_tool() {
         echo "  Checking common locations..."
         # Check common locations before failing
         if [ "$tool_name" = "nuclei" ]; then
+            # Check multiple possible locations
             if [ -f "/usr/local/bin/nuclei" ]; then
                 echo "  Found at /usr/local/bin/nuclei"
-                /usr/local/bin/nuclei -version 2>&1 | head -1 || echo "  Warning: Binary exists but version check failed"
+                if /usr/local/bin/nuclei -version 2>&1 | head -1; then
+                    echo "  ✅ Version check passed"
+                else
+                    echo "  ⚠️  Warning: Binary exists but version check failed (may still work)"
+                fi
+            elif [ -f "/usr/local/go/bin/nuclei" ]; then
+                echo "  Found at /usr/local/go/bin/nuclei"
+                if /usr/local/go/bin/nuclei -version 2>&1 | head -1; then
+                    echo "  ✅ Version check passed"
+                else
+                    echo "  ⚠️  Warning: Binary exists but version check failed (may still work)"
+                fi
             else
-                echo "  ERROR: nuclei not found in PATH or /usr/local/bin"
+                echo "  ERROR: nuclei not found in PATH, /usr/local/bin, or /usr/local/go/bin"
+                echo "  Attempting to list /usr/local/bin contents:"
+                ls -la /usr/local/bin/ | grep -E "nuclei|go" || echo "  No nuclei or go binaries found"
                 exit 1
             fi
         else
