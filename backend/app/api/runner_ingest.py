@@ -100,13 +100,14 @@ async def mark_tool_started_for_runner(
     if not scan_job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Scan not found: {scan_id}")
 
-    # PERMANENT FIX: Look for existing record by tool_run_id OR by tool_name (for PENDING records)
-    # PENDING records don't have tool_run_id yet, so we need to check by tool_name too
+    # PERMANENT FIX: Look for existing record by tool_run_id OR by tool_name (for multi-mode tools like ZAP)
+    # For tools with multiple modes (ZAP: ajax_spider, active_scan), match by tool_name regardless of status
+    # This prevents duplicate records when multiple ZAP modes run
     existing = db.query(ToolResult).filter(
         ToolResult.scan_job_id == scan_id,
         (ToolResult.tool_run_id == payload.tool_run_id) | 
-        ((ToolResult.tool_name == payload.tool_name) & (ToolResult.status == ToolExecutionStatus.PENDING))
-    ).first()
+        ((ToolResult.tool_name == payload.tool_name) & (ToolResult.status.in_([ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING])))
+    ).order_by(ToolResult.created_at.asc()).first()  # Get oldest record if multiple match
 
     now = datetime.now(timezone.utc)
     if existing:
@@ -266,23 +267,43 @@ async def create_tool_result(
     # PERMANENT FIX: Check for existing tool result by tool_run_id OR by tool_name (for PENDING records)
     # This prevents duplicate records when PENDING records exist
     existing_result = None
+    # CRITICAL FIX: For tools with multiple modes (like ZAP), match by tool_name regardless of status
+    # This prevents duplicate records when multiple ZAP modes run (ajax_spider, active_scan)
+    # Match by tool_run_id first (most specific), then by tool_name (for multi-mode tools)
     if tool_result.tool_run_id:
         existing_result = db.query(ToolResult).filter(
             ToolResult.scan_job_id == scan_id,
             (ToolResult.tool_run_id == tool_result.tool_run_id) | 
-            ((ToolResult.tool_name == tool_result.tool_name) & (ToolResult.status == ToolExecutionStatus.PENDING))
-        ).first()
+            ((ToolResult.tool_name == tool_result.tool_name) & (ToolResult.status.in_([ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING])))
+        ).order_by(ToolResult.created_at.asc()).first()  # Get oldest record if multiple match
     else:
-        # Fallback: look for PENDING record by tool_name only
+        # Fallback: look for PENDING or RUNNING record by tool_name (for multi-mode tools like ZAP)
         existing_result = db.query(ToolResult).filter(
             ToolResult.scan_job_id == scan_id,
             ToolResult.tool_name == tool_result.tool_name,
-            ToolResult.status == ToolExecutionStatus.PENDING
-        ).first()
+            ToolResult.status.in_([ToolExecutionStatus.PENDING, ToolExecutionStatus.RUNNING])
+        ).order_by(ToolResult.created_at.asc()).first()  # Get oldest record
     
     # If tool-started created a stub row (status=RUNNING) for this tool_run_id,
     # update that same row with the final tool-results payload instead of treating it
     # as a duplicate.
+    # CRITICAL: Check if tool_run_id already exists on a different record (duplicate prevention)
+    if tool_result.tool_run_id:
+        duplicate_check = db.query(ToolResult).filter(
+            ToolResult.scan_job_id == scan_id,
+            ToolResult.tool_run_id == tool_result.tool_run_id,
+            ToolResult.id != (existing_result.id if existing_result else None)
+        ).first()
+        if duplicate_check:
+            # tool_run_id already exists on a different record - this is a duplicate
+            logger.warning(
+                f"Duplicate tool_run_id {tool_result.tool_run_id} detected. "
+                f"Existing record: {duplicate_check.id}, attempting update: {existing_result.id if existing_result else 'new'}. "
+                f"Updating existing record instead."
+            )
+            # Use the existing record with this tool_run_id
+            existing_result = duplicate_check
+    
     if existing_result:
         existing_meta = existing_result.meta or {}
         existing_hash_v2 = existing_meta.get("payload_hash_v2")
@@ -306,8 +327,22 @@ async def create_tool_result(
                 )
                 existing_result.tool_name = tool_result.tool_name
                 # PERMANENT FIX: Update tool_run_id if not set (for PENDING records)
+                # CRITICAL: Check if tool_run_id is already used by another record before setting it
                 if not existing_result.tool_run_id and tool_result.tool_run_id:
-                    existing_result.tool_run_id = tool_result.tool_run_id
+                    # Check if this tool_run_id is already used by a different record
+                    duplicate_by_tool_run_id = db.query(ToolResult).filter(
+                        ToolResult.scan_job_id == scan_id,
+                        ToolResult.tool_run_id == tool_result.tool_run_id,
+                        ToolResult.id != existing_result.id
+                    ).first()
+                    if duplicate_by_tool_run_id:
+                        # tool_run_id already exists on another record - don't set it to avoid unique constraint violation
+                        logger.warning(
+                            f"tool_run_id {tool_result.tool_run_id} already exists on record {duplicate_by_tool_run_id.id}. "
+                            f"Not setting it on record {existing_result.id} to avoid duplicate key violation."
+                        )
+                    else:
+                        existing_result.tool_run_id = tool_result.tool_run_id
                 existing_result.output = tool_result.output[:10000] if tool_result.output else None
                 existing_result.exit_code = tool_result.exit_code
                 existing_result.execution_time = tool_result.execution_time

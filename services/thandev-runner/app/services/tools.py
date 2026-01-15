@@ -849,9 +849,15 @@ class ToolExecutor:
                     # Log stderr but don't fail if it's just a warning
                     logger.warning(f"nuclei version check stderr: {check_result.stderr[:200]}")
                 
-                # If no stdout and no clear error in stderr, still fail
+                # If no stdout and no clear error in stderr, check if binary exists and is executable
                 if not check_result.stdout:
-                    raise FileNotFoundError("nuclei version check returned no output")
+                    # Check if binary file actually exists and is executable
+                    if os.path.exists(nuclei_binary) and os.access(nuclei_binary, os.X_OK):
+                        # Binary exists and is executable, but version check failed
+                        # This might be a version display issue - log warning but continue
+                        logger.warning(f"nuclei version check returned no output, but binary exists and is executable. Continuing anyway.")
+                    else:
+                        raise FileNotFoundError("nuclei version check returned no output and binary may not be executable")
             
             # If we have version output, log it and continue (even if exit code is non-zero)
             if has_version_output:
@@ -2137,6 +2143,14 @@ class ToolExecutor:
                     error_msg = f"dalfox exited with code {exit_code}: {result.stdout[:200] if result.stdout else ''}"
                     logger.warning("dalfox scan %s failed (cli error): %s", scan_job_id, error_msg)
                 elif stdout_bytes > 0 and has_findings:
+                    # Exit code 2 with findings is normal for Dalfox - it means vulnerabilities were found
+                    # This is NOT an error, it's a success with findings
+                    logger.info(
+                        "dalfox scan %s completed with exit_code=%s and findings detected (treating as success)",
+                        scan_job_id, exit_code
+                    )
+                    is_error = False
+                    error_msg = None
                     # We have output AND findings; dalfox sometimes returns non-zero even on findings.
                     # This is normal - treat as success, don't set error
                     try:
