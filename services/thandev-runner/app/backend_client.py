@@ -96,8 +96,11 @@ async def post_tool_started(
 ) -> bool:
     """
     Notify backend that a tool has started (creates/updates ToolResult with status=RUNNING).
+    
+    This is called AFTER acquiring a concurrency slot, so the tool is actually starting execution.
     """
     if not settings.BACKEND_URL:
+        logger.warning(f"Cannot post tool started for {tool_name}: BACKEND_URL not configured")
         return False
 
     endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_job_id}/tool-started"

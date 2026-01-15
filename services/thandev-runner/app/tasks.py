@@ -157,10 +157,11 @@ async def process_step_request(message: Dict[str, Any]) -> None:
     # Per-session concurrency control: acquire slot
     if not await acquire_session_slot(session_id):
         logger.info(
-            f"Session {session_id} at max concurrency, deferring step {step_id}. "
-            f"Message will be re-delivered by Redis Streams."
+            f"Session {session_id} at max concurrency, deferring step {step_id} (tool: {tool_id}). "
+            f"Message will be re-delivered by Redis Streams when a slot becomes available."
         )
         # Don't ACK - let Redis Streams re-deliver this message later
+        # This is normal behavior - tools will start automatically when slots open
         return
     
     # Parse params and depends_on from JSON strings
