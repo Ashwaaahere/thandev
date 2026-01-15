@@ -9,7 +9,7 @@ primary_region = "iad"
   CONSUMER_NAME = "runner-1"
   EXECUTION_ADAPTER = "local"
   MAX_CONCURRENT_STEPS = "6"
-  MAX_INFLIGHT_PER_SESSION = "4"
+  MAX_INFLIGHT_PER_SESSION = "8"  # Increased from 4 to 8 for advanced scans (8 tools: httpx, nuclei, dalfox, nmap, sslscan, sqlmap, zap ajax_spider, zap active_scan)
   WORDLISTS_DIR = "/opt/thandev/wordlists"
   TOOL_CATALOG_PATH = "/app/catalog/catalog.json"
 
