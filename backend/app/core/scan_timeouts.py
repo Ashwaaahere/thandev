@@ -43,7 +43,7 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
             "sslscan": 180,  # 3 minutes (normally 30s, 6x safety buffer for thorough scan)
             "dalfox": 2400,  # 40 minutes (thorough XSS testing - increased from 20min)
             "sqlmap": 2400,  # 40 minutes (thorough SQLi testing - increased from 20min)
-            "zap": 1200,  # 20 minutes (passive + active + ajax spider)
+            "zap": 2700,  # 45 minutes (increased from 20min - advanced scans run ajax_spider + active_scan, needs more time for comprehensive testing)
         }
     }
 }
