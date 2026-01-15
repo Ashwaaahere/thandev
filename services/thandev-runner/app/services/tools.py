@@ -491,14 +491,25 @@ class ToolExecutor:
         
         # CRITICAL: Extract timeout_seconds and scan_level from params if provided
         # These are passed from backend via runner_client.py
+        # IMPORTANT: Extract AFTER mode mapping to override any defaults from mode mapping
+        # This ensures backend-provided timeouts take precedence
         if "timeout_seconds" in params:
-            internal_kwargs["timeout_seconds"] = params["timeout_seconds"]
-            logger.info(f"Using timeout_seconds={params['timeout_seconds']} from params for {tool_id}")
-        
+            timeout_val = params["timeout_seconds"]
+            internal_kwargs["timeout_seconds"] = timeout_val
+            logger.info(f"Using timeout_seconds={timeout_val} from params for {tool_id}/{mode_id} (override mode default)")
+        elif "timeout_seconds" not in internal_kwargs:
+            logger.warning(
+                f"timeout_seconds NOT found in params or mode config for {tool_id}/{mode_id}. "
+                f"Available params keys: {list(params.keys())}. "
+                f"Available internal_kwargs keys: {list(internal_kwargs.keys())}. "
+                f"This may cause tools to use default timeouts which may be too short."
+            )
+
         if "scan_level" in params:
             # Use scan_level from params (more accurate than inferring from mode_id)
             scan_level = params["scan_level"]
-            logger.info(f"Using scan_level={scan_level} from params for {tool_id}")
+            internal_kwargs["scan_level"] = scan_level
+            logger.info(f"Using scan_level={scan_level} from params for {tool_id}/{mode_id}")
         else:
             # Fallback: Determine scan_level from mode_id (for backward compatibility)
             scan_level = self._infer_scan_level_from_mode(mode_id)
@@ -960,12 +971,21 @@ class ToolExecutor:
         # If not provided, fall back to default but log a warning
         base_timeout = kwargs.get("timeout_seconds")
         if base_timeout is None:
+            # CRITICAL: Use scan-level appropriate defaults instead of generic 300s
+            scan_level_lower = scan_level.lower() if scan_level else "basic"
+            if scan_level_lower == "advanced":
+                default_timeout = 1800  # 30 minutes for advanced
+            elif scan_level_lower == "pro":
+                default_timeout = 1800  # 30 minutes for pro
+            else:
+                default_timeout = 300  # 5 minutes for basic
             logger.warning(
                 f"Nuclei scan {scan_job_id}: timeout_seconds not provided in kwargs! "
-                f"Using default 300s. This may cause premature timeouts. "
+                f"Using scan-level default {default_timeout}s for {scan_level}. "
+                f"This may cause premature timeouts. "
                 f"Available kwargs keys: {list(kwargs.keys())}, scan_level: {scan_level}"
             )
-            base_timeout = 300
+            base_timeout = default_timeout
         
         # Adjust timeout for multiple URLs if needed
         # CRITICAL: Nuclei needs more time per URL when scanning with multiple templates
@@ -1972,18 +1992,27 @@ class ToolExecutor:
         # If not provided, calculate based on URLs and scan level but log a warning
         timeout = kwargs.get("timeout_seconds")
         if timeout is None:
+            # CRITICAL: Use scan-level appropriate defaults instead of generic calculation
+            scan_level_lower = scan_level.lower() if scan_level else "basic"
+            if scan_level_lower == "advanced":
+                default_timeout = 1500  # 25 minutes for advanced
+            elif scan_level_lower == "pro":
+                default_timeout = 1500  # 25 minutes for pro
+            else:
+                default_timeout = 300  # 5 minutes for basic
+            base_timeout_per_url = 30  # 30 seconds per URL
+            # Calculate dynamic timeout based on number of URLs, but use scan-level default as minimum
+            timeout = min(3600, max(default_timeout, len(all_urls) * base_timeout_per_url))
             logger.warning(
                 f"Dalfox scan {scan_job_id}: timeout_seconds not provided in kwargs! "
-                f"Using calculated default. This may cause premature timeouts. "
+                f"Using calculated default {timeout}s (scan_level: {scan_level}, URLs: {len(all_urls)}). "
+                f"This may cause premature timeouts. "
                 f"Available kwargs keys: {list(kwargs.keys())}"
             )
-            base_timeout_per_url = 30  # 30 seconds per URL
-            # Calculate dynamic timeout based on number of URLs
-            timeout = min(3600, max(300, len(all_urls) * base_timeout_per_url))
         else:
             logger.info(
                 f"Dalfox scan {scan_job_id}: Using timeout_seconds={timeout}s from kwargs "
-                f"(scan_level: {scan_level})"
+                f"(scan_level: {scan_level}, URLs: {len(all_urls)})"
             ) 
             
         # Enforce minimums for high-intensity scans with headless browser
