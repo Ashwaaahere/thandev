@@ -53,7 +53,8 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
         {"key": "nmap", "enabled": True, "profile": "full_ports_scripts"},
         {"key": "sslscan", "enabled": True},
         {"key": "sqlmap", "enabled": True},
-        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 1200},
+        {"key": "zap", "enabled": True, "mode": "ajax_spider", "timeout_seconds": 600},  # AJAX spider first
+        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 1800},  # Then active scan (increased timeout)
         # NOTE: Future/experimental tools removed from active matrix
         # These tools are not yet fully wired or stable:
         # - xss_experimental (Playwright-based XSS checks)

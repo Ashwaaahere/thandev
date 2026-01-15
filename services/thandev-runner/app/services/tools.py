@@ -3099,8 +3099,28 @@ class ToolExecutor:
             except: pass
             # #endregion
             
-            alerts_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?apikey=", timeout=timeout_seconds)
-            all_alerts = alerts_response.json().get("alerts", [])
+            # Retry alert retrieval with exponential backoff (ZAP connection can be flaky)
+            max_retries = 5
+            retry_delay = 2
+            all_alerts = []
+            for attempt in range(max_retries):
+                try:
+                    alerts_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?apikey=", timeout=30)
+                    alerts_response.raise_for_status()
+                    all_alerts = alerts_response.json().get("alerts", [])
+                    logger.info(f"Successfully retrieved {len(all_alerts)} alerts from ZAP (attempt {attempt + 1})")
+                    break
+                except (requests.exceptions.ConnectionError, requests.exceptions.ProtocolError, requests.exceptions.Timeout) as e:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Failed to retrieve ZAP alerts (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
+                        await asyncio.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff, max 10s
+                        # Recreate session if connection was closed
+                        http_session = requests.Session()
+                        http_session.mount('http://', requests.adapters.HTTPAdapter(max_retries=1))
+                    else:
+                        logger.error(f"Failed to retrieve ZAP alerts after {max_retries} attempts: {e}")
+                        raise
             
             # #region agent log
             try:

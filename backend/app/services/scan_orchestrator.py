@@ -1189,7 +1189,8 @@ def run_scan_for_job(job: "ScanJob") -> None:
                                 ("sslscan", "standard"),
                                 ("dalfox", "standard"),
                                 ("sqlmap", "sqli_light"),
-                                ("zap", "ajax_spider"),
+                                ("zap", "ajax_spider"),  # AJAX spider first
+                                ("zap", "active_scan"),  # Then active scan
                             ],
                         }
                         
