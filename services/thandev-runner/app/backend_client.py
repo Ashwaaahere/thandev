@@ -123,9 +123,11 @@ async def post_tool_started(
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(endpoint, headers=headers, json=payload)
             resp.raise_for_status()
+            logger.info(f"Posted tool-started for {tool_name} (scan {scan_job_id}, step {step_id}) - status will change to RUNNING")
             return True
     except Exception as e:
-        logger.warning(f"Failed to post tool-started for scan {scan_job_id} tool {tool_name}: {e}")
+        logger.error(f"Failed to post tool-started for {tool_name} (scan {scan_job_id}, step {step_id}): {e}")
+        # This is non-critical - tool will still execute, but UI won't show RUNNING status immediately
         return False
 
 
