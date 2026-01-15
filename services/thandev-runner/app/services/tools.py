@@ -508,11 +508,13 @@ class ToolExecutor:
         if "scan_level" in params:
             # Use scan_level from params (more accurate than inferring from mode_id)
             scan_level = params["scan_level"]
-            internal_kwargs["scan_level"] = scan_level
             logger.info(f"Using scan_level={scan_level} from params for {tool_id}/{mode_id}")
         else:
             # Fallback: Determine scan_level from mode_id (for backward compatibility)
             scan_level = self._infer_scan_level_from_mode(mode_id)
+        
+        # CRITICAL: Do NOT add scan_level to internal_kwargs - it's passed as positional argument
+        # Adding it to kwargs would cause "got multiple values for argument 'scan_level'" error
         
         # Add metadata
         if scan_job_id:
@@ -520,13 +522,14 @@ class ToolExecutor:
         if job_dir:
             internal_kwargs["scan_job_dir"] = job_dir
         
-        logger.info(f"Executing tool_id={tool_id}, mode_id={mode_id} on {target_url}")
+        logger.info(f"Executing tool_id={tool_id}, mode_id={mode_id} on {target_url} (scan_level={scan_level})")
         
         # Track execution time (like run_tool does)
         start_time = datetime.utcnow()
         
         try:
             # Call internal tool runner
+            # scan_level is passed as positional argument, NOT in kwargs
             tool_runner = self.supported_tools[tool_id]
             result = await tool_runner(target_url, scan_level, **internal_kwargs)
             
