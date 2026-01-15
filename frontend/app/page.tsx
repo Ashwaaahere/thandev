@@ -867,7 +867,7 @@ export default function ThandevLanding() {
             <div aria-hidden className="pointer-events-none absolute -right-8 top-10 h-24 w-24 rounded-full bg-indigo-400/20 blur-3xl" />
             <div className="hero-surface p-5 shadow-deep">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Quick Start</h3>
+                <h3 className="text-lg font-semibold">Security Dashboard</h3>
                 <div className="hidden sm:flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
                   <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
@@ -878,21 +878,24 @@ export default function ThandevLanding() {
               <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
 
               <figure className="mt-4 overflow-hidden rounded-2xl border card-border shadow-soft">
-                <div className="flex items-center justify-between px-3 py-2 backdrop-blur-md bg-white/45 dark:bg-slate-900/30">
-                  <div className="text-xs font-mono text-[var(--muted)]">Thandev • guide</div>
+                <div className="relative w-full">
+                  <img 
+                    src="/dashboard-hero.png" 
+                    alt="Thandev Security Dashboard showing scan health, alerts, and security findings"
+                    className="w-full h-auto object-contain rounded-2xl"
+                    onError={(e) => {
+                      // Fallback if image doesn't exist yet
+                      const target = e.target as HTMLImageElement;
+                      target.style.display = 'none';
+                      const fallback = target.nextElementSibling as HTMLElement;
+                      if (fallback) fallback.style.display = 'block';
+                    }}
+                  />
+                  <div className="hidden p-8 backdrop-blur-md bg-white/45 dark:bg-slate-900/30 text-center text-[var(--muted)]">
+                    <p className="text-sm">Dashboard image will appear here</p>
+                    <p className="text-xs mt-2">Please add dashboard-hero.png to /public folder</p>
+                  </div>
                 </div>
-                <pre className="font-code text-[13px] leading-[1.6] px-4 py-4 sm:px-6 sm:py-5 backdrop-blur-md dark:text-slate-100 dark:bg-slate-900/35">{`# Available Now
-🌐 Web App - thandev.com
-📱 Responsive design for all devices
-
-# Authentication Required
-🔐 GitHub Login - Required for full access
-🆓 Free Tier - 1 scan per device (no login)
-⭐ Pro Features - Unlimited scans (GitHub auth)
-
-# Coming Soon
-🔌 Browser Extension - Chrome, Firefox
-💻 VS Code Extension - Real-time scanning`}</pre>
               </figure>
 
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
