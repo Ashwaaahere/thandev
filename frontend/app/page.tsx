@@ -862,49 +862,93 @@ export default function ThandevLanding() {
             whileHover={{ y: -4 }}
             style={{ opacity: 1 }} // Fallback: ensure visible even if animation doesn't run
           >
-            {/* floating micro-orbs */}
-            <div aria-hidden className="pointer-events-none absolute -left-6 -top-6 h-16 w-16 rounded-full bg-cyan-400/25 blur-2xl" />
-            <div aria-hidden className="pointer-events-none absolute -right-8 top-10 h-24 w-24 rounded-full bg-indigo-400/20 blur-3xl" />
-            <div className="hero-surface p-5 shadow-deep">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Security Dashboard</h3>
-                <div className="hidden sm:flex items-center gap-1.5">
-                  <span className="h-2.5 w-2.5 rounded-full bg-rose-400/80" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-amber-400/80" />
-                  <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/80" />
+            {/* Security Dashboard Widget - Matching provided design */}
+            <div className="rounded-2xl bg-slate-800/90 dark:bg-slate-900/90 border border-slate-700/50 p-6">
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1 w-1 rounded-full bg-slate-500" />
+                  <div className="h-1 w-1 rounded-full bg-slate-500" />
+                  <div className="h-1 w-1 rounded-full bg-slate-500" />
+                </div>
+                <div className="text-xs text-slate-400 font-mono">
+                  SESSION: US-EAST-1 // SECURE_NODE_01
                 </div>
               </div>
 
-              <div className="mt-3 h-px w-full bg-gradient-to-r from-transparent via-[var(--hairline)] to-transparent" />
-
-              <figure className="mt-4 overflow-hidden rounded-2xl border card-border shadow-soft">
-                <div className="relative w-full">
-                  <img 
-                    src="/dashboard-hero.png" 
-                    alt="Thandev Security Dashboard showing scan health, alerts, and security findings"
-                    className="w-full h-auto object-contain rounded-2xl"
-                    onError={(e) => {
-                      // Fallback if image doesn't exist yet
-                      const target = e.target as HTMLImageElement;
-                      target.style.display = 'none';
-                      const fallback = target.nextElementSibling as HTMLElement;
-                      if (fallback) fallback.style.display = 'block';
-                    }}
-                  />
-                  <div className="hidden p-8 backdrop-blur-md bg-white/45 dark:bg-slate-900/30 text-center text-[var(--muted)]">
-                    <p className="text-sm">Dashboard image will appear here</p>
-                    <p className="text-xs mt-2">Please add dashboard-hero.png to /public folder</p>
-                  </div>
+              {/* Key Metrics Section */}
+              <div className="grid grid-cols-3 gap-3 mb-6">
+                {/* SCAN HEALTH Card */}
+                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
+                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">SCAN HEALTH</div>
+                  <div className="text-2xl font-bold text-green-400">99.8%</div>
                 </div>
-              </figure>
 
-              <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
-                <span className="badge-live">
-                  <span className="live-dot" /> Live
-                </span>
-                <span className="rounded-full px-2.5 py-1 bg-green-400/10 text-green-700 dark:text-green-300 border border-green-400/20">Web App</span>
-                <span className="rounded-full px-2.5 py-1 bg-orange-400/10 text-orange-700 dark:text-orange-300 border border-orange-400/20">GitHub Auth</span>
-                <span className="rounded-full px-2.5 py-1 bg-blue-400/10 text-blue-700 dark:text-blue-300 border border-blue-400/20">Extensions Soon</span>
+                {/* ALERTS Card */}
+                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
+                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">ALERTS</div>
+                  <div className="text-2xl font-bold text-white">04</div>
+                </div>
+
+                {/* NODES Card */}
+                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
+                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">NODES</div>
+                  <div className="text-2xl font-bold text-purple-400">Active</div>
+                </div>
+              </div>
+
+              {/* Vulnerability List */}
+              <div className="space-y-2">
+                {/* SQL Injection Path - CRITICAL */}
+                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-red-500/20 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <span className="text-white font-medium">SQL Injection Path</span>
+                  </div>
+                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-red-500 text-white">CRITICAL</span>
+                </div>
+
+                {/* Domain Spoof Attempt - HIGH */}
+                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                    <span className="text-white font-medium">Domain Spoof Attempt</span>
+                  </div>
+                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-orange-500 text-white">HIGH</span>
+                </div>
+
+                {/* XSS Risk (Filtered) - MEDIUM */}
+                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                      <span className="text-yellow-500 text-xs font-bold">i</span>
+                    </div>
+                    <span className="text-white font-medium">XSS Risk (Filtered)</span>
+                  </div>
+                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-yellow-500 text-white">MEDIUM</span>
+                </div>
+
+                {/* Dependency Audit - LOW */}
+                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
+                      <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    </div>
+                    <span className="text-white font-medium">Dependency Audit</span>
+                  </div>
+                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-blue-500 text-white">LOW</span>
+                </div>
               </div>
             </div>
           </motion.div>
