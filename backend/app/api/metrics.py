@@ -283,21 +283,16 @@ async def get_dashboard_overview(
         scans_this_month = 0
     
     # Recent scans (last 10, ordered by created_at DESC)
-    # Use with_entities to only select columns that exist
+    # Load full ScanJob objects with project relationship
     from sqlalchemy.orm import joinedload
     try:
-        # Only select columns that exist, avoiding scan_level
         recent_scan_jobs_query = (
             scans_query
-            .with_entities(ScanJob.id, ScanJob.status, ScanJob.summary, ScanJob.project_id, ScanJob.created_at, ScanJob.completed_at)
             .options(joinedload(ScanJob.project))
             .order_by(ScanJob.created_at.desc())
             .limit(10)
         )
-        recent_scan_rows = recent_scan_jobs_query.all()
-        # For now, skip building RecentScanItem since we don't have all columns
-        # Return empty list to avoid errors
-        recent_scan_jobs = []
+        recent_scan_jobs = recent_scan_jobs_query.all()
     except Exception as fetch_error:
         logger.warning(f"Error fetching recent scans, likely due to missing columns: {fetch_error}")
         db.rollback()
