@@ -179,6 +179,9 @@ type LiveStats = {
   vendorsToday: number | null;
   checksPerRun: number | null;        // reserved (soon)
   issuesPrevented: number | null;     // reserved (soon)
+  totalScans: number | null;
+  totalProjects: number | null;
+  totalVulnerabilities: number | null;
 };
 
 function unique<T>(arr: T[]) {
@@ -192,13 +195,17 @@ function useLiveStats(): LiveStats {
     vendorsToday: null,
     checksPerRun: null,
     issuesPrevented: null,
+    totalScans: null,
+    totalProjects: null,
+    totalVulnerabilities: null,
   });
 
   useEffect(() => {
     const API =
       process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ?? "https://thandev-backend.fly.dev";
 
-    (async () => {
+    // Fetch stats immediately
+    const fetchStats = async () => {
       try {
         // 1) Try a dedicated stats endpoint
         let signals: number | null = null;
@@ -282,17 +289,57 @@ function useLiveStats(): LiveStats {
           }
         }
 
+        // Fetch platform stats from public API
+        let platformStats = {
+          totalScans: null as number | null,
+          totalProjects: null as number | null,
+          totalVulnerabilities: null as number | null,
+        };
+        try {
+          const statsRes = await fetch(`${API}/api/stats`).then((r) => {
+            if (!r.ok) {
+              console.warn(`Stats API returned ${r.status}: ${r.statusText}`);
+              return null;
+            }
+            return r.json();
+          });
+          
+          if (statsRes) {
+            // Handle both 0 and positive numbers - 0 is a valid value!
+            platformStats = {
+              totalScans: typeof statsRes.total_scans === "number" ? statsRes.total_scans : (statsRes.total_scans === 0 ? 0 : null),
+              totalProjects: typeof statsRes.total_projects === "number" ? statsRes.total_projects : (statsRes.total_projects === 0 ? 0 : null),
+              totalVulnerabilities: typeof statsRes.total_vulnerabilities === "number" ? statsRes.total_vulnerabilities : (statsRes.total_vulnerabilities === 0 ? 0 : null),
+            };
+            console.log("Platform stats fetched:", platformStats);
+          } else {
+            console.warn("Stats API returned null or empty response");
+          }
+        } catch (statsError) {
+          console.error("Error fetching platform stats:", statsError);
+          // Keep nulls if stats fetch fails
+        }
+
         setStats({
           signalsToday: typeof signals === "number" ? signals : null,
           exploitsToday: typeof exploits === "number" ? exploits : null,
           vendorsToday: typeof vendors === "number" ? vendors : null,
           checksPerRun: typeof checks === "number" ? checks : null, // may stay null (soon)
           issuesPrevented: typeof prevented === "number" ? prevented : null, // may stay null (soon)
+          ...platformStats,
         });
       } catch {
         // keep nulls
       }
-    })();
+    };
+
+    // Fetch immediately
+    fetchStats();
+
+    // Set up polling for real-time updates (every 30 seconds)
+    const interval = setInterval(fetchStats, 30000);
+
+    return () => clearInterval(interval);
   }, []);
 
   return stats;
@@ -305,15 +352,32 @@ function useLiveStats(): LiveStats {
 function useCountUp(active: boolean, to: number, duration = 1000) {
   const ref = useRef<HTMLSpanElement>(null);
   useEffect(() => {
-    if (!active || !ref.current) return;
+    if (!ref.current) return;
+    
+    if (!active) {
+      // If not active, set the value immediately (for 0 or initial state)
+      ref.current.textContent = to.toLocaleString();
+      return;
+    }
+    
+    // Animate from 0 to target value
     let raf = 0;
     const start = performance.now();
     const tick = (t: number) => {
       const p = Math.min(1, (t - start) / duration);
       const eased = 1 - Math.pow(1 - p, 4);
       const n = Math.round(to * eased);
-      if (ref.current) ref.current.textContent = n.toLocaleString();
-      if (p < 1) raf = requestAnimationFrame(tick);
+      if (ref.current) {
+        ref.current.textContent = n.toLocaleString();
+      }
+      if (p < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        // Ensure final value is set exactly
+        if (ref.current) {
+          ref.current.textContent = to.toLocaleString();
+        }
+      }
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
@@ -862,92 +926,92 @@ export default function ThandevLanding() {
             whileHover={{ y: -4 }}
             style={{ opacity: 1 }} // Fallback: ensure visible even if animation doesn't run
           >
-            {/* Security Dashboard Widget - Matching provided design */}
-            <div className="rounded-2xl bg-slate-800/90 dark:bg-slate-900/90 border border-slate-700/50 p-6">
-              {/* Header */}
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-1.5">
-                  <div className="h-1 w-1 rounded-full bg-slate-500" />
-                  <div className="h-1 w-1 rounded-full bg-slate-500" />
-                  <div className="h-1 w-1 rounded-full bg-slate-500" />
+            {/* Security Dashboard Widget - Compact & Classy Design */}
+            <div className="rounded-2xl backdrop-blur-xl bg-slate-800/40 dark:bg-slate-900/40 border border-slate-700/30 shadow-2xl p-4">
+              {/* Header - Compact */}
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-1">
+                  <div className="h-0.5 w-0.5 rounded-full bg-slate-400/60" />
+                  <div className="h-0.5 w-0.5 rounded-full bg-slate-400/60" />
+                  <div className="h-0.5 w-0.5 rounded-full bg-slate-400/60" />
                 </div>
-                <div className="text-xs text-slate-400 font-mono">
+                <div className="text-[10px] text-slate-400/80 font-mono tracking-wider">
                   SESSION: US-EAST-1 // SECURE_NODE_01
                 </div>
               </div>
 
-              {/* Key Metrics Section */}
-              <div className="grid grid-cols-3 gap-3 mb-6">
+              {/* Key Metrics Section - Compact */}
+              <div className="grid grid-cols-3 gap-2 mb-3">
                 {/* SCAN HEALTH Card */}
-                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
-                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">SCAN HEALTH</div>
-                  <div className="text-2xl font-bold text-green-400">99.8%</div>
+                <div className="rounded-lg backdrop-blur-sm bg-slate-700/30 border border-slate-600/20 p-2.5">
+                  <div className="text-[10px] uppercase text-slate-400/70 mb-1 tracking-wider font-medium">SCAN HEALTH</div>
+                  <div className="text-xl font-bold text-green-400/90 leading-tight">99.8%</div>
                 </div>
 
                 {/* ALERTS Card */}
-                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
-                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">ALERTS</div>
-                  <div className="text-2xl font-bold text-white">04</div>
+                <div className="rounded-lg backdrop-blur-sm bg-slate-700/30 border border-slate-600/20 p-2.5">
+                  <div className="text-[10px] uppercase text-slate-400/70 mb-1 tracking-wider font-medium">ALERTS</div>
+                  <div className="text-xl font-bold text-white leading-tight">04</div>
                 </div>
 
                 {/* NODES Card */}
-                <div className="rounded-xl bg-slate-700/50 p-4 border border-slate-600/30">
-                  <div className="text-xs uppercase text-slate-400 mb-2 tracking-wide">NODES</div>
-                  <div className="text-2xl font-bold text-purple-400">Active</div>
+                <div className="rounded-lg backdrop-blur-sm bg-slate-700/30 border border-slate-600/20 p-2.5">
+                  <div className="text-[10px] uppercase text-slate-400/70 mb-1 tracking-wider font-medium">NODES</div>
+                  <div className="text-xl font-bold text-purple-400/90 leading-tight">Active</div>
                 </div>
               </div>
 
-              {/* Vulnerability List */}
-              <div className="space-y-2">
+              {/* Vulnerability List - Compact */}
+              <div className="space-y-1.5">
                 {/* SQL Injection Path - CRITICAL */}
-                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-red-500/20 flex items-center justify-center">
-                      <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                <div className="rounded-lg backdrop-blur-sm bg-slate-800/30 dark:bg-slate-900/30 border border-slate-700/25 p-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-red-500/15 flex items-center justify-center border border-red-500/20">
+                      <svg className="w-3 h-3 text-red-400" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
                       </svg>
                     </div>
-                    <span className="text-white font-medium">SQL Injection Path</span>
+                    <span className="text-sm text-white/90 font-medium">SQL Injection Path</span>
                   </div>
-                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-red-500 text-white">CRITICAL</span>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-red-500/90 text-white tracking-wide">CRITICAL</span>
                 </div>
 
                 {/* Domain Spoof Attempt - HIGH */}
-                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center">
-                      <svg className="w-4 h-4 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+                <div className="rounded-lg backdrop-blur-sm bg-slate-800/30 dark:bg-slate-900/30 border border-slate-700/25 p-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-orange-500/15 flex items-center justify-center border border-orange-500/20">
+                      <svg className="w-3 h-3 text-orange-400" fill="currentColor" viewBox="0 0 20 20">
                         <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                       </svg>
                     </div>
-                    <span className="text-white font-medium">Domain Spoof Attempt</span>
+                    <span className="text-sm text-white/90 font-medium">Domain Spoof Attempt</span>
                   </div>
-                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-orange-500 text-white">HIGH</span>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-orange-500/90 text-white tracking-wide">HIGH</span>
                 </div>
 
                 {/* XSS Risk (Filtered) - MEDIUM */}
-                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                      <span className="text-yellow-500 text-xs font-bold">i</span>
+                <div className="rounded-lg backdrop-blur-sm bg-slate-800/30 dark:bg-slate-900/30 border border-slate-700/25 p-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-yellow-500/15 flex items-center justify-center border border-yellow-500/20">
+                      <span className="text-yellow-400 text-[10px] font-bold">i</span>
                     </div>
-                    <span className="text-white font-medium">XSS Risk (Filtered)</span>
+                    <span className="text-sm text-white/90 font-medium">XSS Risk (Filtered)</span>
                   </div>
-                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-yellow-500 text-white">MEDIUM</span>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-yellow-500/90 text-white tracking-wide">MEDIUM</span>
                 </div>
 
                 {/* Dependency Audit - LOW */}
-                <div className="rounded-xl bg-slate-800/60 dark:bg-slate-900/60 border border-slate-700/40 p-4 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
-                      <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="rounded-lg backdrop-blur-sm bg-slate-800/30 dark:bg-slate-900/30 border border-slate-700/25 p-2.5 flex items-center justify-between">
+                  <div className="flex items-center gap-2.5">
+                    <div className="flex-shrink-0 w-5 h-5 rounded-full bg-blue-500/15 flex items-center justify-center border border-blue-500/20">
+                      <svg className="w-3 h-3 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                       </svg>
                     </div>
-                    <span className="text-white font-medium">Dependency Audit</span>
+                    <span className="text-sm text-white/90 font-medium">Dependency Audit</span>
                   </div>
-                  <span className="px-2.5 py-1 rounded text-xs font-semibold bg-blue-500 text-white">LOW</span>
+                  <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-blue-500/90 text-white tracking-wide">LOW</span>
                 </div>
               </div>
             </div>
@@ -958,12 +1022,42 @@ export default function ThandevLanding() {
       </section>
 
 
-      {/* MVP Stat strip — shows real counts */}
-      <section className="mx-auto max-w-7xl px-6">
+      {/* Platform Stats — Real-time metrics */}
+      <section className="mx-auto max-w-7xl px-6 py-8">
         <div className="grid gap-3 sm:grid-cols-3">
-          <StatTile label="Signals today" value={live.signalsToday} />
-          <StatTile label="New exploits today" value={live.exploitsToday} />
-          <StatTile label="Vendors touched" value={live.vendorsToday} />
+          <PlatformStatCard 
+            label="Total Scans" 
+            value={live.totalScans} 
+            icon={
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            }
+            gradient="from-blue-500/20 to-cyan-500/20"
+            textColor="text-blue-400"
+          />
+          <PlatformStatCard 
+            label="Active Projects" 
+            value={live.totalProjects} 
+            icon={
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+              </svg>
+            }
+            gradient="from-purple-500/20 to-pink-500/20"
+            textColor="text-purple-400"
+          />
+          <PlatformStatCard 
+            label="Vulnerabilities Found" 
+            value={live.totalVulnerabilities} 
+            icon={
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            }
+            gradient="from-red-500/20 to-orange-500/20"
+            textColor="text-red-400"
+          />
         </div>
       </section>
 
@@ -1359,6 +1453,53 @@ function StatTile({ label, value }: { label: string; value: number | null }) {
     <div className="rounded-xl border card-border bg-white/40 dark:bg-white/5 p-4 shadow-soft flex items-center justify-between">
       <div className="text-sm muted">{label}</div>
       <div className="text-2xl font-semibold tabular-nums">{value == null ? "—" : <span ref={ref}>0</span>}</div>
+    </div>
+  );
+}
+
+function PlatformStatCard({ 
+  label, 
+  value, 
+  icon, 
+  gradient, 
+  textColor 
+}: { 
+  label: string; 
+  value: number | null; 
+  icon: React.ReactNode;
+  gradient: string;
+  textColor: string;
+}) {
+  // Allow 0 as a valid value (not null) - 0 means no data yet, null means loading
+  const hasValue = value !== null && value !== undefined;
+  const displayValue = hasValue ? value : 0;
+  const ref = useCountUp(hasValue, displayValue, 1000);
+  
+  return (
+    <div className="group relative overflow-hidden rounded-xl backdrop-blur-md bg-slate-800/50 dark:bg-slate-900/50 border border-slate-700/40 shadow-xl hover:shadow-2xl hover:border-slate-600/60 transition-all duration-300">
+      {/* Subtle gradient overlay on hover */}
+      <div className={`absolute inset-0 bg-gradient-to-br ${gradient} opacity-0 group-hover:opacity-30 transition-opacity duration-300`} />
+      
+      <div className="relative p-3.5 flex items-center justify-between min-h-[70px]">
+        <div className="flex items-center gap-3 flex-1">
+          {/* Icon container - more refined */}
+          <div className={`flex-shrink-0 w-9 h-9 rounded-lg bg-slate-700/60 dark:bg-slate-800/60 flex items-center justify-center ${textColor} border border-slate-600/40 shadow-inner`}>
+            {icon}
+          </div>
+          
+          {/* Label and Value - compact layout */}
+          <div className="flex flex-col justify-center min-w-0 flex-1">
+            <div className="text-[10px] uppercase text-slate-400/80 tracking-widest font-semibold mb-1 leading-tight">{label}</div>
+            <div className={`text-xl font-bold tabular-nums ${textColor} leading-none`}>
+              {value == null ? (
+                <div className="h-5 w-16 bg-slate-700/30 rounded animate-pulse" />
+              ) : (
+                <span ref={ref} className="inline-block min-w-[3ch]">{displayValue.toLocaleString()}</span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
