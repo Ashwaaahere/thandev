@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Thandev Core Dashboard Experience</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&amp;family=Space+Grotesk:wght@500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#4c7ff6",
+                        "background-light": "#fcfcfd",
+                        "background-dark": "#0c162c",
+                        "navy-card": "#1a2437",
+                        "electric-blue": "#4c7ff6",
+                        "critical": "#ef4444",
+                    },
+                    fontFamily: {
+                        "display": ["Manrope", "sans-serif"],
+                        "technical": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: { "DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px" },
+                },
+            },
+        }
+    </script>
+<style>
+        .glass {
+            background: rgba(26, 36, 55, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .pulse-blue {
+            box-shadow: 0 0 0 0 rgba(76, 127, 246, 0.7);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76, 127, 246, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(76, 127, 246, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(76, 127, 246, 0); }
+        }
+        .sidebar-item-active {
+            background: linear-gradient(90deg, rgba(76, 127, 246, 0.15) 0%, rgba(76, 127, 246, 0) 100%);
+            border-left: 3px solid #4c7ff6;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-200 antialiased overflow-x-hidden">
+<div class="flex min-h-screen">
+<!-- Sidebar -->
+<aside class="w-64 glass border-r border-white/5 flex flex-col fixed h-full z-50">
+<div class="p-6 flex items-center gap-3">
+<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+<span class="material-symbols-outlined text-white font-bold">terminal</span>
+</div>
+<div>
+<h1 class="text-xl font-bold tracking-tight text-white leading-none">Thandev</h1>
+<p class="text-[10px] uppercase tracking-widest text-primary font-bold mt-1">Platform</p>
+</div>
+</div>
+<nav class="flex-1 mt-4 px-3 space-y-1">
+<div class="sidebar-item-active flex items-center gap-3 px-4 py-3 rounded-r-xl group cursor-pointer">
+<span class="material-symbols-outlined text-primary group-hover:scale-110 transition-transform">dashboard</span>
+<span class="text-sm font-medium text-white">Overview</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 group cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">account_tree</span>
+<span class="text-sm font-medium text-slate-400 group-hover:text-white">Projects</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 group cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">radar</span>
+<span class="text-sm font-medium text-slate-400 group-hover:text-white">Scans</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 group cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">security</span>
+<span class="text-sm font-medium text-slate-400 group-hover:text-white">Vulnerabilities</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 group cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">analytics</span>
+<span class="text-sm font-medium text-slate-400 group-hover:text-white">Reports</span>
+</div>
+<div class="flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-white/5 group cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-slate-400 group-hover:text-white">settings</span>
+<span class="text-sm font-medium text-slate-400 group-hover:text-white">Settings</span>
+</div>
+</nav>
+<div class="p-4 border-t border-white/5">
+<div class="bg-white/5 rounded-xl p-4">
+<p class="text-[10px] text-slate-500 font-bold uppercase mb-2">System Status</p>
+<div class="flex items-center gap-2">
+<div class="size-2 rounded-full bg-emerald-500"></div>
+<span class="text-xs text-emerald-500 font-medium">All nodes operational</span>
+</div>
+</div>
+</div>
+</aside>
+<!-- Main Content -->
+<main class="flex-1 ml-64 p-8">
+<!-- Header -->
+<header class="flex items-center justify-between mb-8">
+<div class="flex items-center gap-4">
+<h2 class="text-2xl font-bold text-white tracking-tight">Dashboard Overview</h2>
+<div class="h-6 w-px bg-white/10 mx-2"></div>
+<div class="relative group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-primary transition-colors">search</span>
+<input class="bg-navy-card/50 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-sm w-80 focus:ring-1 focus:ring-primary focus:border-primary transition-all text-white placeholder:text-slate-500 outline-none" placeholder="Search resources..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="relative p-2.5 bg-navy-card rounded-xl border border-white/5 hover:bg-white/5 text-slate-400 hover:text-white transition-all">
+<span class="material-symbols-outlined">notifications</span>
+<span class="absolute top-2.5 right-2.5 size-2 bg-critical rounded-full ring-2 ring-background-dark"></span>
+</button>
+<div class="flex items-center gap-3 pl-4 border-l border-white/10">
+<div class="text-right">
+<p class="text-sm font-bold text-white leading-tight">Alex Devson</p>
+<p class="text-xs text-slate-400">SecOps Engineer</p>
+</div>
+<div class="size-10 rounded-xl bg-primary/20 border border-primary/30 overflow-hidden">
+<img class="w-full h-full object-cover" data-alt="User profile avatar engineer" src="https://lh3.googleusercontent.com/aida-public/AB6AXuASQkZAcBNt8VuYc1Tzs40R7k7fk2Z3ECilgFJ52mHWbvqZQcJ4MnKGFm8Hj3rEjMddIZfoV6kfu1uAtJuWXZZW8lwmnjC2jCra9ZhPxnyrLFR2Aa-zNdv8t39Tg0OgqQEEqdDdrhbWJxbWIL0DlaNRbX9pfaPz36fAzzCfgDkV0eY3MBI_7u0tG_83855zk6D3zgMivTp2xGlB9-VjQpMF4afy8my8xxd0RVTi83xTtDGOvF6M1Cbyqiw8wMv4r8IanY-HeArolzA"/>
+</div>
+</div>
+</div>
+</header>
+<!-- Stats Row -->
+<div class="grid grid-cols-4 gap-6 mb-8">
+<div class="glass p-6 rounded-xl relative overflow-hidden group hover:border-primary/50 transition-colors">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-primary/10 rounded-lg text-primary">
+<span class="material-symbols-outlined">lan</span>
+</div>
+<span class="text-emerald-500 text-sm font-bold flex items-center gap-1">+12% <span class="material-symbols-outlined text-xs">trending_up</span></span>
+</div>
+<p class="text-slate-400 text-sm font-medium mb-1">Total Projects</p>
+<h3 class="text-3xl font-bold text-white font-technical tracking-tight">128</h3>
+<div class="absolute -right-4 -bottom-4 opacity-[0.03] scale-150 group-hover:scale-[1.6] transition-transform duration-700">
+<span class="material-symbols-outlined text-[120px]">lan</span>
+</div>
+</div>
+<div class="glass p-6 rounded-xl relative overflow-hidden group hover:border-primary/50 transition-colors">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-blue-500/10 rounded-lg text-blue-500">
+<span class="material-symbols-outlined">radar</span>
+</div>
+<div class="flex items-center gap-2 bg-blue-500/20 px-2 py-1 rounded-full border border-blue-500/30">
+<div class="size-2 rounded-full bg-blue-500 pulse-blue"></div>
+<span class="text-[10px] text-blue-400 font-bold uppercase tracking-wider">Live</span>
+</div>
+</div>
+<p class="text-slate-400 text-sm font-medium mb-1">Active Scans</p>
+<h3 class="text-3xl font-bold text-white font-technical tracking-tight">5</h3>
+<div class="absolute -right-4 -bottom-4 opacity-[0.03] scale-150 group-hover:rotate-45 transition-transform duration-700">
+<span class="material-symbols-outlined text-[120px]">radar</span>
+</div>
+</div>
+<div class="glass p-6 rounded-xl relative overflow-hidden group hover:border-critical/50 transition-colors">
+<div class="flex justify-between items-start mb-4">
+<div class="p-3 bg-critical/10 rounded-lg text-critical">
+<span class="material-symbols-outlined">gpp_maybe</span>
+</div>
+<span class="text-critical text-sm font-bold flex items-center gap-1">-8% <span class="material-symbols-outlined text-xs">trending_down</span></span>
+</div>
+<p class="text-slate-400 text-sm font-medium mb-1">Critical Findings</p>
+<h3 class="text-3xl font-bold text-critical font-technical tracking-tight">24</h3>
+<div class="absolute -right-4 -bottom-4 opacity-[0.03] scale-150 transition-transform duration-700">
+<span class="material-symbols-outlined text-[120px]">gpp_maybe</span>
+</div>
+</div>
+<div class="glass p-6 rounded-xl relative overflow-hidden flex items-center justify-between group">
+<div>
+<p class="text-slate-400 text-sm font-medium mb-1">Security Score</p>
+<h3 class="text-3xl font-bold text-white font-technical tracking-tight">84<span class="text-primary">%</span></h3>
+<p class="text-xs text-emerald-500 mt-2 font-bold tracking-tight">+2.4% from avg.</p>
+</div>
+<div class="relative size-20">
+<svg class="size-full -rotate-90" viewbox="0 0 36 36">
+<path class="text-white/5 stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke-width="3"></path>
+<path class="text-primary stroke-current" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke-dasharray="84, 100" stroke-linecap="round" stroke-width="3" style="filter: drop-shadow(0 0 4px #4c7ff6)"></path>
+</svg>
+<div class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-slate-300">A+</div>
+</div>
+</div>
+</div>
+<!-- Main Content Area -->
+<div class="grid grid-cols-12 gap-8">
+<!-- Center: Chart & Table -->
+<div class="col-span-8 space-y-8">
+<!-- Security Trends Chart Card -->
+<div class="glass rounded-xl p-6">
+<div class="flex items-center justify-between mb-8">
+<div>
+<h3 class="text-lg font-bold text-white">Security Trends</h3>
+<p class="text-xs text-slate-500">Vulnerability detection patterns last 30 days</p>
+</div>
+<div class="flex gap-2">
+<button class="px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs font-medium text-slate-300 hover:text-white transition-colors">Daily</button>
+<button class="px-3 py-1.5 rounded-lg bg-primary/20 border border-primary/30 text-xs font-bold text-white">Monthly</button>
+</div>
+</div>
+<div class="h-64 relative w-full mt-4">
+<!-- Custom SVG Chart Simulation -->
+<svg class="overflow-visible" height="100%" preserveaspectratio="none" viewbox="0 0 800 240" width="100%">
+<defs>
+<lineargradient id="gradient-blue" x1="0%" x2="0%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#4c7ff6" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#4c7ff6" stop-opacity="0"></stop>
+</lineargradient>
+<lineargradient id="gradient-purple" x1="0%" x2="0%" y1="0%" y2="100%">
+<stop offset="0%" stop-color="#a855f7" stop-opacity="0.2"></stop>
+<stop offset="100%" stop-color="#a855f7" stop-opacity="0"></stop>
+</lineargradient>
+</defs>
+<!-- Grid Lines -->
+<line stroke="white" stroke-dasharray="4" stroke-opacity="0.05" x1="0" x2="800" y1="0" y2="0"></line>
+<line stroke="white" stroke-dasharray="4" stroke-opacity="0.05" x1="0" x2="800" y1="60" y2="60"></line>
+<line stroke="white" stroke-dasharray="4" stroke-opacity="0.05" x1="0" x2="800" y1="120" y2="120"></line>
+<line stroke="white" stroke-dasharray="4" stroke-opacity="0.05" x1="0" x2="800" y1="180" y2="180"></line>
+<line stroke="white" stroke-dasharray="4" stroke-opacity="0.05" x1="0" x2="800" y1="240" y2="240"></line>
+<!-- Neon Purple Line -->
+<path d="M0,180 C100,200 150,50 200,80 S350,150 400,140 S550,40 650,60 S800,100 800,100" fill="none" stroke="#a855f7" stroke-width="3" style="filter: drop-shadow(0 0 8px #a855f7)"></path>
+<path d="M0,180 C100,200 150,50 200,80 S350,150 400,140 S550,40 650,60 S800,100 800,100 V240 H0 Z" fill="url(#gradient-purple)"></path>
+<!-- Neon Blue Line -->
+<path d="M0,120 C80,110 160,200 240,180 S400,30 480,60 S640,150 800,120" fill="none" stroke="#4c7ff6" stroke-width="3" style="filter: drop-shadow(0 0 8px #4c7ff6)"></path>
+<path d="M0,120 C80,110 160,200 240,180 S400,30 480,60 S640,150 800,120 V240 H0 Z" fill="url(#gradient-blue)"></path>
+</svg>
+</div>
+<div class="flex justify-between items-center mt-6 pt-4 border-t border-white/5">
+<div class="flex gap-6">
+<div class="flex items-center gap-2">
+<div class="size-2 rounded-full bg-primary shadow-[0_0_8px_#4c7ff6]"></div>
+<span class="text-xs text-slate-400 font-medium">Internal Scans</span>
+</div>
+<div class="flex items-center gap-2">
+<div class="size-2 rounded-full bg-purple-500 shadow-[0_0_8px_#a855f7]"></div>
+<span class="text-xs text-slate-400 font-medium">External Perimeter</span>
+</div>
+</div>
+<p class="text-[10px] text-slate-500 font-mono tracking-tighter">AGGREGATED SEC-DATA-T-30</p>
+</div>
+</div>
+<!-- Recent Activity Table -->
+<div class="glass rounded-xl overflow-hidden">
+<div class="p-6 border-b border-white/5 flex items-center justify-between">
+<h3 class="text-lg font-bold text-white">Recent Scan Activity</h3>
+<button class="text-xs font-bold text-primary hover:text-white transition-colors">View All Activity</button>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left">
+<thead>
+<tr class="bg-white/5 text-slate-400 text-[10px] uppercase tracking-widest font-bold">
+<th class="px-6 py-4">Project Name</th>
+<th class="px-6 py-4">Scan Type</th>
+<th class="px-6 py-4">Status</th>
+<th class="px-6 py-4 text-center">Severity Density</th>
+<th class="px-6 py-4 text-right">Last Scan</th>
+</tr>
+</thead>
+<tbody class="divide-y divide-white/5">
+<tr class="hover:bg-white/5 transition-colors group cursor-pointer">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400 border border-white/5">API</div>
+<span class="text-sm font-semibold text-white">Core-API-v2</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs font-medium text-slate-400">SQLi Probe</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase border border-emerald-500/20">Completed</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center justify-center gap-1.5">
+<div class="size-4 rounded-sm bg-critical/20 flex items-center justify-center border border-critical/30"><span class="text-[8px] text-critical font-bold">4</span></div>
+<div class="size-4 rounded-sm bg-amber-500/20 flex items-center justify-center border border-amber-500/30"><span class="text-[8px] text-amber-500 font-bold">12</span></div>
+<div class="size-4 rounded-sm bg-primary/20 flex items-center justify-center border border-primary/30"><span class="text-[8px] text-primary font-bold">38</span></div>
+</div>
+</td>
+<td class="px-6 py-4 text-right text-xs text-slate-400">2 min ago</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors group cursor-pointer">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400 border border-white/5">WEB</div>
+<span class="text-sm font-semibold text-white">Merchant-Front</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs font-medium text-slate-400">XSS Analysis</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded-full bg-blue-500/10 text-blue-500 text-[10px] font-bold uppercase border border-blue-500/20 flex items-center gap-1 w-max">
+<span class="size-1.5 rounded-full bg-blue-500 animate-pulse"></span>
+                                                In-Progress
+                                            </span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center justify-center gap-1.5 opacity-50">
+<div class="size-4 rounded-sm bg-white/10 flex items-center justify-center border border-white/5 text-[8px]">-</div>
+<div class="size-4 rounded-sm bg-white/10 flex items-center justify-center border border-white/5 text-[8px]">-</div>
+<div class="size-4 rounded-sm bg-white/10 flex items-center justify-center border border-white/5 text-[8px]">-</div>
+</div>
+</td>
+<td class="px-6 py-4 text-right text-xs text-slate-400">Active now</td>
+</tr>
+<tr class="hover:bg-white/5 transition-colors group cursor-pointer">
+<td class="px-6 py-4">
+<div class="flex items-center gap-3">
+<div class="size-8 rounded bg-slate-800 flex items-center justify-center text-xs font-bold text-slate-400 border border-white/5">DB</div>
+<span class="text-sm font-semibold text-white">Legacy-Auth</span>
+</div>
+</td>
+<td class="px-6 py-4">
+<span class="text-xs font-medium text-slate-400">Secret Scanning</span>
+</td>
+<td class="px-6 py-4">
+<span class="px-2 py-1 rounded-full bg-emerald-500/10 text-emerald-500 text-[10px] font-bold uppercase border border-emerald-500/20">Completed</span>
+</td>
+<td class="px-6 py-4">
+<div class="flex items-center justify-center gap-1.5">
+<div class="size-4 rounded-sm bg-critical/20 flex items-center justify-center border border-critical/30"><span class="text-[8px] text-critical font-bold">0</span></div>
+<div class="size-4 rounded-sm bg-amber-500/20 flex items-center justify-center border border-amber-500/30"><span class="text-[8px] text-amber-500 font-bold">2</span></div>
+<div class="size-4 rounded-sm bg-primary/20 flex items-center justify-center border border-primary/30"><span class="text-[8px] text-primary font-bold">14</span></div>
+</div>
+</td>
+<td class="px-6 py-4 text-right text-xs text-slate-400">1 hour ago</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<!-- Right Sidebar: AI & Quick Actions -->
+<div class="col-span-4 space-y-8">
+<!-- Quick Actions -->
+<div class="glass rounded-xl p-6">
+<h3 class="text-lg font-bold text-white mb-6">Quick Actions</h3>
+<div class="space-y-3">
+<button class="w-full flex items-center justify-between p-4 bg-primary rounded-xl text-white font-bold group hover:shadow-[0_0_20px_rgba(76,127,246,0.4)] transition-all">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined font-bold">bolt</span>
+<span>Start New Scan</span>
+</div>
+<span class="material-symbols-outlined text-sm group-hover:translate-x-1 transition-transform">arrow_forward</span>
+</button>
+<button class="w-full flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-xl text-slate-300 font-bold group hover:bg-white/10 transition-all">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-400">summarize</span>
+<span>Generate Report</span>
+</div>
+<span class="material-symbols-outlined text-sm opacity-50">description</span>
+</button>
+<button class="w-full flex items-center justify-between p-4 bg-white/5 border border-white/10 rounded-xl text-slate-300 font-bold group hover:bg-white/10 transition-all">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-slate-400">domain_verification</span>
+<span>Verify Domain</span>
+</div>
+<span class="material-symbols-outlined text-sm opacity-50">dns</span>
+</button>
+</div>
+</div>
+<!-- AI Insights -->
+<div class="glass rounded-xl p-6 relative overflow-hidden">
+<div class="absolute -right-4 -top-4 w-32 h-32 bg-purple-500/20 blur-[60px] rounded-full"></div>
+<div class="flex items-center gap-2 mb-6">
+<span class="material-symbols-outlined text-purple-400">auto_awesome</span>
+<h3 class="text-lg font-bold text-white">AI Insights</h3>
+<span class="ml-auto bg-purple-500/20 text-purple-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-purple-500/30">NEURAL</span>
+</div>
+<div class="space-y-6 relative z-10">
+<div class="p-4 rounded-xl bg-white/5 border-l-4 border-purple-500">
+<p class="text-xs text-purple-400 font-bold uppercase tracking-wider mb-2">High Priority Recommendation</p>
+<p class="text-sm text-slate-300 leading-relaxed">Multiple failed login attempts detected on <span class="text-white font-semibold">Auth-Service</span>. Suggest enabling adaptive rate limiting.</p>
+<button class="mt-4 text-[10px] font-bold text-white uppercase bg-purple-600/40 px-3 py-1.5 rounded-lg hover:bg-purple-600 transition-colors">Apply Fix</button>
+</div>
+<div class="p-4 rounded-xl bg-white/5 border-l-4 border-slate-500">
+<p class="text-xs text-slate-500 font-bold uppercase tracking-wider mb-2">Policy Suggestion</p>
+<p class="text-sm text-slate-300 leading-relaxed">Dependency scan found <span class="text-white font-semibold">Lodash 4.17.20</span> which has a prototype pollution flaw.</p>
+<div class="mt-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-slate-500 text-sm">schedule</span>
+<span class="text-[10px] text-slate-500 font-bold uppercase">Reported 2h ago</span>
+</div>
+</div>
+</div>
+<div class="mt-8 pt-6 border-t border-white/5 text-center">
+<p class="text-[10px] text-slate-500 font-medium">AI analysis is based on 4.2TB of local threat data</p>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>

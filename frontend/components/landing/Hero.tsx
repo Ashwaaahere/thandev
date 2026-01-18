@@ -72,7 +72,7 @@ export default function Hero() {
 
               <Link
                 href="/news"
-                className="group rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-base font-semibold text-slate-200 backdrop-blur-sm transition-all hover:border-white/30 hover:bg-white/10"
+                className="group rounded-xl border border-white/20 bg-white/5 px-6 py-3.5 text-base font-semibold text-white backdrop-blur-sm transition-all hover:border-white/30 hover:bg-white/10"
               >
                 View Threat Feed
               </Link>

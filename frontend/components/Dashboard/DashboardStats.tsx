@@ -54,72 +54,6 @@ type DashboardMetrics = {
   }>;
 };
 
-interface StatCardProps {
-  title: string;
-  value: string | number;
-  change: string;
-  changeType: 'positive' | 'negative' | 'neutral';
-  icon: string;
-  description: string;
-}
-
-function StatCard({ title, value, change, changeType, icon, description }: StatCardProps) {
-  const getChangeColor = () => {
-    switch (changeType) {
-      case 'positive':
-        return 'text-green-600 dark:text-green-400';
-      case 'negative':
-        return 'text-red-600 dark:text-red-400';
-      default:
-        return 'text-gray-600 dark:text-gray-400';
-    }
-  };
-
-  const getChangeIcon = () => {
-    switch (changeType) {
-      case 'positive':
-        return 'M13 7h8m0 0v8m0-8l-8 8-4-4-6 6';
-      case 'negative':
-        return 'M13 17h8m0 0V9m0 8l-8-8-4 4-6-6';
-      default:
-        return 'M20 12H4';
-    }
-  };
-
-  return (
-    <div className="rounded-xl border p-6 shadow-sm hover:shadow-md transition-shadow" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-      <div className="flex items-center justify-between">
-        <div className="flex-1">
-          <p className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>
-            {title}
-          </p>
-          <p className="text-2xl font-bold mb-2" style={{ color: 'var(--fg)' }}>
-            {value}
-          </p>
-          <div className="flex items-center gap-1">
-            <svg className={`w-4 h-4 ${getChangeColor()}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={getChangeIcon()} />
-            </svg>
-            <span className={`text-sm font-medium ${getChangeColor()}`}>
-              {change}
-            </span>
-          </div>
-        </div>
-        <div className="flex-shrink-0">
-          <div className="w-12 h-12 rounded-lg flex items-center justify-center" style={{ background: 'var(--brand)', opacity: 0.1 }}>
-            <svg className="w-6 h-6" style={{ color: 'var(--brand)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={icon} />
-            </svg>
-          </div>
-        </div>
-      </div>
-      <p className="text-xs mt-2" style={{ color: 'var(--muted)' }}>
-        {description}
-      </p>
-    </div>
-  );
-}
-
 interface DashboardStatsProps {
   session: Session | null;
 }
@@ -130,6 +64,9 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
     totalScans: 0,
     scansLast7Days: 0,
     openFindings: 0,
+    threatScore: 0,
+    projectIncrease: 0,
+    scanPercentage: 0,
   });
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -161,11 +98,25 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
             (data.findings_by_severity?.medium || 0) +
             (data.findings_by_severity?.low || 0);
           
+          // Calculate threat score from avg_security_score (round to nearest integer)
+          const threatScore = Math.round(data.avg_security_score || 0);
+          
+          // Calculate project increase (mock for now, could be from historical data)
+          const projectIncrease = 2; // This would ideally come from comparing with previous period
+          
+          // Calculate scan percentage (scans in last 7 days / total scans * 100)
+          const totalScans = data.totals?.scans || 0;
+          const scansLast7Days = data.recent_activity?.scans_last_7_days || 0;
+          const scanPercentage = totalScans > 0 ? Math.round((scansLast7Days / totalScans) * 100) : 0;
+          
           setStats({
             totalProjects: data.totals?.projects || 0,
-            totalScans: data.totals?.scans || 0,
-            scansLast7Days: data.recent_activity?.scans_last_7_days || 0,
+            totalScans: totalScans,
+            scansLast7Days: scansLast7Days,
             openFindings: openFindings,
+            threatScore: threatScore,
+            projectIncrease: projectIncrease,
+            scanPercentage: scanPercentage,
           });
         }
       } catch (e) {
@@ -212,43 +163,124 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
     );
   }
 
+  // Generate bar chart data for Total Scans (5 bars with varying heights)
+  const barHeights = [60, 75, 85, 90, 95]; // Heights as percentages
+
   return (
     <>
-      <StatCard
-        title="Total Projects"
-        value={stats.totalProjects}
-        change={`${stats.totalProjects === 1 ? 'project' : 'projects'}`}
-        changeType="neutral"
-        icon="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-        description="Active security projects"
-      />
-      
-      <StatCard
-        title="Total Scans"
-        value={stats.totalScans}
-        change={`${stats.scansLast7Days} in last 7 days`}
-        changeType="positive"
-        icon="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-        description="Security assessments completed"
-      />
-      
-      <StatCard
-        title="Open Findings"
-        value={stats.openFindings}
-        change={stats.openFindings > 0 ? "Requires attention" : "All clear"}
-        changeType={stats.openFindings > 0 ? "negative" : "positive"}
-        icon="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z"
-        description="Security issues to address"
-      />
-      
-      <StatCard
-        title="This Week"
-        value={stats.scansLast7Days}
-        change="Recent activity"
-        changeType="positive"
-        icon="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-        description="Scans in last 7 days"
-      />
+      {/* TOTAL PROJECTS Card */}
+      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-sm font-medium mb-2 text-gray-400">
+          TOTAL PROJECTS
+        </p>
+        <div className="flex items-center gap-2 mb-3">
+          <p className="text-3xl font-bold text-white">
+            {stats.totalProjects.toString().padStart(2, '0')}
+          </p>
+          <div className="flex items-center gap-1 text-blue-500">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+            </svg>
+            <span className="text-sm font-medium">+{stats.projectIncrease}</span>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="w-full h-2 rounded-full overflow-hidden bg-gray-700">
+          <div 
+            className="h-full rounded-full transition-all duration-300"
+            style={{ 
+              width: `${Math.min((stats.totalProjects / 20) * 100, 100)}%`,
+              background: '#3b82f6' // blue-500
+            }}
+          />
+        </div>
+      </div>
+
+      {/* TOTAL SCANS Card */}
+      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-sm font-medium mb-2 text-gray-400">
+          TOTAL SCANS
+        </p>
+        <div className="flex items-center gap-2 mb-3">
+          <p className="text-3xl font-bold text-white">
+            {stats.totalScans}
+          </p>
+          <div className="flex items-center gap-1 text-green-500">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+            </svg>
+            <span className="text-sm font-medium">{stats.scanPercentage}%</span>
+          </div>
+        </div>
+        {/* Bar chart */}
+        <div className="flex items-end gap-1 h-12">
+          {barHeights.map((height, index) => (
+            <div
+              key={index}
+              className="flex-1 rounded-t"
+              style={{
+                height: `${height}%`,
+                background: index < 3 ? '#16a34a' : '#22c55e', // darker green for first 3, brighter for last 2
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* OPEN FINDINGS Card */}
+      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-sm font-medium mb-2 text-gray-400">
+          OPEN FINDINGS
+        </p>
+        <p className="text-3xl font-bold mb-2 text-red-500">
+          {stats.openFindings.toString().padStart(2, '0')}
+        </p>
+        {stats.openFindings > 0 && (
+          <div className="mb-3">
+            <span 
+              className="inline-block px-3 py-1 rounded-full text-xs font-medium text-red-500"
+              style={{ background: 'rgba(239, 68, 68, 0.2)' }}
+            >
+              REQUIRES ATTENTION
+            </span>
+          </div>
+        )}
+        {/* Progress bar */}
+        <div className="w-full h-2 rounded-full overflow-hidden bg-gray-700">
+          <div 
+            className="h-full rounded-full transition-all duration-300"
+            style={{ 
+              width: `${Math.min((stats.openFindings / 20) * 100, 100)}%`,
+              background: '#ef4444' // red-500
+            }}
+          />
+        </div>
+      </div>
+
+      {/* THREAT SCORE Card */}
+      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-sm font-medium mb-2 text-gray-400">
+          THREAT SCORE
+        </p>
+        <div className="flex items-center gap-2 mb-3">
+          <p className="text-3xl font-bold text-white">
+            {stats.threatScore}
+          </p>
+          <span className="text-sm font-medium text-green-500">SECURE</span>
+        </div>
+        {/* Indicator segments */}
+        <div className="flex gap-1">
+          {[1, 2, 3, 4].map((segment) => (
+            <div
+              key={segment}
+              className="h-1 flex-1 rounded"
+              style={{
+                background: segment <= 2 ? '#22c55e' : '#16a34a', // bright green for first 2, darker for last 2
+              }}
+            />
+          ))}
+        </div>
+      </div>
     </>
   );
 }

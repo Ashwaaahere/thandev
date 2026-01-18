@@ -65,7 +65,7 @@ export default function ModulesBento() {
                 className={`group relative flex items-center gap-2 rounded-xl border px-4 py-2.5 text-xs font-semibold transition-all sm:px-6 sm:py-3 sm:text-sm ${
                   activeTab === tab
                     ? "border-white/20 bg-white/10 text-white"
-                    : "border-white/10 bg-white/5 text-slate-400 hover:border-white/15 hover:bg-white/8"
+                    : "border-white/10 bg-white/5 text-white hover:border-white/15 hover:bg-white/8"
                 }`}
               >
                 <TabIcon className="h-3.5 w-3.5 sm:h-4 sm:w-4" />

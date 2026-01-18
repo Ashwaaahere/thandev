@@ -20,59 +20,87 @@ export default function DashboardHeader({ user, onMenuClick, showLogo = false }:
     window.location.href = '/';
   };
 
+  // Get user initials for avatar
+  const getInitials = () => {
+    if (user?.name) {
+      const names = user.name.split(' ');
+      if (names.length >= 2) {
+        return (names[0].charAt(0) + names[names.length - 1].charAt(0)).toUpperCase();
+      }
+      return user.name.substring(0, 2).toUpperCase();
+    }
+    if (user?.email) {
+      return user.email.substring(0, 2).toUpperCase();
+    }
+    return 'U';
+  };
+
+  // Get truncated name (first name + last initial)
+  const getDisplayName = () => {
+    if (user?.name) {
+      const names = user.name.split(' ');
+      if (names.length >= 2) {
+        return `${names[0]} ${names[names.length - 1].charAt(0)}.`;
+      }
+      return user.name;
+    }
+    return 'User';
+  };
+
   return (
     <header className="border-b backdrop-blur-sm" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-      <div className="px-6 py-4">
-        <div className="flex items-center justify-between">
+      <div className="px-6" style={{ height: '64px', display: 'flex', alignItems: 'center' }}>
+        <div className="flex items-center justify-between gap-4 w-full">
           {/* Left side - Menu button and logo */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3" style={{ height: '40px' }}>
             <button
               onClick={onMenuClick}
-              className="lg:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              style={{ color: 'var(--fg)' }}
+              className="lg:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center"
+              style={{ color: 'var(--fg)', height: '40px', width: '40px' }}
             >
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
             
             {/* Logo - only visible when sidebar is closed */}
             {showLogo && (
-              <div className="flex items-center gap-3">
-                <div className="h-8 w-8 rounded-lg shadow-lg" style={{ background: 'var(--brand)' }} />
-                <span className="text-xl font-bold" style={{ color: 'var(--fg)' }}>Thandev</span>
+              <div className="flex items-center gap-2.5" style={{ height: '40px' }}>
+                <div className="h-7 w-7 rounded-lg shadow-lg flex-shrink-0" style={{ background: 'var(--brand)' }} />
+                <span className="text-lg font-bold" style={{ color: 'var(--fg)', lineHeight: '1' }}>Thandev</span>
               </div>
             )}
           </div>
 
           {/* Center - Search */}
-          <div className="flex flex-1 max-w-md mx-8">
+          <div className="flex flex-1 max-w-lg" style={{ height: '40px' }}>
             <GlobalSearch />
           </div>
 
           {/* Right side - Notifications and user menu */}
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3" style={{ height: '40px' }}>
             {/* Notifications */}
             <NotificationBell />
 
             {/* User Menu */}
-            <div className="relative">
+            <div className="relative" style={{ height: '40px' }}>
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                className="flex items-center gap-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                style={{ height: '40px' }}
               >
-                <div className="h-8 w-8 rounded-full flex items-center justify-center text-sm font-semibold text-white" style={{ background: 'var(--brand)' }}>
-                  {user?.name ? user.name.charAt(0).toUpperCase() : (user?.email ? user.email.charAt(0).toUpperCase() : 'U')}
-                </div>
                 <div className="hidden md:block text-left">
-                  <p className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                    {user?.name || 'User'}
+                  <p className="text-sm font-medium text-white" style={{ lineHeight: '1.2' }}>
+                    {getDisplayName()}
                   </p>
-                  <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                  <p className="text-xs text-gray-400" style={{ lineHeight: '1.2' }}>
                     {user?.email || 'No email'}
                   </p>
                 </div>
-                <svg className="w-4 h-4" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-semibold text-white bg-blue-500 flex-shrink-0">
+                  {getInitials()}
+                </div>
+                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>

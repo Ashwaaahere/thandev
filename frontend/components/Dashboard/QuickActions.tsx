@@ -1,89 +1,161 @@
 'use client';
 
 import Link from 'next/link';
+import { useState, useEffect } from 'react';
+
+type NewsItem = {
+  id: string;
+  title: string;
+  url: string;
+  source: string;
+  publishedAt: string;
+  summary: string;
+  category: 'cyber' | 'ai' | 'tech';
+  image?: string | null;
+  certified: boolean;
+};
+
+type NewsResponse = {
+  items: NewsItem[];
+  total: number;
+  sources_checked: number;
+};
 
 export default function QuickActions() {
+  const [news, setNews] = useState<NewsItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchNews() {
+      try {
+        const response = await fetch('/api/news?limit=4&category=cyber');
+        if (!response.ok) {
+          throw new Error('Failed to fetch news');
+        }
+        const data: NewsResponse = await response.json();
+        setNews(data.items || []);
+      } catch (error) {
+        console.error('Error fetching news:', error);
+        setNews([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchNews();
+  }, []);
+
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      const now = new Date();
+      const diffMs = now.getTime() - date.getTime();
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      if (diffMins < 60) {
+        return `${diffMins}m ago`;
+      } else if (diffHours < 24) {
+        return `${diffHours}h ago`;
+      } else if (diffDays < 7) {
+        return `${diffDays}d ago`;
+      } else {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    } catch {
+      return '';
+    }
+  };
+
+  const RocketIcon = () => (
+    <svg className="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
+      {/* Rocket pointing up and right */}
+      <path d="M13 3v7h7l-7-7zm-2 8H4l7 7v-7z" />
+      <circle cx="12" cy="12" r="1.5" />
+    </svg>
+  );
+
+  const EyeIcon = () => (
+    <svg className="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+    </svg>
+  );
+
+  const CoinsIcon = () => (
+    <svg className="w-6 h-6 text-yellow-400" fill="currentColor" viewBox="0 0 24 24">
+      <circle cx="10" cy="8" r="3.5" />
+      <circle cx="14" cy="10" r="3.5" />
+      <circle cx="12" cy="13" r="3.5" />
+    </svg>
+  );
+
   const actions = [
     {
       title: 'New Surface Scan',
-      description: 'Start a comprehensive security assessment',
+      description: 'Fast attack vector assessment',
       href: '/dashboard/scan',
-      icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z',
-      color: 'bg-blue-500',
-      textColor: 'text-blue-600 dark:text-blue-400'
+      iconComponent: <RocketIcon />,
+      iconColor: 'text-blue-400'
     },
     {
-      title: 'View Projects',
-      description: 'Manage your targets and view scan history',
-      href: '/projects',
-      icon: 'M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10',
-      color: 'bg-indigo-500',
-      textColor: 'text-indigo-600 dark:text-indigo-400'
-    },
-    {
-      title: 'View Reports',
-      description: 'Access detailed security reports',
+      title: 'Review Reports',
+      description: 'View detailed summaries',
       href: '/dashboard/reports',
-      icon: 'M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z',
-      color: 'bg-green-500',
-      textColor: 'text-green-600 dark:text-green-400'
+      iconComponent: <EyeIcon />,
+      iconColor: 'text-green-400'
     },
     {
-      title: 'Vulnerability Database',
-      description: 'Browse latest security threats',
+      title: 'Vulnerability DB',
+      description: 'Search 40k+ known exploits',
       href: '/exploits',
-      icon: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z',
-      color: 'bg-red-500',
-      textColor: 'text-red-600 dark:text-red-400'
-    },
-    {
-      title: 'Security News',
-      description: 'Stay updated with latest news',
-      href: '/news',
-      icon: 'M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z',
-      color: 'bg-purple-500',
-      textColor: 'text-purple-600 dark:text-purple-400'
+      iconComponent: <CoinsIcon />,
+      iconColor: 'text-yellow-400'
     }
   ];
 
   return (
     <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-      {/* Header */}
+      {/* Quick Actions Header */}
       <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-        <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>
-          Quick Actions
-        </h2>
+        <div className="flex items-center gap-2">
+          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          <h2 className="text-lg font-bold text-white">
+            Quick Actions
+          </h2>
+        </div>
       </div>
 
-      {/* Content */}
+      {/* Quick Actions Content */}
       <div className="p-6">
-        <div className="space-y-4">
+        <div className="space-y-3">
           {actions.map((action, index) => (
             <Link
               key={index}
               href={action.href}
-              className="block p-4 rounded-lg border hover:shadow-md transition-all duration-200 group hover:bg-[var(--surface)]"
+              className="block p-4 rounded-lg border hover:shadow-md transition-all duration-200 group"
               style={{ 
                 borderColor: 'var(--border)', 
                 background: 'var(--surface-2)'
               }}
             >
-              <div className="flex items-start gap-4">
-                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${action.color} bg-opacity-10 group-hover:bg-opacity-20 transition-all duration-200`}>
-                  <svg className={`w-5 h-5 ${action.textColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={action.icon} />
-                  </svg>
+              <div className="flex items-center gap-4">
+                <div className="flex-shrink-0">
+                  {action.iconComponent}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-medium mb-1 group-hover:opacity-80 transition-opacity" style={{ color: 'var(--fg)' }}>
+                  <h3 className="font-bold mb-1 text-white">
                     {action.title}
                   </h3>
-                  <p className="text-sm" style={{ color: 'var(--muted)' }}>
+                  <p className="text-sm text-gray-400">
                     {action.description}
                   </p>
                 </div>
                 <div className="flex-shrink-0">
-                  <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform duration-200" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-5 h-5 text-gray-400 group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </div>
@@ -91,24 +163,46 @@ export default function QuickActions() {
             </Link>
           ))}
         </div>
+      </div>
 
-        {/* Additional Info */}
-        <div className="mt-6 p-4 rounded-lg" style={{ background: 'var(--brand)', opacity: 0.05 }}>
-          <div className="flex items-start gap-3">
-            <div className="flex-shrink-0">
-              <svg className="w-5 h-5" style={{ color: 'var(--brand)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <h4 className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>
-                Pro Tip
-              </h4>
-              <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                Run regular scans to maintain security posture and catch vulnerabilities early.
-              </p>
-            </div>
-          </div>
+      {/* LIVE NEWS FEED Section */}
+      <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-2 mb-4">
+          <div className="w-2 h-2 rounded-full bg-blue-400"></div>
+          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">
+            LIVE NEWS FEED
+          </h3>
+        </div>
+        <div className="space-y-3">
+          {loading ? (
+            <div className="text-xs text-gray-400">Loading news...</div>
+          ) : news.length === 0 ? (
+            <div className="text-xs text-gray-400">No news available</div>
+          ) : (
+            news.map((item) => (
+              <a
+                key={item.id}
+                href={item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block group"
+              >
+                <div className="text-xs">
+                  <div className="flex items-start justify-between gap-2 mb-1">
+                    <p className="text-white group-hover:text-blue-400 transition-colors line-clamp-2 flex-1">
+                      {item.title}
+                    </p>
+                    <span className="text-gray-400 flex-shrink-0">
+                      {formatDate(item.publishedAt)}
+                    </span>
+                  </div>
+                  <p className="text-gray-500 text-[10px]">
+                    {item.source}
+                  </p>
+                </div>
+              </a>
+            ))
+          )}
         </div>
       </div>
     </div>

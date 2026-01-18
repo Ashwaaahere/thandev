@@ -55,7 +55,7 @@ export default function FAQ() {
                   onClick={() => setOpenIndex(openIndex === i ? null : i)}
                   className="flex w-full items-center justify-between p-6 text-left"
                 >
-                  <span className="font-semibold text-slate-200">
+                  <span className="font-semibold text-white">
                     {faq.q}
                   </span>
                   <motion.div

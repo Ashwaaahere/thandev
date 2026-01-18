@@ -47,7 +47,7 @@ export default function FinalCTA() {
 
                 <Link
                   href="/news"
-                  className="group rounded-xl border border-white/20 bg-white/5 px-8 py-4 text-base font-semibold text-slate-200 backdrop-blur-sm transition-all hover:border-white/30 hover:bg-white/10"
+                  className="group rounded-xl border border-white/20 bg-white/5 px-8 py-4 text-base font-semibold text-white backdrop-blur-sm transition-all hover:border-white/30 hover:bg-white/10"
                 >
                   View Threat Feed
                 </Link>

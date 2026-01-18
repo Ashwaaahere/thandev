@@ -37,14 +37,14 @@ RUN git clone --depth 1 https://github.com/sqlmapproject/sqlmap.git /opt/sqlmap 
 # Now install Go tools AFTER pip (so Go binaries take final ownership)
 # CRITICAL: Use full path to go binary and verify each installation
 # Set GOBIN explicitly to ensure binaries go to /usr/local/bin
+# NOTE: ffuf removed - not used in tool_matrix.py (commented out in supported_tools)
 RUN mkdir -p /tmp/go && \
-    rm -f /usr/local/bin/httpx /usr/local/bin/nuclei /usr/local/bin/dalfox /usr/local/bin/ffuf || true && \
+    rm -f /usr/local/bin/httpx /usr/local/bin/nuclei /usr/local/bin/dalfox || true && \
     GOBIN=/usr/local/bin GOPATH=/tmp/go /usr/local/go/bin/go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
-    GOBIN=/usr/local/bin GOPATH=/tmp/go /usr/local/go/bin/go install -v github.com/ffuf/ffuf/v2@v2.1.0 && \
     GOBIN=/usr/local/bin GOPATH=/tmp/go /usr/local/go/bin/go install -v github.com/hahwul/dalfox/v2@latest && \
     GOBIN=/usr/local/bin GOPATH=/tmp/go /usr/local/go/bin/go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 && \
-    chmod +x /usr/local/bin/nuclei /usr/local/bin/ffuf /usr/local/bin/dalfox /usr/local/bin/httpx && \
-    ls -la /usr/local/bin/nuclei /usr/local/bin/httpx /usr/local/bin/dalfox /usr/local/bin/ffuf && \
+    chmod +x /usr/local/bin/nuclei /usr/local/bin/dalfox /usr/local/bin/httpx && \
+    ls -la /usr/local/bin/nuclei /usr/local/bin/httpx /usr/local/bin/dalfox && \
     /usr/local/bin/nuclei -version || (echo "ERROR: nuclei installation failed" && exit 1) && \
     /usr/local/bin/httpx -version || (echo "ERROR: httpx installation failed" && exit 1) && \
     /usr/local/bin/dalfox version || (echo "ERROR: dalfox installation failed" && exit 1) && \

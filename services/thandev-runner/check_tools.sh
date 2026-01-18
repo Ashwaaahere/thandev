@@ -64,7 +64,7 @@ check_tool() {
 
 check_tool "nuclei" "nuclei -version"
 check_tool "httpx" "httpx -version"
-check_tool "ffuf" "ffuf -V"
+# ffuf removed - not used in tool_matrix.py (commented out in supported_tools)
 check_tool "dalfox" "dalfox version"
 check_tool "nmap" "nmap --version"
 check_tool "sslscan" "sslscan --version"

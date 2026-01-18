@@ -17,14 +17,15 @@ export default function GlobalSearch() {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="relative w-full">
+    <form onSubmit={handleSubmit} className="relative w-full" style={{ height: '40px' }}>
       <input
         type="text"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Search scans, reports, or vulnerabilities..."
-        className="w-full pl-10 pr-4 py-2 rounded-lg border transition-all duration-200 focus:outline-none focus:ring-2 focus:border-transparent placeholder:text-[var(--muted)]"
+        className="w-full pl-10 pr-4 text-sm rounded-lg border transition-all duration-200 focus:outline-none focus:ring-2 focus:border-transparent placeholder:text-[var(--muted)]"
         style={{
+          height: '40px',
           borderColor: 'var(--border)',
           background: 'var(--surface-2)',
           color: 'var(--fg)'
