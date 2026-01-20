@@ -73,7 +73,7 @@ export default function Navbar() {
             </div>
           ) : (
                    <div className="hidden md:flex items-center gap-3">
-                     <Link href="/auth" className="px-3 py-1 text-sm bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-lg hover:from-cyan-600 hover:to-blue-600 transition-colors shadow-lg hover:shadow-xl">
+                     <Link href="/auth" className="px-3 py-1 text-sm bg-gradient-to-r from-cyan-500 to-blue-500 !text-white rounded-lg hover:from-cyan-600 hover:to-blue-600 transition-colors shadow-lg hover:shadow-xl">
                        Sign In / Sign Up
                      </Link>
                    </div>
