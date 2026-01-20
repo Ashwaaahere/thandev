@@ -9,6 +9,8 @@ import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 
 export const revalidate = 300; // cache parsed article for 5 min
+export const runtime = 'nodejs'; // Use Node.js runtime for JSDOM compatibility
+export const maxDuration = 30; // Maximum execution time in seconds (Vercel Pro: 60s, Hobby: 10s)
 
 type Props = { params: { id: string } };
 
@@ -46,11 +48,17 @@ async function fetchHtml(targetUrl: string): Promise<string | null> {
       },
       // do not forward cookies
       cache: "no-store",
+      // Add timeout for serverless environments
+      signal: AbortSignal.timeout(10000), // 10 second timeout
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.error(`Failed to fetch ${targetUrl}: ${res.status} ${res.statusText}`);
+      return null;
+    }
     const html = await res.text();
     return html || null;
-  } catch {
+  } catch (error) {
+    console.error(`Error fetching ${targetUrl}:`, error);
     return null;
   }
 }
@@ -165,19 +173,51 @@ export default async function ArticlePage({ params }: Props) {
   }
 
   // Parse with JSDOM + Readability
-  const dom = new JSDOM(html, { url: targetUrl });
-  const doc = dom.window.document;
+  let articleTitle = "Article";
+  let articleHtml = "";
+  let articleExcerpt = "";
+  let heroImage = "";
 
-  const meta = extractMeta(doc);
-  const reader = new Readability(doc);
-  const parsed = reader.parse(); // { title, content, textContent, byline, length, excerpt, siteName }
+  try {
+    const dom = new JSDOM(html, { url: targetUrl });
+    const doc = dom.window.document;
 
-  const articleTitle = parsed?.title || meta.title || "Article";
-  const articleHtml = parsed?.content || ""; // already HTML
-  const articleExcerpt = parsed?.excerpt || meta.description || "";
-  const heroImage = meta.image || "";
+    const meta = extractMeta(doc);
+    const reader = new Readability(doc);
+    const parsed = reader.parse(); // { title, content, textContent, byline, length, excerpt, siteName }
 
-  // If parsing failed or content is too short, redirect to external site
+    articleTitle = parsed?.title || meta.title || "Article";
+    articleHtml = parsed?.content || ""; // already HTML
+    articleExcerpt = parsed?.excerpt || meta.description || "";
+    heroImage = meta.image || "";
+  } catch (error) {
+    // If parsing fails (e.g., JSDOM/Readability issues in serverless), fallback to basic extraction
+    console.error("Failed to parse article with JSDOM/Readability:", error);
+    
+    // Try basic HTML parsing as fallback
+    try {
+      const basicDom = new JSDOM(html, { url: targetUrl });
+      const basicDoc = basicDom.window.document;
+      const meta = extractMeta(basicDoc);
+      
+      articleTitle = meta.title || "Article";
+      articleExcerpt = meta.description || "";
+      heroImage = meta.image || "";
+      
+      // Extract body content as fallback
+      const body = basicDoc.querySelector('body') || basicDoc.documentElement;
+      articleHtml = body.innerHTML || "";
+    } catch (fallbackError) {
+      console.error("Fallback parsing also failed:", fallbackError);
+      // If all parsing fails, return null to show external link view
+      // This prevents 500 errors and gracefully degrades
+      articleHtml = "";
+      articleTitle = "Article";
+    }
+  }
+
+  // If parsing failed or content is too short, show external link view
+  // This gracefully handles serverless environment limitations
   if (!articleHtml || articleHtml.length < 500) {
     return (
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
