@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { executeCloudRunJob, SCENARIO_CONFIG, type ScenarioType } from '@/lib/cloud-run';
 
 // Force dynamic rendering for authenticated API routes
 export const dynamic = 'force-dynamic';
@@ -35,16 +34,29 @@ const backendScans = new Map<string, {
 }>();
 
 // Global scan queue limits
-const MAX_CONCURRENT_SCANS = 2; // Reduced to match Cloud Run Job parallelism
+const MAX_CONCURRENT_SCANS = 2;
 let runningScans = 0;
 
-// Cloud Run Job configuration
-const CLOUD_RUN_CONFIG = {
-  projectId: process.env.GOOGLE_CLOUD_PROJECT_ID || 'thandev',
-  region: process.env.GOOGLE_CLOUD_REGION || 'us-central1',
-  jobName: 'locust-job',
-  gcsBucket: process.env.GCS_BUCKET || 'thandev-reports'
-};
+// Scenario configuration
+const SCENARIO_CONFIG = {
+  baseline: {
+    VUS: 50,
+    DURATION: 120,
+    SPAWN: 10
+  },
+  spike: {
+    VUS: 200,
+    DURATION: 120,
+    SPAWN: 100
+  },
+  soak: {
+    VUS: 50,
+    DURATION: 300,
+    SPAWN: 5
+  }
+} as const;
+
+type ScenarioType = keyof typeof SCENARIO_CONFIG;
 
 function validateDomain(domain: string): { valid: boolean; error?: string } {
   if (!domain || typeof domain !== 'string') {
@@ -84,7 +96,8 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate scenario
-    if (!(scenario in SCENARIO_CONFIG)) {
+    const scenarioConfig = SCENARIO_CONFIG[scenario as ScenarioType];
+    if (!scenarioConfig) {
       return NextResponse.json(
         { error: 'Invalid scenario. Must be baseline, spike, or soak.' },
         { status: 400 }
@@ -113,9 +126,6 @@ export async function POST(request: NextRequest) {
 
     // Generate scan ID
     const scanId = `backend-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    
-    // Get scenario configuration
-    const scenarioConfig = SCENARIO_CONFIG[scenario as ScenarioType];
     
     // Create scan record
     const scan: {
@@ -155,52 +165,16 @@ export async function POST(request: NextRequest) {
 
     backendScans.set(scanId, scan);
 
-    // Execute Cloud Run Job
-    const callbackUrl = `${process.env.NEXTAUTH_URL || 'http://localhost:3000'}/api/backend/callback`;
-    
-    const cloudRunResult = await executeCloudRunJob({
-      projectId: CLOUD_RUN_CONFIG.projectId,
-      region: CLOUD_RUN_CONFIG.region,
-      jobName: CLOUD_RUN_CONFIG.jobName,
-      environment: {
-        DOMAIN: verification.domain,
-        VUS: scenarioConfig.VUS.toString(),
-        DURATION: scenarioConfig.DURATION.toString(),
-        SPAWN: scenarioConfig.SPAWN.toString(),
-        SCAN_ID: scanId,
-        CALLBACK_URL: callbackUrl,
-        GCS_BUCKET: CLOUD_RUN_CONFIG.gcsBucket
-      }
-    });
+    // Backend load testing is not available without Cloud Run
+    scan.status = 'error';
+    scan.error = 'Backend load testing requires Cloud Run infrastructure which is not configured.';
+    scan.updatedAt = new Date();
+    backendScans.set(scanId, scan);
 
-    if (cloudRunResult.success) {
-      // Update scan with execution ID
-      scan.executionId = cloudRunResult.executionId;
-      scan.status = 'running';
-      scan.startedAt = new Date();
-      scan.updatedAt = new Date();
-      runningScans++;
-      
-      backendScans.set(scanId, scan);
-
-      return NextResponse.json({
-        scanId,
-        status: 'running',
-        message: 'Backend scan started successfully',
-        executionId: cloudRunResult.executionId
-      });
-    } else {
-      // Update scan with error
-      scan.status = 'error';
-      scan.error = cloudRunResult.error || 'Failed to start Cloud Run Job';
-      scan.updatedAt = new Date();
-      backendScans.set(scanId, scan);
-
-      return NextResponse.json(
-        { error: 'Failed to start backend scan' },
-        { status: 500 }
-      );
-    }
+    return NextResponse.json(
+      { error: 'Backend load testing is not available. Cloud Run infrastructure has been removed.' },
+      { status: 503 }
+    );
 
   } catch (error) {
     console.error('Backend scan start error:', error);

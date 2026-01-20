@@ -5,6 +5,8 @@ This router handles endpoints called by the runner service.
 Moved from /api/internal/* to /api/runner/* to avoid Fly.io proxy blocking.
 Only requires service authentication (Bearer token), no tenant/user auth.
 """
+from __future__ import annotations
+
 import json
 import logging
 import uuid
@@ -82,6 +84,48 @@ async def mark_scan_running_for_runner(
         db.commit()
         db.refresh(scan_job)
     return {"scan_id": scan_job.id, "status": scan_job.status.value}
+
+
+class RunnerProgressRequest(BaseModel):
+    """Request model for runner progress updates"""
+    scan_id: str
+    step: str
+    status: str  # "running" | "done" | "error"
+    message: str
+
+
+@router.post("/progress")
+async def receive_progress(
+    request: RunnerProgressRequest,
+    db: Session = Depends(get_db),
+    _: None = Depends(require_runner_service_auth),  # Require service auth
+):
+    """
+    Receive progress updates from runner.
+    
+    This endpoint accepts progress updates and can broadcast them via websocket
+    or store them for polling. For MVP, we'll just log them.
+    """
+    from app.models.scan import ScanJob
+    
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == request.scan_id).first()
+    if not scan_job:
+        logger.warning(f"Progress update for non-existent scan: {request.scan_id}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {request.scan_id}"
+        )
+    
+    logger.info(
+        f"Progress update for scan {request.scan_id}: step={request.step}, "
+        f"status={request.status}, message={request.message}"
+    )
+    
+    # TODO: Broadcast via websocket if websocket system exists
+    # For now, just acknowledge receipt
+    
+    return {"status": "ok", "scan_id": request.scan_id}
 
 
 @router.post("/{scan_id}/tool-started", status_code=status.HTTP_200_OK)

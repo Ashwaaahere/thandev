@@ -13,7 +13,6 @@ import subprocess
 import os
 import tempfile
 import logging
-import httpx
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -122,7 +121,7 @@ async def get_scan_status(job_id: str, db: Session = Depends(get_db)):
     )
 
 async def run_lighthouse_scan(job_id: str, url: str, device: str):
-    """Run Lighthouse scan using Cloud Run Service or local fallback"""
+    """Run Lighthouse scan locally"""
     logger.info(f"Background task started for performance scan: job_id={job_id}, url={url}, device={device}")
     
     # Create a new database session for the background task
@@ -140,35 +139,9 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
         else:
             logger.warning(f"Performance scan job not found in database: {job_id}")
         
-        # Check if Cloud Run Service is enabled
-        # Handle common mistake where users include "-a thandev-backend" in the value
-        cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
-        # Remove common mistakes: "-a thandev-backend", quotes, etc.
-        cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
-        cloud_run_enabled = cloud_run_enabled_clean.lower() == "true"
-        
-        # Clean the Cloud Run URL - remove "-a thandev-backend" and other common mistakes
-        cloud_run_url_raw = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "").strip()
-        # Remove "-a thandev-backend" if present (common mistake)
-        if " -a " in cloud_run_url_raw:
-            cloud_run_url = cloud_run_url_raw.split(" -a ")[0].strip()
-        else:
-            cloud_run_url = cloud_run_url_raw
-        
-        # Debug: Log all environment variables that start with CLOUD_RUN
-        cloud_run_env_vars = {k: v[:50] + "..." if len(v) > 50 else v for k, v in os.environ.items() if k.startswith("CLOUD_RUN")}
-        logger.info(f"Cloud Run environment variables: {cloud_run_env_vars}")
-        logger.info(f"Cloud Run configuration: enabled={cloud_run_enabled}, url_set={bool(cloud_run_url)}, url_length={len(cloud_run_url) if cloud_run_url else 0}, url_value={cloud_run_url[:50] if cloud_run_url else 'EMPTY'}")
-        
-        if cloud_run_enabled and cloud_run_url:
-            # Use Cloud Run Service
-            logger.info(f"Using Cloud Run Service for performance scan: {job_id}")
-            await run_cloud_run_lighthouse_scan(job_id, url, device, cloud_run_url, db)
-        else:
-            # Fallback to local Lighthouse (for development)
-            logger.warning(f"Cloud Run not configured, falling back to local Lighthouse for job: {job_id}")
-            logger.warning(f"This may cause out-of-memory errors on Fly.io!")
-            await run_local_lighthouse_scan(job_id, url, device, db)
+        # Use local Lighthouse execution
+        logger.info(f"Running local Lighthouse scan for job: {job_id}")
+        await run_local_lighthouse_scan(job_id, url, device, db)
             
     except Exception as e:
         logger.error(f"Performance scan failed for job {job_id}: {str(e)}")
@@ -181,85 +154,6 @@ async def run_lighthouse_scan(job_id: str, url: str, device: str):
             db.commit()
     finally:
         db.close()
-
-async def run_cloud_run_lighthouse_scan(job_id: str, url: str, device: str, cloud_run_url: str, db: Session):
-    """Run Lighthouse scan via Cloud Run Service"""
-    logger.info(f"Calling Cloud Run Service: {cloud_run_url}/run for job {job_id}")
-    
-    scan_job = db.query(PerformanceScanJob).filter(PerformanceScanJob.id == job_id).first()
-    
-    try:
-        # Call Cloud Run Service to start scan
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            logger.info(f"Sending POST request to Cloud Run Service: {cloud_run_url}/run")
-            response = await client.post(
-                f"{cloud_run_url}/run",
-                json={
-                    "url": url,
-                    "device": device,
-                    "category": "performance"
-                }
-            )
-            
-            logger.info(f"Cloud Run Service response: status={response.status_code}, headers={dict(response.headers)}")
-            
-            if response.status_code != 200:
-                error_text = response.text[:500]  # Limit error text length
-                logger.error(f"Cloud Run Service failed to start scan: status={response.status_code}, error={error_text}")
-                raise Exception(f"Cloud Run Service failed to start scan: {error_text}")
-            
-            cloud_job_data = response.json()
-            cloud_job_id = cloud_job_data.get("jobId")
-            
-            if not cloud_job_id:
-                logger.error(f"Cloud Run Service response missing jobId: {cloud_job_data}")
-                raise Exception("Cloud Run Service did not return a jobId")
-            
-            logger.info(f"Started Cloud Run scan for job {job_id}, cloud job ID: {cloud_job_id}")
-            
-            # Poll for results (max 5 minutes)
-            max_polls = 60  # 60 polls * 5 seconds = 5 minutes
-            poll_interval = 5  # seconds
-            
-            for poll_count in range(max_polls):
-                await asyncio.sleep(poll_interval)
-                
-                status_response = await client.get(f"{cloud_run_url}/status/{cloud_job_id}")
-                
-                if status_response.status_code != 200:
-                    logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
-                    continue
-                
-                status_data = status_response.json()
-                cloud_status = status_data.get("status", "unknown")
-                
-                logger.info(f"Cloud Run scan status for job {job_id}: {cloud_status} (poll {poll_count + 1}/{max_polls})")
-                
-                if cloud_status == "completed":
-                    # Process and save results
-                    result = status_data.get("result", {})
-                    processed_result = process_cloud_run_results(result)
-                    
-                    if scan_job:
-                        scan_job.status = "completed"
-                        scan_job.finished_at = datetime.utcnow()
-                        scan_job.result = json.dumps(processed_result) if isinstance(processed_result, dict) else processed_result
-                        db.commit()
-                        logger.info(f"Performance scan completed for job {job_id}")
-                    return
-                
-                elif cloud_status == "failed":
-                    error_msg = status_data.get("error", "Unknown error")
-                    raise Exception(f"Cloud Run scan failed: {error_msg}")
-            
-            # Timeout
-            raise Exception("Cloud Run scan timed out after 5 minutes")
-            
-    except httpx.TimeoutException:
-        raise Exception("Cloud Run Service request timed out")
-    except Exception as e:
-        logger.error(f"Cloud Run scan error for job {job_id}: {str(e)}")
-        raise
 
 async def run_local_lighthouse_scan(job_id: str, url: str, device: str, db: Session):
     """Run Lighthouse scan locally (fallback for development)"""
@@ -328,74 +222,6 @@ async def run_local_lighthouse_scan(job_id: str, url: str, device: str, db: Sess
             scan_job.error = str(e)
             db.commit()
         raise
-
-def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Cloud Run Service results into our format"""
-    try:
-        logger.info(f"Processing Cloud Run results: keys={list(cloud_result.keys())}")
-        
-        # Cloud Run Service returns results in a specific format
-        # It may have "performance" as a number, or "categories" as an object
-        # Handle both formats
-        
-        # Check if we have categories object (preferred format)
-        if "categories" in cloud_result and isinstance(cloud_result.get("categories"), dict):
-            categories = cloud_result.get("categories", {})
-            logger.info(f"Found categories in Cloud Run result: {categories}")
-        else:
-            # Cloud Run Service returns "performance" as a number (old format)
-            # Convert to categories format
-            performance_score = cloud_result.get("performance", 0)
-            # If performance is a float (0-1), convert to int (0-100)
-            if isinstance(performance_score, float) and performance_score <= 1.0:
-                performance_score = int(performance_score * 100)
-            elif isinstance(performance_score, (int, float)):
-                performance_score = int(performance_score)
-            else:
-                performance_score = 0
-                
-            categories = {
-                "performance": performance_score,
-                "accessibility": 0,  # Not available in old format
-                "bestPractices": 0,
-                "seo": 0
-            }
-            logger.info(f"Converted performance score to categories (old format): {categories}")
-        
-        # Extract other fields
-        metrics = cloud_result.get("metrics", {})
-        opportunities = cloud_result.get("opportunities", [])
-        diagnostics = cloud_result.get("diagnostics", [])
-        screenshot = cloud_result.get("screenshot")
-        
-        # Ensure categories has all required fields
-        final_categories = {
-            "performance": categories.get("performance", 0),
-            "accessibility": categories.get("accessibility", 0),
-            "bestPractices": categories.get("bestPractices", categories.get("best-practices", 0)),
-            "seo": categories.get("seo", 0)
-        }
-        
-        logger.info(f"Final processed result: categories={final_categories}, metrics_keys={list(metrics.keys()) if metrics else []}")
-        
-        return {
-            "categories": final_categories,
-            "metrics": metrics,
-            "opportunities": opportunities,
-            "diagnostics": diagnostics,
-            "screenshot": screenshot
-        }
-    except Exception as e:
-        logger.error(f"Failed to process Cloud Run results: {str(e)}")
-        import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        return {
-            "error": f"Failed to process Cloud Run results: {str(e)}",
-            "categories": {"performance": 0, "accessibility": 0, "bestPractices": 0, "seo": 0},
-            "metrics": {},
-            "opportunities": [],
-            "diagnostics": []
-        }
 
 def process_lighthouse_results(lighthouse_data: Dict[str, Any]) -> Dict[str, Any]:
     """Process Lighthouse results into our format"""

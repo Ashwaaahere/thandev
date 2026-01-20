@@ -32,7 +32,6 @@ const nextConfig = {
     } else {
       console.log('✓ lib directory found at:', libPath);
       console.log('✓ auth.ts exists:', fs.existsSync(path.join(libPath, 'auth.ts')));
-      console.log('✓ cloud-run.ts exists:', fs.existsSync(path.join(libPath, 'cloud-run.ts')));
     }
     
     // Set up aliases - use absolute paths

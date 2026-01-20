@@ -230,3 +230,34 @@ class ToolResultResponse(BaseModel):
     findings_ingested: int
     message: str
 
+
+# Dependency Scanning Schemas
+
+class ProScanRequest(BaseModel):
+    """Schema for PRO dependency scan request"""
+    project_id: str = Field(..., description="Project ID to scan")
+    target_url: str = Field(..., description="Target URL to scan")
+
+
+class AdvancedScanRequest(BaseModel):
+    """Schema for ADVANCED dependency scan request"""
+    project_id: str = Field(..., description="Project ID to scan")
+    target_url: str = Field(..., description="Target URL to scan")
+    repo_connection_id: Optional[str] = Field(None, description="Optional repo connection ID for repo SCA")
+
+
+class ScanArtifactResponse(BaseModel):
+    """Schema for scan artifact response"""
+    id: str
+    scan_id: str
+    type: str  # 'url_sca' or 'repo_sca'
+    payload: Dict[str, Any]
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ScanArtifactsResponse(BaseModel):
+    """Schema for scan artifacts list response"""
+    items: List[ScanArtifactResponse]
+

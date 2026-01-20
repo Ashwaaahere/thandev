@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import GlobalSearch from './GlobalSearch';
 import NotificationBell from './NotificationBell';
 
@@ -49,58 +50,66 @@ export default function DashboardHeader({ user, onMenuClick, showLogo = false }:
 
   return (
     <header className="border-b backdrop-blur-sm" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-      <div className="px-6" style={{ height: '64px', display: 'flex', alignItems: 'center' }}>
-        <div className="flex items-center justify-between gap-4 w-full">
+      <div className="px-5" style={{ height: '51px', display: 'flex', alignItems: 'center' }}>
+        <div className="flex items-center justify-between gap-3 w-full">
           {/* Left side - Menu button and logo */}
-          <div className="flex items-center gap-3" style={{ height: '40px' }}>
+          <div className="flex items-center gap-2.5" style={{ height: '32px' }}>
             <button
               onClick={onMenuClick}
-              className="lg:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center"
-              style={{ color: 'var(--fg)', height: '40px', width: '40px' }}
+              className="lg:hidden p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex items-center justify-center"
+              style={{ color: 'var(--fg)', height: '32px', width: '32px' }}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
             
             {/* Logo - only visible when sidebar is closed */}
             {showLogo && (
-              <div className="flex items-center gap-2.5" style={{ height: '40px' }}>
-                <div className="h-7 w-7 rounded-lg shadow-lg flex-shrink-0" style={{ background: 'var(--brand)' }} />
-                <span className="text-lg font-bold" style={{ color: 'var(--fg)', lineHeight: '1' }}>Thandev</span>
-              </div>
+              <Link href="/dashboard" className="flex items-center gap-2" style={{ height: '32px' }}>
+                <Image 
+                  src="/logo.png" 
+                  alt="Thandev Logo" 
+                  width={22} 
+                  height={22} 
+                  className="flex-shrink-0"
+                  style={{ objectFit: 'contain' }}
+                />
+                <span className="text-base font-bold" style={{ color: 'var(--fg)', lineHeight: '1' }}>Thandev</span>
+                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-wide">Beta</span>
+              </Link>
             )}
           </div>
 
           {/* Center - Search */}
-          <div className="flex flex-1 max-w-lg" style={{ height: '40px' }}>
+          <div className="flex flex-1 max-w-lg" style={{ height: '32px' }}>
             <GlobalSearch />
           </div>
 
           {/* Right side - Notifications and user menu */}
-          <div className="flex items-center gap-3" style={{ height: '40px' }}>
+          <div className="flex items-center gap-2.5" style={{ height: '32px' }}>
             {/* Notifications */}
             <NotificationBell />
 
             {/* User Menu */}
-            <div className="relative" style={{ height: '40px' }}>
+            <div className="relative" style={{ height: '32px' }}>
               <button
                 onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-                style={{ height: '40px' }}
+                className="flex items-center gap-2 h-8 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                style={{ height: '32px' }}
               >
                 <div className="hidden md:block text-left">
-                  <p className="text-sm font-medium text-white" style={{ lineHeight: '1.2' }}>
+                  <p className="text-xs font-medium text-white" style={{ lineHeight: '1.2' }}>
                     {getDisplayName()}
                   </p>
-                  <p className="text-xs text-gray-400" style={{ lineHeight: '1.2' }}>
+                  <p className="text-[10px] text-gray-400" style={{ lineHeight: '1.2' }}>
                     {user?.email || 'No email'}
                   </p>
                 </div>
-                <div className="h-9 w-9 rounded-full flex items-center justify-center text-sm font-semibold text-white bg-blue-500 flex-shrink-0">
+                <div className="h-7 w-7 rounded-full flex items-center justify-center text-xs font-semibold text-white bg-blue-500 flex-shrink-0">
                   {getInitials()}
                 </div>
-                <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-3 h-3 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                 </svg>
               </button>

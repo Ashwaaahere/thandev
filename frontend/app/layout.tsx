@@ -11,9 +11,9 @@ export const metadata: Metadata = {
     template: '%s | Thandev'
   },
   icons: {
-    icon: '/favicon.svg',
-    shortcut: '/favicon.svg',
-    apple: '/favicon.svg',
+    icon: '/logo.png',
+    shortcut: '/logo.png',
+    apple: '/logo.png',
   },
   description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning. GitHub-authenticated access for developers.',
   keywords: [

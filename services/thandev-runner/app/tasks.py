@@ -926,7 +926,25 @@ async def process_step_request_with_error_handling(message: Dict[str, Any]) -> N
             await asyncio.sleep(5)  # Wait before retrying
 
 
+async def run_all_workers() -> None:
+    """
+    Run both step request worker and dependency scan worker in parallel.
+    """
+    await asyncio.gather(
+        run_worker_loop(),
+        run_dependency_worker_loop(),
+        return_exceptions=True,
+    )
+
+
 if __name__ == "__main__":
-    # Run worker loop
-    asyncio.run(run_worker_loop())
+    # Import dependency worker
+    try:
+        from app.dependency_worker import run_dependency_worker_loop
+        # Run both workers in parallel
+        asyncio.run(run_all_workers())
+    except ImportError:
+        logger.warning("Dependency worker not available, running step worker only")
+        # Fallback to step worker only
+        asyncio.run(run_worker_loop())
 

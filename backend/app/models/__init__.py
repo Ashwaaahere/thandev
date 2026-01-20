@@ -11,6 +11,9 @@ from app.models.performance_scan import PerformanceScan
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
 from app.models.allowed_domain import AllowedDomain
+from app.models.scan_artifact import ScanArtifact
+from app.models.integration import Integration
+from app.models.repo_connection import RepoConnection
 
 __all__ = [
     "User",
@@ -26,6 +29,9 @@ __all__ = [
     "Notification",
     "AuditLog",
     "AllowedDomain",
+    "ScanArtifact",
+    "Integration",
+    "RepoConnection",
 ]
 
 

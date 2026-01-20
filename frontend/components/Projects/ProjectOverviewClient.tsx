@@ -108,16 +108,30 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
       if (!session) return;
       
       try {
+        console.log(`ProjectOverviewClient: Loading recent scans for project ${projectId}`);
         const data = await thandevFetchJSON<{ items: ScanListItem[]; total: number }>(
           `/api/scans/project/${projectId}?limit=5`,
           session
         );
 
+        console.log(`ProjectOverviewClient: Received recent scans data`, {
+          total: data.total,
+          items_count: data.items?.length || 0,
+          items: data.items
+        });
+
         if (!cancelled && data.items) {
           setRecentScans(data.items);
+          console.log(`ProjectOverviewClient: Set recent scans state with ${data.items.length} items`);
+        } else if (!cancelled) {
+          console.warn(`ProjectOverviewClient: No items in response, setting empty array`);
+          setRecentScans([]);
         }
       } catch (e) {
         console.error('Error loading recent scans:', e);
+        if (!cancelled) {
+          setRecentScans([]);
+        }
         // Silently fail, recent scans are optional
       }
     }
@@ -261,10 +275,10 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
           <div className="flex items-center gap-3">
             <Link
               href={`/projects/${projectId}/scans`}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-colors hover:opacity-90"
-              style={{ background: 'var(--brand)' }}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors hover:opacity-90"
+              style={{ background: 'var(--brand)', color: '#ffffff' }}
             >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#ffffff' }}>
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               Run quick scan

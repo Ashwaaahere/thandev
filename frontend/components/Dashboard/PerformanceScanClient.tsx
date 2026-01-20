@@ -438,7 +438,7 @@ export default function PerformanceScanClient({ user }: PerformanceScanClientPro
         }, 300000);
 
       } else {
-        // Backend scan using Cloud Run Jobs
+        // Backend scan (Cloud Run removed - not available)
         if (!selectedDomainId) {
           toast.warning('Please select a verified domain for backend scan');
           return;

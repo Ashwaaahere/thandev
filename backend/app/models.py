@@ -59,7 +59,7 @@ class ScanJob(Base):
     artifact_urls = Column(JSONType)  # JSONB for PostgreSQL, Text for SQLite
     summary = Column(JSONType)  # JSONB for PostgreSQL, Text for SQLite
     preset_version = Column(String(20), default='1.0')
-    execution_id = Column(Text)  # Cloud Run execution ID
+    execution_id = Column(Text)  # Execution ID (deprecated - was used for Cloud Run)
     
     # Constraints
     __table_args__ = (

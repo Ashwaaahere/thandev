@@ -3,7 +3,7 @@ version: "1.0"
 description: "Very fast, low-noise footprinting and tech checks"
 tier: "level0"
 preset_name: "normal"
-cloud_run_job: "thandev-surface"
+# cloud_run_job removed - using Runner service instead
 estimated_duration: "3-8 minutes"
 
 tools:

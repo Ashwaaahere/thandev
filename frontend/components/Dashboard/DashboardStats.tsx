@@ -141,11 +141,11 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
     return (
       <>
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+          <div key={i} className="rounded-xl border p-5 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
             <div className="animate-pulse">
-              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-2"></div>
-              <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-2"></div>
-              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
+              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-1.5"></div>
+              <div className="h-6 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-1.5"></div>
+              <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded w-2/3"></div>
             </div>
           </div>
         ))}
@@ -155,8 +155,8 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
 
   if (error) {
     return (
-      <div className="col-span-full rounded-xl border p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <p className="text-sm" style={{ color: 'var(--muted)' }}>
+      <div className="col-span-full rounded-xl border p-5" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-xs" style={{ color: 'var(--muted)' }}>
           Could not load data: {error}. Please try again.
         </p>
       </div>
@@ -169,23 +169,23 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
   return (
     <>
       {/* TOTAL PROJECTS Card */}
-      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <p className="text-sm font-medium mb-2 text-gray-400">
+      <div className="rounded-xl border p-5 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-xs font-medium mb-1.5 text-gray-400">
           TOTAL PROJECTS
         </p>
-        <div className="flex items-center gap-2 mb-3">
-          <p className="text-3xl font-bold text-white">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <p className="text-2xl font-bold text-white">
             {stats.totalProjects.toString().padStart(2, '0')}
           </p>
           <div className="flex items-center gap-1 text-blue-500">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
             </svg>
-            <span className="text-sm font-medium">+{stats.projectIncrease}</span>
+            <span className="text-xs font-medium">+{stats.projectIncrease}</span>
           </div>
         </div>
         {/* Progress bar */}
-        <div className="w-full h-2 rounded-full overflow-hidden bg-gray-700">
+        <div className="w-full h-1.5 rounded-full overflow-hidden bg-gray-700">
           <div 
             className="h-full rounded-full transition-all duration-300"
             style={{ 
@@ -197,23 +197,23 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
       </div>
 
       {/* TOTAL SCANS Card */}
-      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <p className="text-sm font-medium mb-2 text-gray-400">
+      <div className="rounded-xl border p-5 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-xs font-medium mb-1.5 text-gray-400">
           TOTAL SCANS
         </p>
-        <div className="flex items-center gap-2 mb-3">
-          <p className="text-3xl font-bold text-white">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <p className="text-2xl font-bold text-white">
             {stats.totalScans}
           </p>
           <div className="flex items-center gap-1 text-green-500">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
-            <span className="text-sm font-medium">{stats.scanPercentage}%</span>
+            <span className="text-xs font-medium">{stats.scanPercentage}%</span>
           </div>
         </div>
         {/* Bar chart */}
-        <div className="flex items-end gap-1 h-12">
+        <div className="flex items-end gap-1 h-10">
           {barHeights.map((height, index) => (
             <div
               key={index}
@@ -228,17 +228,17 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
       </div>
 
       {/* OPEN FINDINGS Card */}
-      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <p className="text-sm font-medium mb-2 text-gray-400">
+      <div className="rounded-xl border p-5 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-xs font-medium mb-1.5 text-gray-400">
           OPEN FINDINGS
         </p>
-        <p className="text-3xl font-bold mb-2 text-red-500">
+        <p className="text-2xl font-bold mb-1.5 text-red-500">
           {stats.openFindings.toString().padStart(2, '0')}
         </p>
         {stats.openFindings > 0 && (
-          <div className="mb-3">
+          <div className="mb-2.5">
             <span 
-              className="inline-block px-3 py-1 rounded-full text-xs font-medium text-red-500"
+              className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-medium text-red-500"
               style={{ background: 'rgba(239, 68, 68, 0.2)' }}
             >
               REQUIRES ATTENTION
@@ -246,7 +246,7 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
           </div>
         )}
         {/* Progress bar */}
-        <div className="w-full h-2 rounded-full overflow-hidden bg-gray-700">
+        <div className="w-full h-1.5 rounded-full overflow-hidden bg-gray-700">
           <div 
             className="h-full rounded-full transition-all duration-300"
             style={{ 
@@ -258,15 +258,15 @@ export default function DashboardStats({ session }: DashboardStatsProps) {
       </div>
 
       {/* THREAT SCORE Card */}
-      <div className="rounded-xl border p-6 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-        <p className="text-sm font-medium mb-2 text-gray-400">
+      <div className="rounded-xl border p-5 shadow-sm" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+        <p className="text-xs font-medium mb-1.5 text-gray-400">
           THREAT SCORE
         </p>
-        <div className="flex items-center gap-2 mb-3">
-          <p className="text-3xl font-bold text-white">
+        <div className="flex items-center gap-1.5 mb-2.5">
+          <p className="text-2xl font-bold text-white">
             {stats.threatScore}
           </p>
-          <span className="text-sm font-medium text-green-500">SECURE</span>
+          <span className="text-xs font-medium text-green-500">SECURE</span>
         </div>
         {/* Indicator segments */}
         <div className="flex gap-1">

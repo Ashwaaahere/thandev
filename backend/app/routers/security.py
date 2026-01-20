@@ -10,7 +10,6 @@ import time
 import yaml
 from datetime import datetime
 import os
-import httpx
 import logging
 from sqlalchemy.orm import Session
 from app.db import get_db
@@ -53,11 +52,11 @@ def load_presets():
 # Load presets on startup
 load_presets()
 
-# Tier to Cloud Run Job mapping
-TIER_TO_JOB = {
-    "level0": "security-scanner-job",
-    "level1": "security-scanner-job", 
-    "level2": "security-scanner-job"
+# Tier to scan level mapping for Runner service
+TIER_TO_SCAN_LEVEL = {
+    "level0": "basic",
+    "level1": "pro", 
+    "level2": "advanced"
 }
 
 class SecurityScanRequest(BaseModel):
@@ -291,7 +290,7 @@ async def scan_callback(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Webhook callback to receive scan results from Cloud Run Job"""
+    """Webhook callback to receive scan results from Runner service"""
     try:
         # Validate scan ID exists
         scan_job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
@@ -356,16 +355,15 @@ async def scan_callback(
 # ============================================================================
 # LEGACY v1 CODE REMOVED
 # ============================================================================
-# All local scan functions removed - Cloud Run Jobs only
+# Security scans now use Runner service via Redis streams
 # Local execution functions removed: run_local_scan_sync, run_local_scan, 
 # run_nuclei_scan, run_nmap_scan, run_ssl_scan, run_ffuf_scan, run_nikto_scan, etc.
-# All scanning now happens in Cloud Run Jobs
-# 
-# For documentation of removed v1 patterns, see: backend/legacy/README.md
+# Security scans now use the Runner service via Redis streams
+# This endpoint is deprecated - use /api/scans instead
 # ============================================================================
 
 async def run_security_scan(job_id: str, url: str, tier: str):
-    """Run security scan using Cloud Run Job ONLY - no local execution"""
+    """Run security scan using Runner service via Redis streams"""
     # Create a new database session for the background task
     from app.db import SessionLocal
     background_db = SessionLocal()
@@ -383,37 +381,40 @@ async def run_security_scan(job_id: str, url: str, tier: str):
         if not preset:
             raise Exception(f"Preset not found for tier {tier}")
         
-        # Get Cloud Run Job name
-        job_name = TIER_TO_JOB.get(tier)
-        if not job_name:
-            raise Exception(f"Cloud Run Job not found for tier {tier}")
+        # Map tier to scan_level for runner
+        tier_to_scan_level = {
+            "level0": "basic",
+            "level1": "pro", 
+            "level2": "advanced"
+        }
+        scan_level = tier_to_scan_level.get(tier, "pro")
         
-        # Check if Cloud Run Service is enabled (same pattern as performance scan)
-        cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "true").strip()
-        cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
-        cloud_run_enabled = cloud_run_enabled_clean.lower() in ["true", "1", "yes", "on", "enabled"]
+        # Use Runner service via Redis streams
+        logger.info(f"Using Runner service for security scan: {job_id}, tier={tier}, scan_level={scan_level}")
+        from app.services.runner_client import publish_scan_steps_to_runner
         
-        # Get Cloud Run Service URL (same pattern as CLOUD_RUN_LIGHTHOUSE_URL)
-        cloud_run_url_raw = os.getenv("CLOUD_RUN_SECURITY_URL", "").strip()
-        if " -a " in cloud_run_url_raw:
-            cloud_run_url = cloud_run_url_raw.split(" -a ")[0].strip()
-        else:
-            cloud_run_url = cloud_run_url_raw
+        # Get tenant and project from scan_job if available
+        org_id = getattr(scan_job, 'org_id', None) if scan_job else None
+        project_id = getattr(scan_job, 'project_id', None) if scan_job else None
         
-        logger.info(f"Security scan configuration: cloud_run_enabled={cloud_run_enabled}, tier={tier}, cloud_run_url={cloud_run_url[:50] if cloud_run_url else 'NOT SET'}...")
+        success = await publish_scan_steps_to_runner(
+            scan_job_id=job_id,
+            target_url=url,
+            scan_level=scan_level,
+            org_id=org_id,
+            project_id=project_id,
+        )
         
-        if cloud_run_enabled and cloud_run_url:
-            # Use Cloud Run Service (same pattern as performance scan)
-            logger.info(f"Using Cloud Run Service for security scan: {job_id}")
-            await run_cloud_run_security_scan(job_id, url, tier, cloud_run_url, background_db)
-        else:
-            error_msg = f"Cloud Run not configured for security scans. Set CLOUD_RUN_ENABLED=true and CLOUD_RUN_SECURITY_URL=<service-url>"
+        if not success:
+            error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
             logger.error(error_msg)
             if scan_job:
                 scan_job.status = "error"
                 scan_job.finished_at = datetime.utcnow()
                 scan_job.summary = json.dumps({"error": error_msg})
                 background_db.commit()
+        else:
+            logger.info(f"Security scan {job_id} published to Runner successfully")
             
     except Exception as e:
         logger.error(f"Scan failed for job {job_id}: {str(e)}")
@@ -426,103 +427,3 @@ async def run_security_scan(job_id: str, url: str, tier: str):
     finally:
         background_db.close()
 
-async def run_cloud_run_security_scan(job_id: str, url: str, tier: str, cloud_run_url: str, db: Session):
-    """Run security scan via Cloud Run Service (same pattern as performance scan)"""
-    logger.info(f"Calling Cloud Run Service: {cloud_run_url}/run for job {job_id}")
-    
-    scan_job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
-    
-    try:
-        # Get authentication token for Cloud Run Service
-        # For Fly.io, we need to use a service account token
-        access_token = os.getenv("GCP_ACCESS_TOKEN")
-        
-        headers = {"Content-Type": "application/json"}
-        if access_token:
-            headers["Authorization"] = f"Bearer {access_token}"
-        else:
-            # Try to get token from metadata server (if running on GCP)
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as metadata_client:
-                    metadata_response = await metadata_client.get(
-                        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
-                        headers={"Metadata-Flavor": "Google"}
-                    )
-                    if metadata_response.status_code == 200:
-                        access_token = metadata_response.json().get("access_token")
-                        headers["Authorization"] = f"Bearer {access_token}"
-            except:
-                logger.warning("Could not get GCP access token. Service may require authentication.")
-        
-        # Call Cloud Run Service to start scan
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            logger.info(f"Sending POST request to Cloud Run Service: {cloud_run_url}/run")
-            response = await client.post(
-                f"{cloud_run_url}/run",
-                headers=headers,
-                json={
-                "url": url,
-                "tier": tier,
-                    "jobId": job_id,
-                    "category": "security"
-                }
-            )
-            
-            logger.info(f"Cloud Run Service response: status={response.status_code}")
-            
-            if response.status_code != 200:
-                error_text = response.text[:500]
-                logger.error(f"Cloud Run Service failed to start scan: status={response.status_code}, error={error_text}")
-                raise Exception(f"Cloud Run Service failed to start scan: {error_text}")
-            
-            cloud_job_data = response.json()
-            cloud_job_id = cloud_job_data.get("jobId") or job_id
-            
-            logger.info(f"Started Cloud Run security scan for job {job_id}, cloud job ID: {cloud_job_id}")
-            
-            # Poll for results (max 10 minutes for security scans)
-            max_polls = 120  # 120 polls * 5 seconds = 10 minutes
-            poll_interval = 5  # seconds
-            
-            for poll_count in range(max_polls):
-                await asyncio.sleep(poll_interval)
-                
-                status_response = await client.get(
-                    f"{cloud_run_url}/status/{cloud_job_id}",
-                    headers=headers if 'Authorization' in headers else {}
-                )
-                
-                if status_response.status_code != 200:
-                    logger.warning(f"Failed to get status for cloud job {cloud_job_id}: {status_response.text}")
-                    continue
-                
-                status_data = status_response.json()
-                cloud_status = status_data.get("status", "unknown")
-                
-                logger.info(f"Cloud Run scan status for job {job_id}: {cloud_status} (poll {poll_count + 1}/{max_polls})")
-                
-                if cloud_status == "completed":
-                    # Process and save results
-                    result = status_data.get("result", {})
-                    
-                    if scan_job:
-                        scan_job.status = "completed"
-                        scan_job.finished_at = datetime.utcnow()
-                        scan_job.summary = json.dumps(result.get("summary", {}))
-                        scan_job.artifact_urls = json.dumps(result.get("artifact_urls", []))
-                        db.commit()
-                        logger.info(f"Security scan completed for job {job_id}")
-                    return
-                
-                elif cloud_status == "failed":
-                    error_msg = status_data.get("error", "Unknown error")
-                    raise Exception(f"Cloud Run scan failed: {error_msg}")
-            
-            # Timeout
-            raise Exception("Cloud Run scan timed out after 10 minutes")
-            
-    except httpx.TimeoutException:
-        raise Exception("Cloud Run Service request timed out")
-    except Exception as e:
-        logger.error(f"Cloud Run scan error for job {job_id}: {str(e)}")
-        raise

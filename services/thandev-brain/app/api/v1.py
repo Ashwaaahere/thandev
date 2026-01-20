@@ -360,3 +360,263 @@ async def enrich_findings(request: EnrichFindingsRequest) -> EnrichFindingsRespo
             detail=f"Failed to enrich findings: {str(e)}"
         )
 
+
+@router.post("/scans/{scan_id}/explain")
+async def explain_scan_artifacts(
+    scan_id: str,
+    org_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Generate AI explanation of dependency scanning artifacts.
+    
+    Fetches scan artifacts from backend and generates structured explanation
+    strictly based on artifacts (no hallucinations).
+    
+    Returns:
+        Explanation with summary, key points, prioritized actions, and limitations
+    """
+    try:
+        import httpx
+        import os
+        
+        # Get backend URL
+        backend_url = os.getenv("CORE_BACKEND_URL", "http://localhost:8000")
+        
+        # Fetch artifacts from backend
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                f"{backend_url}/api/scans/{scan_id}/artifacts",
+                headers={"X-Thandev-Org-Id": org_id} if org_id else {},
+            )
+            response.raise_for_status()
+            artifacts_data = response.json()
+        
+        artifacts = artifacts_data.get("items", [])
+        
+        if not artifacts:
+            return {
+                "summary": "No dependency scanning artifacts found for this scan.",
+                "key_points": [],
+                "prioritized_actions": [],
+                "limitations": ["No artifacts available to analyze."],
+            }
+        
+        # Generate explanation from artifacts
+        explanation = await _generate_explanation_from_artifacts(artifacts)
+        
+        return explanation
+        
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Scan not found: {scan_id}"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch artifacts: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to explain artifacts: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to explain artifacts: {str(e)}"
+        )
+
+
+async def _generate_explanation_from_artifacts(artifacts: list) -> Dict[str, Any]:
+    """
+    Generate explanation from scan artifacts using OpenAI.
+    
+    Strictly grounded in artifacts - no hallucinations.
+    """
+    from app.core.config import settings
+    
+    # Extract data from artifacts
+    url_sca = None
+    repo_sca = None
+    
+    for artifact in artifacts:
+        if artifact.get("type") == "url_sca":
+            url_sca = artifact.get("payload", {})
+        elif artifact.get("type") == "repo_sca":
+            repo_sca = artifact.get("payload", {})
+    
+    # Build context from artifacts
+    context_parts = []
+    
+    if url_sca:
+        fingerprint = url_sca.get("fingerprint", {})
+        techs = fingerprint.get("technologies", [])
+        deps = url_sca.get("client_dependencies", [])
+        findings = url_sca.get("findings", [])
+        
+        context_parts.append("URL-Based Dependency Scan Results:")
+        if techs:
+            context_parts.append(f"- Technologies detected: {', '.join([t.get('name', '') for t in techs[:5]])}")
+        if deps:
+            context_parts.append(f"- Client-side dependencies: {len(deps)}")
+        if findings:
+            context_parts.append(f"- Vulnerabilities found: {len(findings)}")
+    
+    if repo_sca:
+        packages = repo_sca.get("packages", [])
+        findings = repo_sca.get("findings", [])
+        
+        context_parts.append("Repository-Based Dependency Scan Results:")
+        context_parts.append(f"- Packages analyzed: {len(packages)}")
+        if findings:
+            context_parts.append(f"- Vulnerabilities found: {len(findings)}")
+    
+    context = "\n".join(context_parts)
+    
+    # Generate explanation using OpenAI
+    if settings.OPENAI_API_KEY:
+        try:
+            from openai import AsyncOpenAI
+            
+            client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            prompt = f"""Analyze the following dependency scanning results and provide a structured explanation.
+
+{context}
+
+Provide:
+1. A brief summary of what was detected
+2. Key points about the findings
+3. Prioritized actions (most critical first)
+4. Limitations and confidence notes
+
+Be specific and only reference what is actually in the scan results. Do not invent vulnerabilities or findings."""
+
+            response = await client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": "You are a security analyst explaining dependency scan results. Only reference findings that are explicitly in the scan data."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+            )
+            
+            explanation_text = response.choices[0].message.content
+            
+            # Parse explanation into structured format
+            return _parse_explanation(explanation_text, url_sca, repo_sca)
+            
+        except Exception as e:
+            logger.warning(f"OpenAI explanation failed: {e}, using fallback")
+    
+    # Fallback: generate basic explanation from artifacts
+    return _generate_fallback_explanation(url_sca, repo_sca)
+
+
+def _parse_explanation(text: str, url_sca: Optional[Dict], repo_sca: Optional[Dict]) -> Dict[str, Any]:
+    """Parse OpenAI response into structured format."""
+    # Simple parsing - in production, use more sophisticated parsing
+    lines = text.split("\n")
+    
+    summary = ""
+    key_points = []
+    actions = []
+    limitations = []
+    
+    current_section = None
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        if "summary" in line.lower() or "overview" in line.lower():
+            current_section = "summary"
+        elif "key point" in line.lower() or "finding" in line.lower():
+            current_section = "key_points"
+        elif "action" in line.lower() or "recommend" in line.lower():
+            current_section = "actions"
+        elif "limit" in line.lower() or "note" in line.lower():
+            current_section = "limitations"
+        
+        if line.startswith("-") or line.startswith("*"):
+            content = line[1:].strip()
+            if current_section == "key_points":
+                key_points.append(content)
+            elif current_section == "actions":
+                actions.append({"title": content, "reason": "", "references": []})
+            elif current_section == "limitations":
+                limitations.append(content)
+        elif current_section == "summary" and not summary:
+            summary = line
+    
+    if not summary:
+        summary = "Dependency scan completed. Review findings below."
+    
+    return {
+        "summary": summary,
+        "key_points": key_points[:10],
+        "prioritized_actions": actions[:10],
+        "limitations": limitations + ["Analysis based on scan artifacts only. Manual verification recommended."],
+    }
+
+
+def _generate_fallback_explanation(url_sca: Optional[Dict], repo_sca: Optional[Dict]) -> Dict[str, Any]:
+    """Generate basic explanation without OpenAI."""
+    summary_parts = []
+    key_points = []
+    actions = []
+    
+    if url_sca:
+        findings = url_sca.get("findings", [])
+        if findings:
+            summary_parts.append(f"Found {len(findings)} client-side dependency vulnerabilities")
+            key_points.append(f"{len(findings)} vulnerabilities detected in client-side JavaScript")
+            
+            # Group by severity
+            by_severity = {}
+            for f in findings:
+                sev = f.get("severity", "unknown")
+                by_severity[sev] = by_severity.get(sev, 0) + 1
+            
+            for sev, count in sorted(by_severity.items(), key=lambda x: {"critical": 0, "high": 1, "medium": 2, "low": 3}.get(x[0], 4)):
+                actions.append({
+                    "title": f"Review {count} {sev} severity vulnerabilities",
+                    "reason": f"Found {count} {sev} severity issues in client-side dependencies",
+                    "references": [],
+                })
+    
+    if repo_sca:
+        findings = repo_sca.get("findings", [])
+        packages = repo_sca.get("packages", [])
+        if findings:
+            summary_parts.append(f"Found {len(findings)} repository dependency vulnerabilities across {len(packages)} packages")
+            key_points.append(f"{len(findings)} vulnerabilities in {len(packages)} packages")
+            
+            # Group by ecosystem
+            by_ecosystem = {}
+            for f in findings:
+                eco = f.get("ecosystem", "unknown")
+                by_ecosystem[eco] = by_ecosystem.get(eco, 0) + 1
+            
+            for eco, count in sorted(by_ecosystem.items()):
+                actions.append({
+                    "title": f"Update {eco} dependencies ({count} vulnerabilities)",
+                    "reason": f"Found {count} vulnerabilities in {eco} packages",
+                    "references": [],
+                })
+    
+    if not summary_parts:
+        summary = "Dependency scan completed with no vulnerabilities detected."
+    else:
+        summary = ". ".join(summary_parts) + "."
+    
+    return {
+        "summary": summary,
+        "key_points": key_points[:10],
+        "prioritized_actions": actions[:10],
+        "limitations": [
+            "Analysis based on scan artifacts only.",
+            "Manual verification of findings recommended.",
+            "Some vulnerabilities may have been fixed in newer versions.",
+        ],
+    }
+

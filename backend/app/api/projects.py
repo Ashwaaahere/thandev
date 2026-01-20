@@ -3,9 +3,10 @@ Projects API router
 """
 from typing import Optional
 import logging
+import json
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, or_, String
 
 logger = logging.getLogger(__name__)
 
@@ -217,31 +218,130 @@ def list_projects(
     paginated_projects = filtered_projects[offset:offset + limit]
     total = len(filtered_projects)
 
-    # If you already have stats calculation in this file, keep that logic
-    # and only wrap the result into ProjectListWithStatsResponse; this is
-    # just a safe placeholder shape:
+    # Calculate stats for each project
     items: list[ProjectWithStats] = []
     for p in paginated_projects:
-        items.append(
-            ProjectWithStats(
-                id=p.id,
-                name=p.name,
-                target_url=getattr(p, "target_url", None),
-                root_domain=getattr(p, "root_domain", None),
-                description=getattr(p, "description", None),
-                created_at=p.created_at,
-                last_scan_at=None,
-                last_scan_status=None,
-                last_risk_score=None,
-                total_scans=0,
-                open_findings=0,
+        try:
+            # Get scan stats for this project
+            # Use EXACT same query logic as get_project_overview which works correctly
+            # Ensure p.id is a string (same as project.id in overview)
+            project_id = str(p.id) if p.id else None
+            logger.info(f"Project {p.id} ({p.name}): Querying scans with project_id={project_id} (type: {type(project_id)})")
+            
+            scans_q = (
+                db.query(ScanJob)
+                .filter(ScanJob.project_id == project_id)
+                .order_by(ScanJob.created_at.desc())
             )
-        )
+            
+            total_scans = scans_q.count()
+            logger.info(f"Project {p.id} ({p.name}): Found {total_scans} scans by project_id")
+            
+            # If no scans found by project_id, try matching by URL (for legacy scans)
+            if total_scans == 0 and p.target_url:
+                # Try to match by URL or domain
+                url_scans_q = (
+                    db.query(ScanJob)
+                    .filter(
+                        or_(
+                            ScanJob.url == p.target_url,
+                            ScanJob.domain == p.root_domain
+                        )
+                    )
+                    .order_by(ScanJob.created_at.desc())
+                )
+                url_scans_count = url_scans_q.count()
+                logger.info(f"Project {p.id} ({p.name}): Found {url_scans_count} scans by URL/domain match")
+                
+                if url_scans_count > 0:
+                    # Use URL-matched scans
+                    scans_q = url_scans_q
+                    total_scans = url_scans_count
+            
+            last_scan = scans_q.first()
+            
+            last_scan_at = last_scan.created_at if last_scan else None
+            last_scan_status = None
+            if last_scan:
+                if hasattr(last_scan.status, 'value'):
+                    last_scan_status = last_scan.status.value
+                else:
+                    last_scan_status = str(last_scan.status)
+            
+            # Get risk_score from last scan summary - EXACT same logic as overview
+            last_risk_score = None
+            if last_scan and last_scan.summary:
+                if isinstance(last_scan.summary, dict):
+                    last_risk_score = last_scan.summary.get("risk_score")
+            
+            # Count open findings - EXACT same logic as overview
+            findings_q = (
+                db.query(Finding)
+                .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+                .filter(ScanJob.project_id == project_id)
+            )
+            open_findings = findings_q.count()
+            
+            # If no findings by project_id, try URL match (for legacy scans)
+            if open_findings == 0 and total_scans > 0:
+                # Get scan IDs from the scans we found
+                scan_ids = [s.id for s in scans_q.all()]
+                if scan_ids:
+                    open_findings = (
+                        db.query(Finding)
+                        .filter(Finding.scan_job_id.in_(scan_ids))
+                        .count()
+                    )
+            
+            logger.info(f"Project {p.id} ({p.name}) stats: total_scans={total_scans}, open_findings={open_findings}, last_scan_at={last_scan_at}, last_risk_score={last_risk_score}")
+            
+            items.append(
+                ProjectWithStats(
+                    id=str(p.id),
+                    name=p.name,
+                    target_url=getattr(p, "target_url", None),
+                    root_domain=getattr(p, "root_domain", None),
+                    description=getattr(p, "description", None),
+                    created_at=p.created_at,
+                    last_scan_at=last_scan_at,
+                    last_scan_status=last_scan_status,
+                    last_risk_score=last_risk_score,
+                    total_scans=total_scans,
+                    open_findings=open_findings,
+                )
+            )
+        except Exception as e:
+            logger.error(f"Error calculating stats for project {p.id}: {e}", exc_info=True)
+            # Return project with zero stats on error
+            items.append(
+                ProjectWithStats(
+                    id=str(p.id),
+                    name=p.name,
+                    target_url=getattr(p, "target_url", None),
+                    root_domain=getattr(p, "root_domain", None),
+                    description=getattr(p, "description", None),
+                    created_at=p.created_at,
+                    last_scan_at=None,
+                    last_scan_status=None,
+                    last_risk_score=None,
+                    total_scans=0,
+                    open_findings=0,
+                )
+            )
 
-    return ProjectListWithStatsResponse(
+    logger.info(f"Returning {len(items)} projects with stats. Total projects: {total}")
+    
+    response = ProjectListWithStatsResponse(
         items=items,
         total=total,
     )
+    
+    # Log first project's stats for debugging
+    if items:
+        first_item = items[0]
+        logger.info(f"First project stats example: id={first_item.id}, name={first_item.name}, total_scans={first_item.total_scans}, open_findings={first_item.open_findings}, last_scan_at={first_item.last_scan_at}, last_risk_score={first_item.last_risk_score}")
+    
+    return response
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
@@ -413,7 +513,7 @@ def get_project_overview(
             detail="Project not found"
         )
     
-    # Scan stats
+    # Scan stats - EXACT same query as list_projects uses
     scans_q = (
         db.query(ScanJob)
         .filter(ScanJob.project_id == project.id)
@@ -421,6 +521,7 @@ def get_project_overview(
     )
     
     total_scans = scans_q.count()
+    logger.info(f"Project overview {project.id} ({project.name}): Found {total_scans} scans")
     last_scan = scans_q.first()
     
     last_scan_at = last_scan.created_at if last_scan else None

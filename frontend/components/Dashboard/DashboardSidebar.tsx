@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 
 interface DashboardSidebarProps {
@@ -64,17 +65,25 @@ export default function DashboardSidebar({
         <div className="flex flex-col h-full">
           {/* Logo */}
           {showLogo && (
-            <div className="flex items-center gap-3 px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-              <div className="h-8 w-8 rounded-lg shadow-lg" style={{ background: 'var(--brand)' }} />
-              <span className="text-xl font-bold" style={{ color: 'var(--fg)' }}>Thandev</span>
-            </div>
+            <Link href="/dashboard" className="flex items-center gap-2.5 px-5 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+              <Image 
+                src="/logo.png" 
+                alt="Thandev Logo" 
+                width={26} 
+                height={26} 
+                className="flex-shrink-0"
+                style={{ objectFit: 'contain' }}
+              />
+              <span className="text-base font-bold" style={{ color: 'var(--fg)' }}>Thandev</span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-wide">Beta</span>
+            </Link>
           )}
 
           {/* Navigation */}
-          <nav className="flex-1 px-4 py-6 space-y-6 overflow-y-auto">
+          <nav className="flex-1 px-3 py-5 space-y-5 overflow-y-auto">
             {/* CORE PLATFORM Section */}
             <div>
-              <h3 className="px-3 mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 CORE PLATFORM
               </h3>
               <div className="space-y-1">
@@ -85,7 +94,7 @@ export default function DashboardSidebar({
                     <Link
                       key={item.name}
                       href={item.href}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
                       style={{
                         background: isActive ? '#3b82f6' : 'transparent',
                         color: isActive ? 'white' : 'white'
@@ -94,7 +103,7 @@ export default function DashboardSidebar({
                       aria-current={isActive ? 'page' : undefined}
                     >
                       <svg 
-                        className="w-5 h-5" 
+                        className="w-4 h-4" 
                         fill="none" 
                         stroke="currentColor" 
                         viewBox="0 0 24 24"
@@ -113,7 +122,7 @@ export default function DashboardSidebar({
 
             {/* ACCOUNT Section */}
             <div>
-              <h3 className="px-3 mb-3 text-xs font-semibold uppercase tracking-wider text-gray-400">
+              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
                 ACCOUNT
               </h3>
               <div className="space-y-1">
@@ -123,7 +132,7 @@ export default function DashboardSidebar({
                     <Link
                       key={item.name}
                       href={item.href}
-                      className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
                       style={{
                         background: isActive ? '#3b82f6' : 'transparent',
                         color: isActive ? 'white' : 'white'
@@ -131,7 +140,7 @@ export default function DashboardSidebar({
                       onClick={() => handleClose()}
                     >
                       <svg 
-                        className="w-5 h-5" 
+                        className="w-4 h-4" 
                         fill="none" 
                         stroke="currentColor" 
                         viewBox="0 0 24 24"

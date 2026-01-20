@@ -309,6 +309,7 @@ class ScanJob(Base):
         primaryjoin="ScanJob.id == Finding.scan_job_id"
     )
     tool_results = relationship("ToolResult", back_populates="scan_job", cascade="all, delete-orphan")
+    artifacts = relationship("ScanArtifact", back_populates="scan_job", cascade="all, delete-orphan")
 
 
 

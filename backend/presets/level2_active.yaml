@@ -3,7 +3,7 @@ version: "1.0"
 description: "More aggressive detection (non-exploitative) and CVE checks"
 tier: "level2"
 preset_name: "active"
-cloud_run_job: "thandev-active"
+# cloud_run_job removed - using Runner service instead
 estimated_duration: "20-45 minutes"
 
 tools:

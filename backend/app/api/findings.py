@@ -2,12 +2,15 @@
 Findings API router
 """
 import json
+import logging
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import or_, func
+from sqlalchemy import or_, func, Text, and_
 from typing import Optional
 
 from fastapi import HTTPException, status
+
+logger = logging.getLogger(__name__)
 
 from app.core.database import get_db
 from app.core.tenant_utils import require_tenant, get_current_user
@@ -36,6 +39,7 @@ async def list_findings(
     status: Optional[FindingStatus] = Query(None, description="Filter by status (open, acknowledged, resolved, suppressed)"),
     category: Optional[str] = Query(None, description="Filter by vulnerability category (xss, sqli, ssrf, ssti, xxe, dir_traversal, csrf, cors, command_injection, idor)"),
     vuln_type: Optional[str] = Query(None, description="Filter by vuln_type (xss, sqli, csrf, etc.)"),
+    cve_id: Optional[str] = Query(None, description="Filter by exact CVE ID (case-insensitive)"),
     limit: int = Query(20, ge=1, le=1000, description="Maximum number of findings to return"),
     offset: int = Query(0, ge=0, description="Number of findings to skip"),
     db: Session = Depends(get_db),
@@ -83,6 +87,49 @@ async def list_findings(
             # Filter by any of the valid severities
             from sqlalchemy import or_
             query = query.filter(or_(*[Finding.severity == sv for sv in valid_severities]))
+    
+    # Apply CVE ID filter if provided (exact match, case-insensitive)
+    # Search in both cve_id column and raw_data JSON (for dependency scan findings)
+    # Also automatically backfill artifacts if no findings found
+    if cve_id:
+        cve_id_upper = cve_id.upper().strip()
+        cve_id_normalized = cve_id.strip()  # Keep original case for contains search
+        
+        # Detect database type for appropriate JSON query
+        from app.core.database import engine
+        is_postgresql = engine.url.drivername.startswith("postgresql")
+        
+        # Build filter conditions
+        conditions = [
+            # Direct match in cve_id column (case-insensitive)
+            and_(
+                Finding.cve_id.isnot(None),
+                func.upper(Finding.cve_id) == cve_id_upper
+            )
+        ]
+        
+        # Also search in raw_data for CVE IDs stored in references field
+        # This handles dependency scan findings where CVE IDs are in references array
+        if is_postgresql:
+            # PostgreSQL: Use JSONB contains operator
+            from sqlalchemy import text, Text
+            # Search for CVE ID anywhere in raw_data JSON (as string)
+            conditions.append(
+                and_(
+                    Finding.raw_data.isnot(None),
+                    Finding.raw_data.cast(Text).ilike(f"%{cve_id_normalized}%")
+                )
+            )
+        else:
+            # SQLite: raw_data is stored as Text, use LIKE
+            conditions.append(
+                and_(
+                    Finding.raw_data.isnot(None),
+                    Finding.raw_data.ilike(f"%{cve_id_normalized}%")
+                )
+            )
+        
+        query = query.filter(or_(*conditions))
     
     # Apply search filter if provided (prioritizes URL and parameter fields)
     if search:
@@ -154,6 +201,218 @@ async def list_findings(
     # Get total count before pagination
     total = query.count()
     
+    # If searching by CVE ID, check if we have findings with this specific CVE ID
+    # If not, try to backfill from artifacts
+    if cve_id:
+        # Check if we have any findings with this specific CVE ID
+        cve_id_upper = cve_id.upper().strip()
+        cve_findings_count = (
+            db.query(Finding)
+            .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+            .join(Project, ScanJob.project_id == Project.id)
+            .filter(
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id,
+                Finding.cve_id.isnot(None),
+                func.upper(Finding.cve_id) == cve_id_upper
+            )
+            .count()
+        )
+        
+        # Also check in raw_data
+        from app.core.database import engine
+        is_postgresql = engine.url.drivername.startswith("postgresql")
+        cve_id_normalized = cve_id.strip()
+        if is_postgresql:
+            from sqlalchemy import text, Text
+            raw_data_count = (
+                db.query(Finding)
+                .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+                .join(Project, ScanJob.project_id == Project.id)
+                .filter(
+                    Project.tenant_id == tenant.id,
+                    Project.owner_id == current_user.id,
+                    Finding.raw_data.isnot(None),
+                    Finding.raw_data.cast(Text).ilike(f"%{cve_id_normalized}%")
+                )
+                .count()
+            )
+        else:
+            raw_data_count = (
+                db.query(Finding)
+                .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+                .join(Project, ScanJob.project_id == Project.id)
+                .filter(
+                    Project.tenant_id == tenant.id,
+                    Project.owner_id == current_user.id,
+                    Finding.raw_data.isnot(None),
+                    Finding.raw_data.ilike(f"%{cve_id_normalized}%")
+                )
+                .count()
+            )
+        
+        # If no findings with this CVE ID found, try to backfill
+        if cve_findings_count == 0 and raw_data_count == 0:
+            logger.info(f"No findings found for CVE {cve_id}, attempting to backfill from artifacts")
+        try:
+            from app.models.scan_artifact import ScanArtifact
+            from app.services.findings_ingestor import create_or_update_finding
+            import json
+            
+            # Find all scans with artifacts that might contain this CVE
+            # Get all url_sca artifacts for scans belonging to this tenant/user
+            artifacts = (
+                db.query(ScanArtifact)
+                .join(ScanJob, ScanArtifact.scan_id == ScanJob.id)
+                .join(Project, ScanJob.project_id == Project.id)
+                .filter(
+                    ScanArtifact.type == 'url_sca',
+                    Project.tenant_id == tenant.id,
+                    Project.owner_id == current_user.id
+                )
+                .all()
+            )
+            
+            findings_created = 0
+            for artifact in artifacts:
+                try:
+                    payload = artifact.payload
+                    if isinstance(payload, str):
+                        payload = json.loads(payload)
+                    
+                    findings_list = payload.get("findings", [])
+                    if not findings_list:
+                        continue
+                    
+                    scan_job_artifact = db.query(ScanJob).filter(ScanJob.id == artifact.scan_id).first()
+                    if not scan_job_artifact or not scan_job_artifact.project_id:
+                        continue
+                    
+                    for finding_data in findings_list:
+                        try:
+                            # Extract CVE IDs from references field
+                            references = finding_data.get("references", [])
+                            if isinstance(references, list):
+                                for ref in references:
+                                    if isinstance(ref, str) and ref.upper() == cve_id.upper():
+                                        # This finding matches our CVE, create it
+                                        cve_id_extracted = ref.upper()
+                                        
+                                        normalized_finding = {
+                                            "tool": "retire",
+                                            "tool_name": "retire",
+                                            "title": f"{finding_data.get('package', 'Unknown')} {finding_data.get('version', '')} - Known Vulnerability",
+                                            "description": f"Vulnerable dependency detected: {finding_data.get('package', 'Unknown')} version {finding_data.get('version', 'Unknown')}",
+                                            "severity": finding_data.get("severity", "medium").lower(),
+                                            "url": finding_data.get("evidence"),
+                                            "cve_id": cve_id_extracted,
+                                            "evidence": finding_data.get("evidence"),
+                                            "raw_data": json.dumps(finding_data, default=str),
+                                        }
+                                        
+                                        finding = create_or_update_finding(
+                                            db=db,
+                                            scan_job_id=artifact.scan_id,
+                                            project_id=scan_job_artifact.project_id,
+                                            finding_data=normalized_finding,
+                                            tool_result_id=None,
+                                        )
+                                        findings_created += 1
+                                        break  # Found matching CVE, move to next finding
+                        except Exception as e:
+                            logger.warning(f"Failed to process finding from artifact: {e}", exc_info=True)
+                            continue
+                except Exception as e:
+                    logger.warning(f"Failed to process artifact {artifact.id}: {e}", exc_info=True)
+                    continue
+            
+            if findings_created > 0:
+                db.commit()
+                logger.info(f"Backfilled {findings_created} findings for CVE {cve_id}, re-running query")
+                # Re-run the query to get the newly created findings
+                query = (
+                    db.query(Finding, ScanJob, Project)
+                    .join(ScanJob, Finding.scan_job_id == ScanJob.id)
+                    .join(Project, ScanJob.project_id == Project.id)
+                    .filter(
+                        Project.tenant_id == tenant.id,
+                        Project.owner_id == current_user.id
+                    )
+                )
+                
+                # Re-apply CVE filter
+                cve_id_upper = cve_id.upper().strip()
+                cve_id_normalized = cve_id.strip()
+                from app.core.database import engine
+                is_postgresql = engine.url.drivername.startswith("postgresql")
+                conditions = [
+                    and_(
+                        Finding.cve_id.isnot(None),
+                        func.upper(Finding.cve_id) == cve_id_upper
+                    )
+                ]
+                if is_postgresql:
+                    from sqlalchemy import text, Text
+                    conditions.append(
+                        and_(
+                            Finding.raw_data.isnot(None),
+                            Finding.raw_data.cast(Text).ilike(f"%{cve_id_normalized}%")
+                        )
+                    )
+                else:
+                    conditions.append(
+                        and_(
+                            Finding.raw_data.isnot(None),
+                            Finding.raw_data.ilike(f"%{cve_id_normalized}%")
+                        )
+                    )
+                query = query.filter(or_(*conditions))
+                
+                # Re-apply other filters if they were set
+                if severity:
+                    severity_values = [s.strip().upper() for s in severity.split(',')]
+                    valid_severities = []
+                    for sv in severity_values:
+                        try:
+                            severity_enum = Severity[sv]
+                            valid_severities.append(severity_enum)
+                        except (ValueError, KeyError):
+                            continue
+                    if valid_severities:
+                        query = query.filter(or_(*[Finding.severity == sv for sv in valid_severities]))
+                
+                if tool:
+                    tool_value = tool.lower().strip()
+                    valid_tools = {"nuclei", "nmap", "sslscan", "http_headers", "httpx", "ffuf", "dalfox", "sqlmap"}
+                    if tool_value in valid_tools:
+                        query = query.filter(Finding.tool_name == tool_value)
+                
+                if project_id:
+                    query = query.filter(ScanJob.project_id == project_id)
+                
+                if scan_id:
+                    query = query.filter(ScanJob.id == scan_id)
+                
+                if status is not None:
+                    query = query.filter(Finding.status == status)
+                
+                # Get updated total and results
+                total = query.count()
+                findings_with_scan_project = (
+                    query
+                    .order_by(Finding.created_at.desc())
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+            else:
+                # No findings created, use empty results
+                findings_with_scan_project = []
+        except Exception as e:
+            logger.error(f"Error during automatic backfill for CVE {cve_id}: {e}", exc_info=True)
+            # Continue with empty results if backfill fails
+            findings_with_scan_project = []
+    else:
     # Order by created_at DESC and apply pagination
     findings_with_scan_project = (
         query

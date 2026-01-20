@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     # Brain Service (for RAG-powered planning and report prompts)
     BRAIN_URL: Optional[str] = None  # Takes precedence over BRAIN_SERVICE_URL if set
     BRAIN_SERVICE_URL: str = "http://thandev-brain.flycast:8001"  # Default to flycast for private networking
-    BRAIN_SERVICE_ENABLED: bool = True  # Set to False to disable brain service and use fallback
+    BRAIN_SERVICE_ENABLED: bool = False  # Set to False to disable brain service and use fallback
     BRAIN_REQUIRED: bool = False  # If True, fail scan if brain is unreachable. Set to False to allow fallback
     BRAIN_SERVICE_TIMEOUT: int = 60  # Timeout in seconds for brain service requests (increased for slow RAG queries)
     BRAIN_HEALTH_PATH: str = "/health"  # Health endpoint path for brain service (env override supported)

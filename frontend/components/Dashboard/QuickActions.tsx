@@ -118,44 +118,44 @@ export default function QuickActions() {
   return (
     <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
       {/* Quick Actions Header */}
-      <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+      <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
         <div className="flex items-center gap-2">
-          <svg className="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
           </svg>
-          <h2 className="text-lg font-bold text-white">
+          <h2 className="text-base font-bold text-white">
             Quick Actions
           </h2>
         </div>
       </div>
 
       {/* Quick Actions Content */}
-      <div className="p-6">
-        <div className="space-y-3">
+      <div className="p-5">
+        <div className="space-y-2.5">
           {actions.map((action, index) => (
             <Link
               key={index}
               href={action.href}
-              className="block p-4 rounded-lg border hover:shadow-md transition-all duration-200 group"
+              className="block p-3 rounded-lg border hover:shadow-md transition-all duration-200 group"
               style={{ 
                 borderColor: 'var(--border)', 
                 background: 'var(--surface-2)'
               }}
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3">
                 <div className="flex-shrink-0">
                   {action.iconComponent}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="font-bold mb-1 text-white">
+                  <h3 className="font-bold mb-0.5 text-sm text-white">
                     {action.title}
                   </h3>
-                  <p className="text-sm text-gray-400">
+                  <p className="text-xs text-gray-400">
                     {action.description}
                   </p>
                 </div>
                 <div className="flex-shrink-0">
-                  <svg className="w-5 h-5 text-gray-400 group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 h-4 text-gray-400 group-hover:translate-x-1 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </div>
@@ -166,18 +166,18 @@ export default function QuickActions() {
       </div>
 
       {/* LIVE NEWS FEED Section */}
-      <div className="px-6 py-4 border-t" style={{ borderColor: 'var(--border)' }}>
-        <div className="flex items-center gap-2 mb-4">
-          <div className="w-2 h-2 rounded-full bg-blue-400"></div>
-          <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wide">
+      <div className="px-5 py-3 border-t" style={{ borderColor: 'var(--border)' }}>
+        <div className="flex items-center gap-1.5 mb-3">
+          <div className="w-1.5 h-1.5 rounded-full bg-blue-400"></div>
+          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-wide">
             LIVE NEWS FEED
           </h3>
         </div>
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {loading ? (
-            <div className="text-xs text-gray-400">Loading news...</div>
+            <div className="text-[10px] text-gray-400">Loading news...</div>
           ) : news.length === 0 ? (
-            <div className="text-xs text-gray-400">No news available</div>
+            <div className="text-[10px] text-gray-400">No news available</div>
           ) : (
             news.map((item) => (
               <a
@@ -187,8 +187,8 @@ export default function QuickActions() {
                 rel="noopener noreferrer"
                 className="block group"
               >
-                <div className="text-xs">
-                  <div className="flex items-start justify-between gap-2 mb-1">
+                <div className="text-[10px]">
+                  <div className="flex items-start justify-between gap-1.5 mb-0.5">
                     <p className="text-white group-hover:text-blue-400 transition-colors line-clamp-2 flex-1">
                       {item.title}
                     </p>
@@ -196,7 +196,7 @@ export default function QuickActions() {
                       {formatDate(item.publishedAt)}
                     </span>
                   </div>
-                  <p className="text-gray-500 text-[10px]">
+                  <p className="text-gray-500 text-[9px]">
                     {item.source}
                   </p>
                 </div>

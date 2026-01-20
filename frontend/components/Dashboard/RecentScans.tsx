@@ -375,19 +375,19 @@ export default function RecentScans({ session }: RecentScansProps) {
   return (
     <div className="rounded-xl border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
       {/* Header */}
-      <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+      <div className="px-5 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <h2 className="text-lg font-bold text-white">
+            <h2 className="text-base font-bold text-white">
               Recent Scans
             </h2>
           </div>
           <Link 
             href="/dashboard/history"
-            className="text-xs font-bold text-gray-400 hover:text-white transition-colors uppercase tracking-wide"
+            className="text-[10px] font-bold text-gray-400 hover:text-white transition-colors uppercase tracking-wide"
           >
             VIEW ALL
           </Link>
@@ -395,7 +395,7 @@ export default function RecentScans({ session }: RecentScansProps) {
       </div>
 
       {/* Content */}
-      <div className="p-6">
+      <div className="p-5">
         {error ? (
           <div className="text-center py-8">
             <div className="p-3 rounded-lg border border-red-500/50 bg-red-500/10 mb-4">
@@ -434,11 +434,11 @@ export default function RecentScans({ session }: RecentScansProps) {
               const scanDate = formatScanDate(scan.created_at);
               
               return (
-                <div key={scan.id} className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                  <div className="flex items-start gap-4">
+                <div key={scan.id} className="p-3 rounded-lg border" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+                  <div className="flex items-start gap-3">
                     {/* Status Icon */}
-                    <div className={`flex-shrink-0 w-8 h-8 rounded-full ${statusInfo.bgColor} flex items-center justify-center`}>
-                      <svg className={`w-5 h-5 ${statusInfo.iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className={`flex-shrink-0 w-6 h-6 rounded-full ${statusInfo.bgColor} flex items-center justify-center`}>
+                      <svg className={`w-4 h-4 ${statusInfo.iconColor}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         {statusInfo.isCircular && (
                           <circle cx="12" cy="12" r="10" strokeWidth="2" />
                         )}
@@ -448,16 +448,16 @@ export default function RecentScans({ session }: RecentScansProps) {
                     
                     {/* Main Content */}
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium mb-1 text-white truncate">
+                      <p className="text-xs font-medium mb-1 text-white truncate">
                         {displayUrl}
                       </p>
-                      <p className="text-xs text-gray-400 mb-2">
+                      <p className="text-[10px] text-gray-400 mb-1.5">
                         {scanDate}
                       </p>
                       
                       {/* Progress Bar for Running Scans */}
                       {statusInfo.showProgress && (
-                        <div className="w-full h-1.5 rounded-full bg-gray-700 mb-2 overflow-hidden">
+                        <div className="w-full h-1 rounded-full bg-gray-700 mb-1.5 overflow-hidden">
                           <div 
                             className="h-full bg-blue-500 rounded-full transition-all duration-300"
                             style={{ width: '75%' }}
@@ -465,14 +465,14 @@ export default function RecentScans({ session }: RecentScansProps) {
                         </div>
                       )}
                       
-                      <p className="text-xs text-gray-400">
+                      <p className="text-[10px] text-gray-400">
                         {statusInfo.statusText}
                       </p>
                     </div>
                     
                     {/* Status Badge and External Link */}
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className={`px-3 py-1 rounded text-xs font-bold text-white ${statusInfo.badgeColor}`}>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold text-white ${statusInfo.badgeColor}`}>
                         {statusInfo.badgeText}
                       </span>
                       {scan.status.toLowerCase() !== 'running' && scan.status.toLowerCase() !== 'queued' && (
@@ -480,7 +480,7 @@ export default function RecentScans({ session }: RecentScansProps) {
                           href={`/projects/${scan.project_id}/scans/${scan.id}`}
                           className="text-gray-400 hover:text-white transition-colors"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
                           </svg>
                         </Link>

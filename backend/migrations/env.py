@@ -28,6 +28,9 @@ from app.models.performance_scan import PerformanceScan  # noqa: F401
 from app.models.notification import Notification  # noqa: F401
 from app.models.audit_log import AuditLog  # noqa: F401
 from app.models.allowed_domain import AllowedDomain  # noqa: F401
+from app.models.scan_artifact import ScanArtifact  # noqa: F401
+from app.models.integration import Integration  # noqa: F401
+from app.models.repo_connection import RepoConnection  # noqa: F401
 
 # Also import via __init__ to catch any models we might have missed
 from app.models import *  # noqa: F401, F403

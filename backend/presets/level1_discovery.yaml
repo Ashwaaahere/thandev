@@ -3,7 +3,7 @@ version: "1.0"
 description: "Broaden surface, find hidden endpoints and subdomains"
 tier: "level1"
 preset_name: "buzz"
-cloud_run_job: "thandev-buzz"
+# cloud_run_job removed - using Runner service instead
 estimated_duration: "10-25 minutes"
 
 tools:

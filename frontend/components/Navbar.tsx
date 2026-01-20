@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useState, useEffect } from 'react';
 
 export default function Navbar() {
@@ -33,8 +34,16 @@ export default function Navbar() {
         style={{ background: 'color-mix(in oklab, var(--bg) 70%, transparent)' }}>
       <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
         <Link href="/" className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-cyan-400 to-indigo-500" />
+          <Image 
+            src="/logo.png" 
+            alt="Thandev Logo" 
+            width={28} 
+            height={28} 
+            className="flex-shrink-0"
+            style={{ objectFit: 'contain' }}
+          />
           <span className="text-lg font-semibold tracking-tight">Thandev</span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-wide">Beta</span>
         </Link>
 
         {/* Desktop Navigation */}

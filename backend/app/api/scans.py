@@ -8,6 +8,7 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 import json
 import time
 
@@ -28,7 +29,8 @@ import io
 from app.schemas.scan import (
     ScanCreate, ScanResponse, ScanSummary, ScanListResponse,
     ScanJobListItem, ScanJobListResponse, QuickScanRequest, QuickScanResponse,
-    ToolExecutionResult, ScanToolsResponse, ToolResultCreate, ToolResultResponse
+    ToolExecutionResult, ScanToolsResponse, ToolResultCreate, ToolResultResponse,
+    ProScanRequest, AdvancedScanRequest, ScanArtifactResponse, ScanArtifactsResponse
 )
 from app.schemas.brain import BrainSessionResponse, SessionStatus, parse_iso_datetime_safe
 from app.services.scan_orchestrator import ScanOrchestrator
@@ -225,10 +227,37 @@ async def list_scans_by_project(
         )
     
     # Build query - filter by project_id (already verified above)
-    query = db.query(ScanJob).filter(ScanJob.project_id == project_id)
+    # Use EXACT same query logic as get_project_overview which works correctly
+    # Ensure project.id is a string for consistent comparison
+    project_id_str = str(project.id)
+    logger.info(f"Project {project_id} ({project.name}): Querying scans with project_id={project_id_str} (type: {type(project_id_str)})")
+    
+    query = db.query(ScanJob).filter(ScanJob.project_id == project_id_str)
     
     # Get total count before pagination
-    total = query.count()
+    total_by_id = query.count()
+    logger.info(f"Project {project_id} ({project.name}): Found {total_by_id} scans by project_id")
+    
+    # If no scans found by project_id, try matching by URL/domain (for legacy scans)
+    if total_by_id == 0 and project.target_url:
+        # Try to match by URL or domain
+        url_query = db.query(ScanJob).filter(
+            or_(
+                ScanJob.url == project.target_url,
+                ScanJob.domain == project.root_domain
+            )
+        )
+        url_total = url_query.count()
+        logger.info(f"Project {project_id} ({project.name}): Found {url_total} scans by URL/domain match (target_url={project.target_url}, root_domain={project.root_domain})")
+        
+        if url_total > 0:
+            # Use URL-matched scans
+            query = url_query
+            total = url_total
+        else:
+            total = 0
+    else:
+        total = total_by_id
     
     # Fetch scans ordered by newest first
     scans = (
@@ -239,8 +268,12 @@ async def list_scans_by_project(
         .all()
     )
     
+    logger.info(f"Project {project_id}: Returning {len(scans)} scans (total: {total})")
+    if len(scans) > 0:
+        logger.info(f"Project {project_id}: First scan id={scans[0].id}, project_id={scans[0].project_id}, created_at={scans[0].created_at}")
+    
     # Ensure findings relationship is accessible for each scan
-    # Also ensure summary has findings_count set
+    # Also ensure summary has findings_count set and is a dict (not string)
     for scan in scans:
         try:
             # Access findings to trigger lazy load while session is still open
@@ -248,23 +281,33 @@ async def list_scans_by_project(
         except Exception as e:
             logger.warning(f"Could not load findings for scan {scan.id}: {e}")
         
-        # CRITICAL FIX: Ensure summary has findings_count set
+        # CRITICAL FIX: Ensure summary is a dict (not a JSON string) and has findings_count set
+        # Parse summary if it's a string
+        summary_dict = None
+        if scan.summary:
+            if isinstance(scan.summary, dict):
+                summary_dict = scan.summary
+            elif isinstance(scan.summary, str):
+                try:
+                    import json
+                    summary_dict = json.loads(scan.summary)
+                except (json.JSONDecodeError, TypeError):
+                    summary_dict = {}
+        
+        # Get or calculate findings_count
         findings_count = None
-        if scan.summary and isinstance(scan.summary, dict):
-            findings_count = scan.summary.get("findings_count")
+        if summary_dict:
+            findings_count = summary_dict.get("findings_count")
         
         if findings_count is None:
             # Calculate from database
             findings_count = db.query(Finding).filter(Finding.scan_job_id == scan.id).count()
-            # Update summary with findings_count for future queries
-            if scan.summary:
-                if isinstance(scan.summary, dict):
-                    scan.summary["findings_count"] = findings_count
-                else:
-                    scan.summary = {"findings_count": findings_count}
-            else:
-                scan.summary = {"findings_count": findings_count}
-            db.commit()
+            if not summary_dict:
+                summary_dict = {}
+            summary_dict["findings_count"] = findings_count
+        
+        # Ensure summary is always a dict for Pydantic validation
+        scan.summary = summary_dict if summary_dict else {}
     
     return ScanListResponse(
         items=scans,
@@ -492,6 +535,38 @@ async def create_scan(
                 f"Brain will own the closed-loop scanning process."
             )
             
+            # Enqueue dependency scan jobs for PRO and ADVANCED scans (even when using Brain)
+            scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
+            if scan_level_value in ('pro', 'advanced'):
+                try:
+                    from app.services.dependency_scanner import enqueue_dependency_scan_job
+                    from app.core.capabilities import check_capability
+                    
+                    # Check capability (will raise 403 if not allowed)
+                    try:
+                        check_capability(db, tenant, current_user, "url_sca")
+                        
+                        callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+                        logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} scan {scan_job.id} (Brain-based)")
+                        
+                        result = await enqueue_dependency_scan_job(
+                            scan_id=scan_job.id,
+                            job_type="url_sca",
+                            target_url=project.target_url,
+                            callback_url=callback_url,
+                        )
+                        
+                        if result:
+                            logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for scan {scan_job.id} (Brain-based)")
+                        else:
+                            logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for scan {scan_job.id} (Brain-based)")
+                    except HTTPException:
+                        # Capability check failed - user doesn't have access, skip dependency scanning
+                        logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for {scan_job.id} - capability check failed")
+                except Exception as e:
+                    logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for scan {scan_job.id}: {e}", exc_info=True)
+                    # Don't fail the scan if dependency scanning fails
+            
             # Verify PENDING records were created (for debugging)
             try:
                 from app.models.finding import ToolResult
@@ -580,6 +655,38 @@ async def create_scan(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=error_msg
                 )
+            
+            # Enqueue dependency scan jobs for PRO and ADVANCED scans (regardless of regular scan success)
+            scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
+            if scan_level_value in ('pro', 'advanced'):
+                try:
+                    from app.services.dependency_scanner import enqueue_dependency_scan_job
+                    from app.core.capabilities import check_capability
+                    
+                    # Check capability (will raise 403 if not allowed)
+                    try:
+                        check_capability(db, tenant, current_user, "url_sca")
+                        
+                        callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+                        logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} scan {scan_job.id}")
+                        
+                        result = await enqueue_dependency_scan_job(
+                            scan_id=scan_job.id,
+                            job_type="url_sca",
+                            target_url=project.target_url,
+                            callback_url=callback_url,
+                        )
+                        
+                        if result:
+                            logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for scan {scan_job.id}")
+                        else:
+                            logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for scan {scan_job.id}")
+                    except HTTPException:
+                        # Capability check failed - user doesn't have access, skip dependency scanning
+                        logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for {scan_job.id} - capability check failed")
+                except Exception as e:
+                    logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for scan {scan_job.id}: {e}", exc_info=True)
+                    # Don't fail the scan if dependency scanning fails
         except HTTPException:
             raise
         except Exception as e:
@@ -1013,6 +1120,38 @@ async def quick_scan(
                     f"Started brain session {scan_job.brain_session_id} for quick scan {scan_job.id}. "
                     f"Brain will own the closed-loop scanning process."
                 )
+                
+                # Enqueue dependency scan jobs for PRO and ADVANCED scans (even when using Brain in quick scan)
+                scan_level_value = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level).lower()
+                if scan_level_value in ('pro', 'advanced'):
+                    try:
+                        from app.services.dependency_scanner import enqueue_dependency_scan_job
+                        from app.core.capabilities import check_capability
+                        
+                        # Check capability (will raise 403 if not allowed)
+                        try:
+                            check_capability(db, tenant, current_user, "url_sca")
+                            
+                            callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+                            logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} quick scan {scan_job.id} (Brain-based)")
+                            
+                            result = await enqueue_dependency_scan_job(
+                                scan_id=scan_job.id,
+                                job_type="url_sca",
+                                target_url=scan_target_url,
+                                callback_url=callback_url,
+                            )
+                            
+                            if result:
+                                logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for quick scan {scan_job.id} (Brain-based)")
+                            else:
+                                logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for quick scan {scan_job.id} (Brain-based)")
+                        except HTTPException:
+                            # Capability check failed - user doesn't have access, skip dependency scanning
+                            logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for quick scan {scan_job.id} - capability check failed")
+                    except Exception as e:
+                        logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for quick scan {scan_job.id}: {e}", exc_info=True)
+                        # Don't fail the scan if dependency scanning fails
             except Exception as e:
                 # Log the error with full details for debugging
                 error_detail = str(e) if str(e) else repr(e)
@@ -1075,6 +1214,38 @@ async def quick_scan(
                     db.commit()
                     db.refresh(scan_job)
                     logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
+                
+                # Enqueue dependency scan jobs for PRO and ADVANCED scans (Runner path for quick scan)
+                scan_level_value = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level).lower()
+                if scan_level_value in ('pro', 'advanced'):
+                    try:
+                        from app.services.dependency_scanner import enqueue_dependency_scan_job
+                        from app.core.capabilities import check_capability
+                        
+                        # Check capability (will raise 403 if not allowed)
+                        try:
+                            check_capability(db, tenant, current_user, "url_sca")
+                            
+                            callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+                            logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} quick scan {scan_job.id} (Runner-based)")
+                            
+                            result = await enqueue_dependency_scan_job(
+                                scan_id=scan_job.id,
+                                job_type="url_sca",
+                                target_url=project.target_url,
+                                callback_url=callback_url,
+                            )
+                            
+                            if result:
+                                logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for quick scan {scan_job.id} (Runner-based)")
+                            else:
+                                logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for quick scan {scan_job.id} (Runner-based)")
+                        except HTTPException:
+                            # Capability check failed - user doesn't have access, skip dependency scanning
+                            logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for quick scan {scan_job.id} - capability check failed")
+                    except Exception as e:
+                        logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for quick scan {scan_job.id}: {e}", exc_info=True)
+                        # Don't fail the scan if dependency scanning fails
             except Exception as e:
                 error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
                 logger.error(error_msg, exc_info=True)
@@ -1098,6 +1269,178 @@ async def quick_scan(
         # Log unexpected errors before re-raising
         logger.exception(f"Quick scan crashed: {type(e).__name__}: {str(e)}")
         raise
+
+
+@router.post("/{scan_id}/backfill-dependency-findings")
+async def backfill_dependency_findings(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Backfill dependency scan findings from artifacts into Finding records.
+    
+    This processes existing ScanArtifact records and creates Finding records
+    so they can be searched by CVE ID.
+    """
+    # Verify scan exists and belongs to user
+    scan_job = db.query(ScanJob).filter(
+        ScanJob.id == scan_id,
+        ScanJob.project_id.in_(
+            db.query(Project.id).filter(
+                Project.tenant_id == tenant.id,
+                Project.owner_id == current_user.id
+            )
+        )
+    ).first()
+    
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan not found"
+        )
+    
+    from app.models.scan_artifact import ScanArtifact
+    from app.services.findings_ingestor import create_or_update_finding
+    import json
+    
+    # Get url_sca artifacts for this scan
+    artifacts = db.query(ScanArtifact).filter(
+        ScanArtifact.scan_id == scan_id,
+        ScanArtifact.type == 'url_sca'
+    ).all()
+    
+    if not artifacts:
+        return {
+            "status": "ok",
+            "message": "No url_sca artifacts found for this scan",
+            "findings_created": 0
+        }
+    
+    findings_created = 0
+    
+    for artifact in artifacts:
+        try:
+            # Get payload
+            payload = artifact.payload
+            if isinstance(payload, str):
+                payload = json.loads(payload)
+            
+            findings_list = payload.get("findings", [])
+            if not findings_list:
+                continue
+            
+            project_id = scan_job.project_id
+            
+            for finding_data in findings_list:
+                try:
+                    # Extract CVE IDs from references field
+                    cve_id = None
+                    references = finding_data.get("references", [])
+                    if isinstance(references, list) and len(references) > 0:
+                        for ref in references:
+                            if isinstance(ref, str) and ref.upper().startswith("CVE-"):
+                                cve_id = ref.upper()
+                                break
+                    
+                    # Build finding data structure
+                    normalized_finding = {
+                        "tool": "retire",
+                        "tool_name": "retire",
+                        "title": f"{finding_data.get('package', 'Unknown')} {finding_data.get('version', '')} - Known Vulnerability",
+                        "description": f"Vulnerable dependency detected: {finding_data.get('package', 'Unknown')} version {finding_data.get('version', 'Unknown')}",
+                        "severity": finding_data.get("severity", "medium").lower(),
+                        "url": finding_data.get("evidence"),
+                        "cve_id": cve_id,
+                        "evidence": finding_data.get("evidence"),
+                        "raw_data": json.dumps(finding_data, default=str),
+                    }
+                    
+                    finding = create_or_update_finding(
+                        db=db,
+                        scan_job_id=scan_id,
+                        project_id=project_id,
+                        finding_data=normalized_finding,
+                        tool_result_id=None,
+                    )
+                    findings_created += 1
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to create finding from artifact: {e}", exc_info=True)
+                    continue
+            
+        except Exception as e:
+            logger.error(f"Error processing artifact {artifact.id}: {e}", exc_info=True)
+            continue
+    
+    if findings_created > 0:
+        db.commit()
+    
+    return {
+        "status": "ok",
+        "message": f"Created {findings_created} Finding records from artifacts",
+        "findings_created": findings_created
+    }
+
+
+@router.get("/{scan_id}/artifacts", response_model=ScanArtifactsResponse)
+async def get_scan_artifacts(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get scan artifacts (dependency scanning results) for a scan.
+    
+    Returns all artifacts (URL-SCA and Repo-SCA) associated with the scan.
+    """
+    from app.models.scan_artifact import ScanArtifact
+    
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Verify scan belongs to tenant and user via project
+    scan_job = (
+        db.query(ScanJob)
+        .join(Project, ScanJob.project_id == Project.id)
+        .filter(
+            ScanJob.id == scan_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id
+        )
+        .first()
+    )
+    
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found. The scan ID '{scan_id}' does not exist or you don't have permission to access it."
+        )
+    
+    # Get artifacts
+    artifacts = db.query(ScanArtifact).filter(
+        ScanArtifact.scan_id == scan_id
+    ).order_by(ScanArtifact.created_at).all()
+    
+    logger.info(f"Retrieved {len(artifacts)} artifacts for scan {scan_id}")
+    
+    return ScanArtifactsResponse(
+        items=[
+            ScanArtifactResponse(
+                id=artifact.id,
+                scan_id=artifact.scan_id,
+                type=artifact.type,
+                payload=artifact.payload,
+                created_at=artifact.created_at,
+            )
+            for artifact in artifacts
+        ]
+    )
 
 
 @router.get("/{scan_id}", response_model=ScanResponse)
@@ -2320,5 +2663,295 @@ def download_scan_report_pdf(
         headers={
             "Content-Disposition": f'attachment; filename="scan-{scan_id}-{mode}.pdf"'
         },
+    )
+
+
+# Dependency Scanning Endpoints
+
+@router.post("/pro", response_model=ScanResponse, status_code=status.HTTP_201_CREATED)
+async def create_pro_scan(
+    scan_request: ProScanRequest,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create a PRO dependency scan (URL-SCA only).
+    
+    Requires PRO plan or higher. Scans externally observable dependencies
+    and client-side JavaScript vulnerabilities.
+    """
+    from app.core.capabilities import check_capability
+    from app.models.scan_artifact import ScanArtifact
+    from app.services.dependency_scanner import enqueue_dependency_scan_job
+    
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Check capability
+    check_capability(db, tenant, current_user, "url_sca")
+    
+    # Verify project exists and belongs to tenant and user
+    project = db.query(Project).filter(
+        Project.id == scan_request.project_id,
+        Project.tenant_id == tenant.id,
+        Project.owner_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project not found. The project ID '{scan_request.project_id}' does not exist or you don't have permission to access it."
+        )
+    
+    # Validate target URL
+    if not scan_request.target_url.startswith(('http://', 'https://')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_url must start with http:// or https://"
+        )
+    
+    # Enforce domain verification (reuse existing logic)
+    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    try:
+        ensure_project_root_domain(project, scan_request.target_url, allow_admin_override=True, is_admin=is_admin)
+        db.commit()
+        db.refresh(project)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    enforce_domain_verification_for_scan(
+        db,
+        project,
+        scan_request.target_url,
+        is_admin=is_admin,
+        user_id=current_user.id,
+    )
+    
+    # Create scan job
+    scan_job = ScanJob(
+        user_id=current_user.id,
+        url=scan_request.target_url,
+        domain=_extract_domain_name(scan_request.target_url),
+        tier="pro",
+        project_id=project.id,
+        scan_level=ScanLevel.PRO,
+        status=ScanStatus.PENDING,
+        created_at=datetime.now(timezone.utc),
+    )
+    
+    db.add(scan_job)
+    db.commit()
+    db.refresh(scan_job)
+    
+    # Enqueue dependency scan job
+    callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+    try:
+        logger.info(f"[PRO-SCAN] Enqueuing dependency scan job for scan {scan_job.id}")
+        result = await enqueue_dependency_scan_job(
+            scan_id=scan_job.id,
+            job_type="url_sca",
+            target_url=scan_request.target_url,
+            callback_url=callback_url,
+        )
+        if result:
+            logger.info(f"[PRO-SCAN] Successfully enqueued dependency scan job for scan {scan_job.id}")
+        else:
+            logger.error(f"[PRO-SCAN] Failed to enqueue dependency scan job for scan {scan_job.id}")
+    except Exception as e:
+        logger.error(f"[PRO-SCAN] Exception enqueuing dependency scan job for scan {scan_job.id}: {e}", exc_info=True)
+    
+    # Update status to running
+    scan_job.status = ScanStatus.RUNNING
+    scan_job.started_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(scan_job)
+    
+    return ScanResponse(
+        id=scan_job.id,
+        project_id=scan_job.project_id,
+        scan_level=scan_job.scan_level,
+        status=scan_job.status,
+        summary=scan_job.summary,
+        stack_info=scan_job.stack_info,
+        ai_plan=scan_job.ai_plan,
+        ai_status=scan_job.ai_status,
+        error_message=scan_job.error_message,
+        created_at=scan_job.created_at,
+        started_at=scan_job.started_at,
+        completed_at=scan_job.completed_at,
+        findings=[],
+        tool_statuses=[],
+    )
+
+
+@router.post("/advanced", response_model=ScanResponse, status_code=status.HTTP_201_CREATED)
+async def create_advanced_scan(
+    scan_request: AdvancedScanRequest,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create an ADVANCED dependency scan (URL-SCA + optional Repo-SCA).
+    
+    Requires ADVANCED plan. If repo_connection_id is provided, performs
+    repository SCA using lockfiles/manifests. Otherwise, runs URL-SCA only.
+    """
+    from app.core.capabilities import check_capability
+    from app.models.scan_artifact import ScanArtifact
+    from app.models.repo_connection import RepoConnection
+    from app.services.dependency_scanner import enqueue_dependency_scan_job
+    
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Check capability
+    check_capability(db, tenant, current_user, "url_sca")
+    if scan_request.repo_connection_id:
+        check_capability(db, tenant, current_user, "repo_sca")
+    
+    # Verify project exists and belongs to tenant and user
+    project = db.query(Project).filter(
+        Project.id == scan_request.project_id,
+        Project.tenant_id == tenant.id,
+        Project.owner_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project not found. The project ID '{scan_request.project_id}' does not exist or you don't have permission to access it."
+        )
+    
+    # Validate target URL
+    if not scan_request.target_url.startswith(('http://', 'https://')):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_url must start with http:// or https://"
+        )
+    
+    # Verify repo connection if provided
+    repo_info = None
+    if scan_request.repo_connection_id:
+        repo_connection = db.query(RepoConnection).filter(
+            RepoConnection.id == scan_request.repo_connection_id,
+            RepoConnection.project_id == project.id,
+            RepoConnection.is_enabled == True,
+        ).first()
+        
+        if not repo_connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Repo connection not found or disabled. The repo_connection_id '{scan_request.repo_connection_id}' does not exist or is not enabled for this project."
+            )
+        
+        # Get integration for GitHub App token
+        from app.models.integration import Integration
+        integration = db.query(Integration).filter(
+            Integration.user_id == current_user.id,
+            Integration.provider == "github",
+            Integration.revoked_at.is_(None),
+        ).first()
+        
+        if not integration:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitHub integration not found. Please connect your GitHub account first."
+            )
+        
+        repo_info = {
+            "provider": repo_connection.provider,
+            "installation_id": integration.installation_id,
+            "provider_repo_id": repo_connection.provider_repo_id,
+            "full_name": repo_connection.full_name,
+            "default_branch": repo_connection.default_branch or "main",
+        }
+    
+    # Enforce domain verification
+    is_admin = bool(getattr(current_user, "is_admin", False) or getattr(current_user, "is_superuser", False))
+    try:
+        ensure_project_root_domain(project, scan_request.target_url, allow_admin_override=True, is_admin=is_admin)
+        db.commit()
+        db.refresh(project)
+    except PermissionError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    
+    enforce_domain_verification_for_scan(
+        db,
+        project,
+        scan_request.target_url,
+        is_admin=is_admin,
+        user_id=current_user.id,
+    )
+    
+    # Create scan job
+    scan_job = ScanJob(
+        user_id=current_user.id,
+        url=scan_request.target_url,
+        domain=_extract_domain_name(scan_request.target_url),
+        tier="advanced",
+        project_id=project.id,
+        scan_level=ScanLevel.ADVANCED,
+        status=ScanStatus.PENDING,
+        created_at=datetime.now(timezone.utc),
+    )
+    
+    db.add(scan_job)
+    db.commit()
+    db.refresh(scan_job)
+    
+    # Enqueue dependency scan jobs
+    callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+    
+    # Always enqueue URL-SCA
+    await enqueue_dependency_scan_job(
+        scan_id=scan_job.id,
+        job_type="url_sca",
+        target_url=scan_request.target_url,
+        callback_url=callback_url,
+    )
+    
+    # Enqueue Repo-SCA if repo connection provided
+    if repo_info:
+        await enqueue_dependency_scan_job(
+            scan_id=scan_job.id,
+            job_type="repo_sca",
+            target_url=scan_request.target_url,
+            repo_info=repo_info,
+            callback_url=callback_url,
+        )
+    
+    # Update status to running
+    scan_job.status = ScanStatus.RUNNING
+    scan_job.started_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(scan_job)
+    
+    return ScanResponse(
+        id=scan_job.id,
+        project_id=scan_job.project_id,
+        scan_level=scan_job.scan_level,
+        status=scan_job.status,
+        summary=scan_job.summary,
+        stack_info=scan_job.stack_info,
+        ai_plan=scan_job.ai_plan,
+        ai_status=scan_job.ai_status,
+        error_message=scan_job.error_message,
+        created_at=scan_job.created_at,
+        started_at=scan_job.started_at,
+        completed_at=scan_job.completed_at,
+        findings=[],
+        tool_statuses=[],
     )
 

@@ -258,3 +258,7 @@ wordlists/*.txt
 # OS files
 .DS_Store
 Thumbs.db
+Star_Windows_Software_V3.9.1_setup.zip
+Star_Windows_Software_V3.9.1_setup.zip:Zone.Identifier
+*.zip:Zone.Identifier
+*.png:Zone.Identifier

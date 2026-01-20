@@ -16,6 +16,9 @@ import { formatCategory } from '@/lib/vulnCategories';
 import DashboardHeader from '@/components/Dashboard/DashboardHeader';
 import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
 import AIAttackPlan from '@/components/Scans/AIAttackPlan';
+import TechDependenciesPanel from '@/components/Scans/TechDependenciesPanel';
+import RepoDependenciesPanel from '@/components/Scans/RepoDependenciesPanel';
+import AISummaryPanel from '@/components/Scans/AISummaryPanel';
 
 // Types
 type FindingStatus = "open" | "acknowledged" | "resolved" | "suppressed";
@@ -153,6 +156,15 @@ export default function ScanReportPage() {
   const projectId = params.projectId as string;
   const scanId = params.scanId as string;
 
+  // Check if scanId is actually a CVE ID (starts with "CVE-")
+  // If so, redirect to the CVE detail page
+  useEffect(() => {
+    if (scanId && scanId.toUpperCase().startsWith('CVE-')) {
+      router.replace(`/dashboard/cve/${encodeURIComponent(scanId)}`);
+      return;
+    }
+  }, [scanId, router]);
+
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [scan, setScan] = useState<ScanDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -176,6 +188,9 @@ export default function ScanReportPage() {
   const [findingsPage, setFindingsPage] = useState(0);  // Current page (0-indexed)
   const [findingsLimit] = useState(100);  // Findings per page (can be 100-200)
   const [allFindings, setAllFindings] = useState<Finding[]>([]);  // All findings for executive summary
+  const [activeTab, setActiveTab] = useState<'overview' | 'findings' | 'tech-deps' | 'repo-deps' | 'ai-summary'>('overview');
+  const [artifacts, setArtifacts] = useState<any>(null);
+  const [artifactsLoading, setArtifactsLoading] = useState(false);
 
   // Poll for scan status updates when scan is running/queued
   useEffect(() => {
@@ -187,6 +202,11 @@ export default function ScanReportPage() {
     const MAX_CONSECUTIVE_ERRORS = 3; // Stop polling after 3 consecutive errors
     
     const loadScan = async () => {
+      // Skip if scanId looks like a CVE ID
+      if (scanId && scanId.toUpperCase().startsWith('CVE-')) {
+        return;
+      }
+
       try {
         // Clear any pending error timeout
         if (errorTimeout) {
@@ -194,7 +214,23 @@ export default function ScanReportPage() {
           errorTimeout = null;
         }
         
-        const data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
+        // Add timeout to prevent infinite loading
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+        
+        let data: ScanDetail;
+        try {
+          data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session, { signal: controller.signal });
+          clearTimeout(timeoutId);
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          
+          // Check if it's a timeout/abort error
+          if (fetchError instanceof Error && (fetchError.name === 'AbortError' || fetchError.message.includes('timeout') || fetchError.message.includes('aborted'))) {
+            throw new Error('Request timed out. Please try again.');
+          }
+          throw fetchError;
+        }
         
         // Reset error counter on success and clear error
         consecutiveErrors = 0;
@@ -242,6 +278,11 @@ export default function ScanReportPage() {
     
     // Set up polling if scan is running/queued
     const checkAndPoll = async () => {
+      // Skip if scanId looks like a CVE ID
+      if (scanId && scanId.toUpperCase().startsWith('CVE-')) {
+        return;
+      }
+      
       const currentScan = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session).catch(() => null);
       
       if (currentScan && (currentScan.status === 'running' || currentScan.status === 'queued' || currentScan.status === 'pending')) {
@@ -387,6 +428,28 @@ export default function ScanReportPage() {
     }
     loadFindings();
   }, [scanId, session, findingsPage, findingsLimit, selectedToolFilter]);
+
+  // Load artifacts
+  const loadArtifacts = async () => {
+    if (!session) return;
+    
+    try {
+      setArtifactsLoading(true);
+      const data = await thandevFetchJSON<{ items: any[] }>(`/api/scans/${scanId}/artifacts`, session);
+      setArtifacts(data);
+    } catch (err) {
+      console.error('Error loading artifacts:', err);
+    } finally {
+      setArtifactsLoading(false);
+    }
+  };
+
+  // Load artifacts when dependency tabs are activated
+  useEffect(() => {
+    if ((activeTab === 'tech-deps' || activeTab === 'repo-deps' || activeTab === 'ai-summary') && !artifacts && !artifactsLoading && session) {
+      loadArtifacts();
+    }
+  }, [activeTab, session]); // Removed artifacts and artifactsLoading from deps to allow reloading
 
   // Helper functions
   const formatDate = (dateString: string | null | undefined) => {
@@ -950,7 +1013,37 @@ export default function ScanReportPage() {
             </div>
           </div>
 
-            {/* Main grid */}
+            {/* Tabs */}
+            <div className="border-b mb-6" style={{ borderColor: 'var(--border)' }}>
+              <nav className="flex space-x-8">
+                {[
+                  { id: 'overview', label: 'Overview' },
+                  { id: 'findings', label: 'Findings' },
+                  { id: 'tech-deps', label: 'Tech & Dependencies' },
+                  { id: 'repo-deps', label: 'Repo Dependencies' },
+                  { id: 'ai-summary', label: 'AI Summary' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id as any)}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm transition-colors ${
+                      activeTab === tab.id
+                        ? 'border-indigo-500 text-indigo-400'
+                        : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-300'
+                    }`}
+                    style={{
+                      borderBottomColor: activeTab === tab.id ? 'var(--brand)' : 'transparent',
+                      color: activeTab === tab.id ? 'var(--brand)' : 'var(--muted)',
+                    }}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </nav>
+            </div>
+
+            {/* Tab Content */}
+            {activeTab === 'overview' && (
             <div className="grid gap-6 md:grid-cols-3">
           {/* Left column - Main content */}
           <div className="md:col-span-2 space-y-6">
@@ -1362,9 +1455,14 @@ export default function ScanReportPage() {
                       {(finding.cve_id || finding.cwe_id || (finding.cvss_score !== null && finding.cvss_score !== undefined)) && (
                         <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
                           {finding.cve_id && (
-                            <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                            <Link
+                              href={`/dashboard/cve/${encodeURIComponent(finding.cve_id)}`}
+                              className="px-2 py-1 text-xs font-mono rounded border hover:opacity-80 transition-opacity cursor-pointer"
+                              style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                              title={`View details for ${finding.cve_id}`}
+                            >
                               CVE: {finding.cve_id}
-                            </span>
+                            </Link>
                           )}
                           {finding.cwe_id && (
                             <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
@@ -1937,6 +2035,148 @@ export default function ScanReportPage() {
             )}
           </div>
         </div>
+            )}
+
+            {activeTab === 'findings' && (
+              <div className="space-y-6">
+                {/* Findings card - Full detailed view */}
+                <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>
+                      Findings
+                      {findingsTotal > 0 && (
+                        <span className="ml-2 text-sm font-normal" style={{ color: 'var(--muted)' }}>
+                          ({findingsTotal})
+                        </span>
+                      )}
+                    </h2>
+                    {/* Tool filter dropdown */}
+                    {(availableTools.length > 0 || findingsTotal > 0) && (
+                      <select
+                        value={selectedToolFilter}
+                        onChange={(e) => {
+                          setSelectedToolFilter(e.target.value);
+                          setFindingsPage(0);
+                        }}
+                        className="px-3 py-1.5 text-sm rounded border" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--fg)' }}
+                      >
+                        <option value="all">All Tools</option>
+                        {(availableTools.length > 0 ? availableTools : Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort()).map(toolName => (
+                          <option key={toolName} value={toolName}>{toolName}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  {findingsTotal > findingsLimit && (
+                    <div className="flex items-center justify-between mb-4 text-sm" style={{ color: 'var(--muted)' }}>
+                      <span>
+                        Showing {findingsPage * findingsLimit + 1} - {Math.min((findingsPage + 1) * findingsLimit, findingsTotal)} of {findingsTotal} findings
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setFindingsPage(prev => Math.max(0, prev - 1))}
+                          disabled={findingsPage === 0 || findingsLoading}
+                          className="px-3 py-1 rounded border transition disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-80"
+                          style={{
+                            background: 'var(--surface-2)',
+                            borderColor: 'var(--border)',
+                            color: findingsPage === 0 ? 'var(--muted)' : 'var(--fg)'
+                          }}
+                        >
+                          Previous
+                        </button>
+                        <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                          Page {findingsPage + 1} of {Math.ceil(findingsTotal / findingsLimit)}
+                        </span>
+                        <button
+                          onClick={() => setFindingsPage(prev => prev + 1)}
+                          disabled={findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 || findingsLoading}
+                          className="px-3 py-1 rounded border transition disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-80"
+                          style={{
+                            background: 'var(--surface-2)',
+                            borderColor: 'var(--border)',
+                            color: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--muted)' : 'var(--fg)'
+                          }}
+                        >
+                          Next
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {findingsLoading ? (
+                    <div className="text-center py-8">
+                      <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                      <p className="mt-4 text-sm" style={{ color: 'var(--muted)' }}>Loading findings...</p>
+                    </div>
+                  ) : findingsError ? (
+                    <div className="text-sm text-red-400 py-4">{findingsError}</div>
+                  ) : findings.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>No findings detected</p>
+                      <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                        {scan?.status === 'running' || scan?.status === 'queued'
+                          ? 'Findings will appear here once the scan completes.'
+                          : 'No security vulnerabilities or issues were detected during this scan.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {findings.map((finding, idx) => {
+                        const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
+                        return (
+                          <div key={findingKey} className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+                            <div className="flex items-start justify-between gap-2 mb-3">
+                              <div className="flex-1">
+                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                  <span className={`px-2 py-1 text-xs font-medium rounded-full border ${severityClasses(finding.severity)}`}>
+                                    {finding.severity?.toUpperCase() || 'INFO'}
+                                  </span>
+                                  {finding.status && <StatusBadge status={finding.status} />}
+                                </div>
+                                <h4 className="font-semibold text-sm" style={{ color: 'var(--fg)' }}>{finding.title}</h4>
+                              </div>
+                            </div>
+                            {finding.description && (
+                              <p className="text-sm mb-2" style={{ color: 'var(--muted)' }}>{finding.description}</p>
+                            )}
+                            {finding.recommendation && (
+                              <div className="mt-2 pt-2 border-t" style={{ borderColor: 'var(--border)' }}>
+                                <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Recommendation:</p>
+                                <p className="text-xs" style={{ color: 'var(--muted)' }}>{finding.recommendation}</p>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'tech-deps' && (
+              <div className="space-y-6">
+                <TechDependenciesPanel
+                  artifact={artifacts?.items?.find((a: any) => a.type === 'url_sca')?.payload || null}
+                  loading={artifactsLoading}
+                />
+              </div>
+            )}
+
+            {activeTab === 'repo-deps' && (
+              <div className="space-y-6">
+                <RepoDependenciesPanel
+                  artifact={artifacts?.items?.find((a: any) => a.type === 'repo_sca')?.payload || null}
+                  loading={artifactsLoading}
+                />
+              </div>
+            )}
+
+            {activeTab === 'ai-summary' && (
+              <div className="space-y-6">
+                <AISummaryPanel scanId={scanId} />
+              </div>
+            )}
           </div>
         </main>
       </div>

@@ -41,6 +41,13 @@ export default function CVEDetailPage() {
   const [findings, setFindings] = useState<FindingListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [cveDetails, setCveDetails] = useState<{
+    description?: string;
+    cvssScore?: number;
+    cvssSeverity?: string;
+    publishedDate?: string;
+    references?: string[];
+  } | null>(null);
 
   const cveId = params?.cveId as string;
 
@@ -55,31 +62,135 @@ export default function CVEDetailPage() {
         setLoading(true);
         setError(null);
 
-        // Try to search by CVE ID first (if backend supports it)
-        // Otherwise fetch all and filter client-side
+        // Use direct cve_id parameter for exact matching (backend supports this)
+        // Add timeout to prevent infinite loading
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
         let data: FindingsResponse;
         try {
+          // Use cve_id parameter for exact match instead of search
           data = await thandevFetchJSON<FindingsResponse>(
-            `/api/findings?limit=1000&search=${encodeURIComponent(cveId)}`,
-            session
+            `/api/findings?limit=1000&cve_id=${encodeURIComponent(cveId)}`,
+            session,
+            { signal: controller.signal }
           );
-        } catch {
-          // Fallback: fetch all and filter
+          clearTimeout(timeoutId);
+        } catch (fetchError) {
+          clearTimeout(timeoutId);
+          
+          // Check if it's a timeout/abort error
+          if (fetchError instanceof Error && (fetchError.name === 'AbortError' || fetchError.message.includes('timeout') || fetchError.message.includes('aborted'))) {
+            setError('Request timed out. There may be too many findings. Please try again or contact support.');
+            setLoading(false);
+            return;
+          }
+          
+          // For other errors, try fallback with smaller limit
+          const fallbackController = new AbortController();
+          const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 15000); // 15 second timeout for fallback
+          try {
           data = await thandevFetchJSON<FindingsResponse>(
-            `/api/findings?limit=1000`,
-            session
-          );
+              `/api/findings?limit=100&cve_id=${encodeURIComponent(cveId)}`,
+              session,
+              { signal: fallbackController.signal }
+            );
+            clearTimeout(fallbackTimeoutId);
+          } catch (fallbackError) {
+            clearTimeout(fallbackTimeoutId);
+            console.error('Error loading CVE findings:', fallbackError);
+            setError('Failed to load vulnerability details. The CVE may not have any associated findings.');
+            setLoading(false);
+            return;
+          }
         }
 
-        // Filter findings for this CVE (case-insensitive)
+        // Backend should already filter by exact CVE ID, but double-check for safety
         const cveFindings = data.items.filter(
-          (finding) => finding.cve_id?.toUpperCase() === cveId.toUpperCase()
+          (finding) => finding.cve_id && finding.cve_id.toUpperCase() === cveId.toUpperCase()
         );
 
         setFindings(cveFindings);
+        
+        if (cveFindings.length === 0) {
+          setError(`No findings found for ${cveId.toUpperCase()}. This CVE may not be present in any scans.`);
+        }
+
+        // Fetch CVE details from NVD API
+        try {
+          const nvdResponse = await fetch(
+            `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId.toUpperCase())}`,
+            {
+              headers: {
+                'Accept': 'application/json',
+              },
+              signal: AbortSignal.timeout(10000), // 10 second timeout
+            }
+          );
+          
+          if (nvdResponse.ok) {
+            const nvdData = await nvdResponse.json();
+            if (nvdData.vulnerabilities && nvdData.vulnerabilities.length > 0) {
+              const cveItem = nvdData.vulnerabilities[0].cve;
+              
+              // Extract description
+              let description = '';
+              if (cveItem.descriptions) {
+                const enDesc = cveItem.descriptions.find((d: any) => d.lang === 'en');
+                if (enDesc) {
+                  description = enDesc.value;
+                }
+              }
+              
+              // Extract CVSS score
+              let cvssScore: number | undefined;
+              let cvssSeverity: string | undefined;
+              if (cveItem.metrics?.cvssMetricV31?.[0]) {
+                const cvss = cveItem.metrics.cvssMetricV31[0];
+                cvssScore = cvss.cvssData.baseScore;
+                cvssSeverity = cvss.cvssData.baseSeverity;
+              } else if (cveItem.metrics?.cvssMetricV30?.[0]) {
+                const cvss = cveItem.metrics.cvssMetricV30[0];
+                cvssScore = cvss.cvssData.baseScore;
+                cvssSeverity = cvss.cvssData.baseSeverity;
+              } else if (cveItem.metrics?.cvssMetricV2?.[0]) {
+                const cvss = cveItem.metrics.cvssMetricV2[0];
+                cvssScore = cvss.cvssData.baseScore;
+                cvssSeverity = cvss.baseSeverity;
+              }
+              
+              // Extract published date
+              const publishedDate = cveItem.published;
+              
+              // Extract references
+              const references: string[] = [];
+              if (cveItem.references) {
+                cveItem.references.forEach((ref: any) => {
+                  if (ref.url) {
+                    references.push(ref.url);
+                  }
+                });
+              }
+              
+              setCveDetails({
+                description,
+                cvssScore,
+                cvssSeverity,
+                publishedDate,
+                references: references.slice(0, 10), // Limit to first 10 references
+              });
+            }
+          }
+        } catch (nvdError) {
+          console.warn('Failed to fetch CVE details from NVD:', nvdError);
+          // Don't fail the page if NVD API fails, just continue without CVE details
+        }
       } catch (e) {
         console.error('Error loading CVE findings:', e);
-        setError('Failed to load vulnerability details');
+        const errorMessage = e instanceof Error ? e.message : 'Failed to load vulnerability details';
+        setError(errorMessage.includes('timeout') || errorMessage.includes('aborted') 
+          ? 'Request timed out. Please try again.' 
+          : 'Failed to load vulnerability details');
       } finally {
         setLoading(false);
       }
@@ -236,11 +347,66 @@ export default function CVEDetailPage() {
         </div>
 
         {/* Vulnerability Details */}
-        {maxSeverity && (
           <div className="rounded-lg border p-6 mb-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
             <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--fg)' }}>Vulnerability Details</h2>
 
             <div className="space-y-4">
+            {/* Official CVE Description from NVD */}
+            {cveDetails?.description && (
+              <div>
+                <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>Official Description</div>
+                <div className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+                  {cveDetails.description}
+                </div>
+              </div>
+            )}
+
+            {/* CVSS Score from NVD */}
+            {cveDetails?.cvssScore !== undefined && (
+              <div>
+                <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>CVSS Score</div>
+                <div className="flex items-center gap-3">
+                  <span className="text-lg font-bold" style={{ color: 'var(--fg)' }}>
+                    {cveDetails.cvssScore.toFixed(1)}
+                  </span>
+                  {cveDetails.cvssSeverity && (
+                    <span
+                      className={`px-2 py-1 rounded text-xs font-semibold ${
+                        cveDetails.cvssSeverity === 'CRITICAL'
+                          ? 'bg-red-900/40 text-red-200'
+                          : cveDetails.cvssSeverity === 'HIGH'
+                          ? 'bg-orange-900/40 text-orange-200'
+                          : cveDetails.cvssSeverity === 'MEDIUM'
+                          ? 'bg-yellow-900/40 text-yellow-200'
+                          : cveDetails.cvssSeverity === 'LOW'
+                          ? 'bg-green-900/40 text-green-200'
+                          : 'bg-blue-900/40 text-blue-200'
+                      }`}
+                    >
+                      {cveDetails.cvssSeverity}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Published Date */}
+            {cveDetails?.publishedDate && (
+              <div>
+                <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>Published</div>
+                <div style={{ color: 'var(--fg)' }}>
+                  {new Date(cveDetails.publishedDate).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Finding-specific details (fallback if NVD data not available) */}
+            {maxSeverity && !cveDetails?.description && (
+              <>
               {maxSeverity.title && (
                 <div>
                   <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>Title</div>
@@ -255,23 +421,25 @@ export default function CVEDetailPage() {
                     {maxSeverity.description}
                   </div>
                 </div>
+                )}
+              </>
               )}
 
-              {maxSeverity.impact_summary && (
+            {maxSeverity?.impact_summary && (
                 <div>
                   <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>Impact</div>
                   <div style={{ color: 'var(--fg)' }}>{maxSeverity.impact_summary}</div>
                 </div>
               )}
 
-              {maxSeverity.cwe_id && (
+            {maxSeverity?.cwe_id && (
                 <div>
                   <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>CWE ID</div>
                   <div className="font-mono" style={{ color: 'var(--fg)' }}>{maxSeverity.cwe_id}</div>
                 </div>
               )}
 
-              {maxSeverity.categories && maxSeverity.categories.length > 0 && (
+            {maxSeverity?.categories && maxSeverity.categories.length > 0 && (
                 <div>
                   <div className="text-sm font-medium mb-1" style={{ color: 'var(--muted)' }}>Categories</div>
                   <div className="flex flex-wrap gap-2">
@@ -287,9 +455,53 @@ export default function CVEDetailPage() {
                   </div>
                 </div>
               )}
+
+            {/* External References */}
+            {cveDetails?.references && cveDetails.references.length > 0 && (
+              <div>
+                <div className="text-sm font-medium mb-2" style={{ color: 'var(--muted)' }}>References</div>
+                <div className="space-y-1">
+                  {cveDetails.references.map((ref, idx) => (
+                    <a
+                      key={idx}
+                      href={ref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="block text-sm text-blue-400 hover:underline truncate"
+                    >
+                      {ref}
+                    </a>
+                  ))}
             </div>
           </div>
         )}
+
+            {/* Links to official CVE sources */}
+            <div>
+              <div className="text-sm font-medium mb-2" style={{ color: 'var(--muted)' }}>Official Sources</div>
+              <div className="flex flex-wrap gap-2">
+                <a
+                  href={`https://nvd.nist.gov/vuln/detail/${cveId.toUpperCase()}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 rounded text-xs border hover:opacity-80 transition-opacity"
+                  style={{ background: 'var(--surface-2)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                >
+                  View on NVD
+                </a>
+                <a
+                  href={`https://cve.mitre.org/cgi-bin/cvename.cgi?name=${cveId.toUpperCase()}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1 rounded text-xs border hover:opacity-80 transition-opacity"
+                  style={{ background: 'var(--surface-2)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                >
+                  View on CVE.org
+                </a>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* Remediation */}
         {maxSeverity?.remediation_summary && (

@@ -121,106 +121,10 @@ async def run_lighthouse_scan(url: str, device: str = "desktop") -> Dict[str, An
         Exception: If Lighthouse scan fails
     """
     logger.info(f"Starting Lighthouse scan for {url} (device: {device})")
-    
-    # Check if Cloud Run Service is enabled
-    cloud_run_enabled_raw = os.getenv("CLOUD_RUN_ENABLED", "false").strip()
-    cloud_run_enabled_clean = cloud_run_enabled_raw.split()[0].strip('"\'')
-    cloud_run_enabled = cloud_run_enabled_clean.lower() == "true"
-    cloud_run_url = os.getenv("CLOUD_RUN_LIGHTHOUSE_URL", "").strip()
-    
-    if " -a " in cloud_run_url:
-        cloud_run_url = cloud_run_url.split(" -a ")[0].strip()
-    
-    if cloud_run_enabled and cloud_run_url:
-        logger.info(f"Using Cloud Run Service for Lighthouse scan: {cloud_run_url}")
-        return await run_cloud_run_lighthouse_scan(url, device, cloud_run_url)
-    else:
-        logger.info("Using local Lighthouse (Cloud Run not configured)")
+    try:
         return await run_local_lighthouse_scan(url, device)
-
-
-async def run_cloud_run_lighthouse_scan(url: str, device: str, cloud_run_url: str) -> Dict[str, Any]:
-    """Run Lighthouse scan via Cloud Run Service"""
-    import httpx
-    
-    try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            # Start scan
-            response = await client.post(
-                f"{cloud_run_url}/run",
-                json={
-                    "url": url,
-                    "device": device,
-                    "category": "performance"
-                }
-            )
-            
-            if response.status_code != 200:
-                error_text = response.text[:500]
-                raise Exception(f"Cloud Run Service failed: {error_text}")
-            
-            cloud_job_data = response.json()
-            cloud_job_id = cloud_job_data.get("jobId")
-            
-            if not cloud_job_id:
-                raise Exception("Cloud Run Service did not return a jobId")
-            
-            logger.info(f"Started Cloud Run scan, job ID: {cloud_job_id}")
-            
-            # Poll for results (max 5 minutes)
-            max_polls = 60
-            poll_interval = 5
-            
-            for poll_count in range(max_polls):
-                await asyncio.sleep(poll_interval)
-                
-                status_response = await client.get(f"{cloud_run_url}/status/{cloud_job_id}")
-                if status_response.status_code != 200:
-                    continue
-                
-                status_data = status_response.json()
-                status = status_data.get("status")
-                
-                if status == "completed":
-                    result_data = status_data.get("result", {})
-                    # Process Cloud Run result format
-                    return process_cloud_run_results(result_data)
-                elif status in ["error", "failed"]:
-                    error_msg = status_data.get("error", "Unknown error")
-                    raise Exception(f"Cloud Run scan failed: {error_msg}")
-            
-            raise Exception("Cloud Run scan timed out")
-            
     except Exception as e:
-        logger.error(f"Cloud Run Lighthouse scan failed: {e}")
-        raise
-
-
-def process_cloud_run_results(cloud_result: Dict[str, Any]) -> Dict[str, Any]:
-    """Process Cloud Run Service results into our format"""
-    try:
-        # Cloud Run may return categories or direct performance score
-        categories = cloud_result.get("categories", {})
-        if categories:
-            performance_score = int(categories.get("performance", {}).get("score", 0) * 100)
-        else:
-            performance_score = int(cloud_result.get("performance", 0) * 100) if cloud_result.get("performance") else 0
-        
-        metrics = cloud_result.get("metrics", {})
-        
-        return {
-            "overall_score": performance_score,
-            "first_contentful_paint_ms": metrics.get("firstContentfulPaint", 0),
-            "largest_contentful_paint_ms": metrics.get("largestContentfulPaint", 0),
-            "time_to_interactive_ms": metrics.get("interactive", 0),
-            "total_requests": metrics.get("totalRequests", 0),
-            "total_kb": metrics.get("totalKb", 0),
-            "cumulative_layout_shift": metrics.get("cumulativeLayoutShift", 0),
-            "first_input_delay_ms": metrics.get("firstInputDelay", 0),
-            "speed_index": metrics.get("speedIndex", 0),
-        }
-    except Exception as e:
-        logger.error(f"Error processing Cloud Run results: {e}")
+        logger.error(f"Lighthouse scan failed: {e}")
         raise
 
 
