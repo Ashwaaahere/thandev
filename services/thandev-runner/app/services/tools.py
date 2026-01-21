@@ -464,9 +464,10 @@ class ToolExecutor:
             try:
                 from jsonschema import Draft202012Validator, ValidationError as SchemaValidationError
                 
-                # Filter out system properties (timeout_seconds, scan_level) before validation
+                # Filter out system properties (timeout_seconds, scan_level, aggressiveness) before validation
                 # These are added by the planner but may not be in the schema
-                system_props = {"timeout_seconds", "scan_level", "timeout_sec"}
+                # aggressiveness is used internally but mapped to payload/deep for dalfox schema
+                system_props = {"timeout_seconds", "scan_level", "timeout_sec", "aggressiveness"}
                 filtered_params = {k: v for k, v in params.items() if k not in system_props}
                 
                 # Ensure additionalProperties is false for strict validation

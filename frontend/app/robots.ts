@@ -12,6 +12,6 @@ export default function robots(): MetadataRoute.Robots {
         '/private/',
       ],
     },
-    sitemap: 'https://thandev.com/sitemap.xml',
+    sitemap: 'https://thandev.vercel.app/sitemap.xml',
   }
 }

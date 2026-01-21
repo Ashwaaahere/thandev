@@ -458,7 +458,6 @@ async def run_wappalyzer(target_url: str) -> List[Dict[str, Any]]:
                                     "confidence": 0.7,
                                 })
                         logger.info(f"httpx tech-detect found {len(technologies)} technologies as fallback")
-    return technologies
                 except json.JSONDecodeError:
                     pass
         except Exception as e:
@@ -491,21 +490,21 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
     retire_found = False
     retire_cmd_base = None
     for cmd in retire_commands:
-    try:
-        check_result = subprocess.run(
+        try:
+            check_result = subprocess.run(
                 cmd + ["--version"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
             if check_result.returncode == 0:
                 retire_found = True
                 retire_cmd_base = cmd  # Store the full command array
                 logger.debug(f"Found retire with command: {' '.join(cmd)}")
                 break
-    except FileNotFoundError:
+        except FileNotFoundError:
             continue
-    except Exception as e:
+        except Exception as e:
             logger.debug(f"retire check failed for {' '.join(cmd)}: {e}")
             continue
     
@@ -548,11 +547,11 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
                         # Protocol-relative URL - use https by default
                         script_url = 'https:' + script_url
                     elif not script_url.startswith(('http://', 'https://')):
-                # Resolve relative URLs
-                from urllib.parse import urljoin
-                script_url = urljoin(target_url, script_url)
-            
-            try:
+                        # Resolve relative URLs
+                        from urllib.parse import urljoin
+                        script_url = urljoin(target_url, script_url)
+                    
+                    try:
                         # Download the script
                         logger.debug(f"Downloading {script_url} for retire.js scanning")
                         script_response = await client.get(script_url, timeout=30.0)
@@ -591,11 +590,11 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
                     # Use the retire command that was found during verification
                     # retire.js --path works with local files
                     # Note: retire.js uses --outputformat json, not --json
-                result = subprocess.run(
+                    result = subprocess.run(
                         retire_cmd_base + ["--path", str(temp_file), "--outputformat", "json"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
                         cwd=str(temp_dir),  # Set working directory
                     )
                     
@@ -643,19 +642,19 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
                                 vulnerabilities = result.get("vulnerabilities", [])
                                 
                                 logger.info(f"retire.js processing: component={component}, version={version}, vulnerabilities={len(vulnerabilities)}")
-                            
-                            if component:
+                                
+                                if component:
                                     # Check if we already added this dependency
                                     existing = next((d for d in client_deps if d["name"] == component and d.get("evidence") == script_url), None)
                                     if not existing:
-                                client_deps.append({
-                                    "name": component,
-                                    "version": version,
-                                    "evidence": script_url,
-                                    "confidence": 0.9,
-                                })
-                                
-                                # Create finding for each vulnerability
+                                        client_deps.append({
+                                            "name": component,
+                                            "version": version,
+                                            "evidence": script_url,
+                                            "confidence": 0.9,
+                                        })
+                                    
+                                    # Create finding for each vulnerability
                                     for vuln in vulnerabilities:
                                         # Extract CVE IDs from identifiers
                                         cve_ids = []
@@ -667,18 +666,18 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
                                             elif isinstance(cve_list, str):
                                                 cve_ids = [cve_list]
                                         
-                                    findings.append({
-                                        "type": "client_dependency_vuln",
-                                        "package": component,
-                                        "version": version,
+                                        findings.append({
+                                            "type": "client_dependency_vuln",
+                                            "package": component,
+                                            "version": version,
                                             "severity": vuln.get("severity", "medium").lower(),
-                                        "evidence": script_url,
+                                            "evidence": script_url,
                                             "references": cve_ids,
-                                        "confidence": 0.9,
-                                    })
+                                            "confidence": 0.9,
+                                        })
                                     
                                     logger.info(f"retire.js found {len(vulnerabilities)} vulnerabilities in {component} {version} from {script_url}")
-            except json.JSONDecodeError as e:
+                        except json.JSONDecodeError as e:
                             # retire.js might output non-JSON warnings/errors
                             logger.warning(f"retire.js returned non-JSON output for {script_url}: {output[:500]}")
                             logger.warning(f"JSON decode error: {e}")
@@ -688,7 +687,7 @@ async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dic
                     else:
                         # No output means no vulnerabilities found, but the file was scanned successfully
                         logger.info(f"retire.js scanned {script_url} successfully but found no vulnerabilities (exit_code={result.returncode}, stdout_len={len(result.stdout) if result.stdout else 0}, stderr_len={len(result.stderr) if result.stderr else 0})")
-            except Exception as e:
+                except Exception as e:
                     logger.warning(f"retire.js failed for {temp_file} (from {script_url}): {e}")
                     continue
             

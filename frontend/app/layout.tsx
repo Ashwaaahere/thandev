@@ -4,6 +4,7 @@ import ThemeProvider from './providers/ThemeProvider';
 import Providers from '@/components/Providers';
 import ConditionalNavbar from '@/components/ConditionalNavbar';
 import ConditionalFooter from '@/components/ConditionalFooter';
+import SeoJsonLd from '@/components/SeoJsonLd';
 
 export const metadata: Metadata = {
   title: {
@@ -40,14 +41,14 @@ export const metadata: Metadata = {
     address: false,
     telephone: false,
   },
-  metadataBase: new URL('https://thandev.com'),
+  metadataBase: new URL('https://thandev.vercel.app'),
   alternates: {
     canonical: '/',
   },
   openGraph: {
     type: 'website',
     locale: 'en_US',
-    url: 'https://thandev.com',
+    url: 'https://thandev.vercel.app',
     siteName: 'Thandev',
     title: 'Thandev - Cybersecurity Intelligence Platform',
     description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.',
@@ -86,44 +87,73 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  const structuredData = {
-    "@context": "https://schema.org",
-    "@type": "SoftwareApplication",
-    "name": "Thandev",
-    "description": "Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.",
-    "url": "https://thandev.com",
-    "applicationCategory": "SecurityApplication",
-    "operatingSystem": "Web",
-    "offers": {
-      "@type": "Offer",
-      "price": "0",
-      "priceCurrency": "USD"
-    },
-    "creator": {
+  // Comprehensive structured data using @graph format
+  // This replaces SoftwareApplication (which requires aggregateRating/review) with proper schema types
+  const structuredData = [
+    {
       "@type": "Organization",
-      "name": "Thandev Team",
-      "url": "https://thandev.com"
+      "@id": "https://thandev.vercel.app/#organization",
+      "name": "Thandev",
+      "url": "https://thandev.vercel.app/",
+      "logo": {
+        "@type": "ImageObject",
+        "url": "https://thandev.vercel.app/logo.png",
+        "width": 512,
+        "height": 512,
+      },
+      "description": "Cybersecurity intelligence platform providing real-time threat monitoring, vulnerability tracking, and security scanning.",
+      // Note: sameAs omitted as no social links found in footer
     },
-    "featureList": [
-      "Real-time cybersecurity news aggregation",
-      "CVE vulnerability tracking",
-      "Exploit monitoring",
-      "Threat intelligence",
-      "Security analytics",
-      "Live threat feeds"
-    ]
-  };
+    {
+      "@type": "WebSite",
+      "@id": "https://thandev.vercel.app/#website",
+      "url": "https://thandev.vercel.app/",
+      "name": "Thandev",
+      "description": "Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.",
+      "publisher": {
+        "@id": "https://thandev.vercel.app/#organization",
+      },
+      // Note: potentialAction SearchAction omitted as no search functionality found
+    },
+    {
+      "@type": "LandingPage",
+      "@id": "https://thandev.vercel.app/#webpage",
+      "url": "https://thandev.vercel.app/",
+      "name": "Thandev - Cybersecurity Intelligence Platform",
+      "description": "Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning.",
+      "isPartOf": {
+        "@id": "https://thandev.vercel.app/#website",
+      },
+      "about": {
+        "@id": "https://thandev.vercel.app/#product",
+      },
+    },
+    {
+      "@type": "Product",
+      "@id": "https://thandev.vercel.app/#product",
+      "name": "Thandev",
+      "description": "Cybersecurity intelligence platform providing real-time threat monitoring, vulnerability tracking, CVE database access, exploit monitoring, and professional security surface scanning for developers and security teams.",
+      "category": "Cybersecurity",
+      "brand": {
+        "@id": "https://thandev.vercel.app/#organization",
+      },
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/PreOrder",
+        "url": "https://thandev.vercel.app/private-beta",
+        "description": "Beta access available - request early access or sign in with GitHub",
+      },
+      // Note: aggregateRating and review intentionally omitted - no fake reviews
+    },
+  ];
 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Structured Data */}
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify(structuredData),
-          }}
-        />
+        {/* Structured Data - Using @graph format for multiple schema types */}
+        <SeoJsonLd schema={structuredData} />
         {/* theme init: light/dark before first paint */}
         <script
           dangerouslySetInnerHTML={{

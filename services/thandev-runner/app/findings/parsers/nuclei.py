@@ -43,12 +43,18 @@ def parse_nuclei_output(path: Path) -> List[Dict[str, Any]]:
     
     findings: List[Dict[str, Any]] = []
     
+    # ANSI escape sequence pattern for stripping color codes
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             for line_no, raw_line in enumerate(f, start=1):
                 line = raw_line.strip()
                 if not line:
                     continue
+                
+                # Strip ANSI escape sequences before parsing
+                line = ansi_escape.sub('', line)
                 
                 # Skip obvious non-JSON lines
                 if not (line.startswith("{") or line.startswith("[")):
@@ -275,4 +281,3 @@ def parse_nuclei_output(path: Path) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error("Failed to read/parse Nuclei output file %s: %s", path, e, exc_info=True)
         return []
-

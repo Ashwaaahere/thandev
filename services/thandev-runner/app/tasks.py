@@ -808,10 +808,38 @@ async def run_worker_loop() -> None:
     # Track if this is the first iteration (to check for pending messages on startup)
     first_iteration = True
     
+    # Track running tasks to allow concurrent processing without blocking the loop
+    running_tasks: set[asyncio.Task] = set()
+    
+    def cleanup_completed_tasks():
+        """Remove completed tasks from the running set"""
+        completed = [t for t in running_tasks if t.done()]
+        for task in completed:
+            running_tasks.discard(task)
+            # Log any exceptions
+            try:
+                task.result()
+            except Exception as e:
+                logger.error(f"Task completed with error: {e}", exc_info=True)
+        return len(completed)
+    
     while True:
         try:
+            # Clean up completed tasks before checking capacity
+            completed_count = cleanup_completed_tasks()
+            if completed_count > 0:
+                logger.debug(f"Cleaned up {completed_count} completed task(s), {len(running_tasks)} still running")
+            
+            # Check if we're at capacity
+            available_slots = settings.MAX_CONCURRENT_STEPS - len(running_tasks)
+            if available_slots <= 0:
+                # At capacity, wait a bit before checking again
+                logger.debug(f"At capacity ({len(running_tasks)}/{settings.MAX_CONCURRENT_STEPS}), waiting...")
+                await asyncio.sleep(1)
+                continue
+            
             # Consume step requests
-            logger.debug(f"Waiting for step requests from stream {settings.CONSUMER_GROUP}...")
+            logger.debug(f"Waiting for step requests from stream {settings.CONSUMER_GROUP}... (available slots: {available_slots})")
             
             # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
             
@@ -820,7 +848,7 @@ async def run_worker_loop() -> None:
                 debug_log_path = "/home/ashwath/thandev/.cursor/debug.log"
                 with open(debug_log_path, "a") as f:
                     import json as json_lib
-                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"tasks.py:778","message":"About to consume step requests","data":{"consumer_group":settings.CONSUMER_GROUP,"consumer_name":settings.CONSUMER_NAME,"count":settings.MAX_CONCURRENT_STEPS},"timestamp":int(time.time()*1000)})+"\n")
+                    f.write(json_lib.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"C","location":"tasks.py:778","message":"About to consume step requests","data":{"consumer_group":settings.CONSUMER_GROUP,"consumer_name":settings.CONSUMER_NAME,"count":settings.MAX_CONCURRENT_STEPS,"available_slots":available_slots},"timestamp":int(time.time()*1000)})+"\n")
             except: pass
             # #endregion
             
@@ -828,26 +856,34 @@ async def run_worker_loop() -> None:
             messages = []
             
             # 1. Check global stream (legacy scans not using Brain)
+            # Limit consumption based on available slots
+            consume_count = min(available_slots, settings.MAX_CONCURRENT_STEPS // 2)
             global_messages = await consume_step_requests(
                 consumer_group=settings.CONSUMER_GROUP,
                 consumer_name=settings.CONSUMER_NAME,
-                count=settings.MAX_CONCURRENT_STEPS // 2,  # Reserve half capacity for Brain
+                count=consume_count,  # Use available slots instead of fixed half
                 block_ms=500,  # Reduced block time
                 check_pending=first_iteration,  # Only check pending on first iteration
             )
             messages.extend(global_messages or [])
             
+            # Update available slots after consuming
+            available_slots = settings.MAX_CONCURRENT_STEPS - len(running_tasks) - len(messages)
+            
             # 2. Check Brain session streams (new Brain-managed scans)
             brain_sessions = discover_brain_sessions()
             for session_id in brain_sessions:
+                if available_slots <= 0:
+                    break
                 session_messages = await consume_brain_session_steps(
                     session_id=session_id,
                     consumer_group=settings.CONSUMER_GROUP,
                     consumer_name=settings.CONSUMER_NAME,
-                    count=max(1, settings.MAX_CONCURRENT_STEPS // max(len(brain_sessions), 1)),
+                    count=max(1, min(available_slots, settings.MAX_CONCURRENT_STEPS // max(len(brain_sessions), 1))),
                     block_ms=0,  # Non-blocking for Brain streams
                 )
                 messages.extend(session_messages or [])
+                available_slots -= len(session_messages or [])
             
             first_iteration = False  # Kept for backwards compatibility with existing log flow
             
@@ -863,9 +899,10 @@ async def run_worker_loop() -> None:
             if not messages:
                 # No messages, continue
                 logger.debug("No messages received, continuing...")
+                await asyncio.sleep(0.5)  # Small sleep to prevent tight loop
                 continue
             
-            logger.info(f"Received {len(messages)} step request(s)")
+            logger.info(f"Received {len(messages)} step request(s) (running: {len(running_tasks)})")
             
             # #region agent log
             log_data = {
@@ -885,19 +922,22 @@ async def run_worker_loop() -> None:
             
             # Process messages in parallel (up to MAX_CONCURRENT_STEPS)
             # Each message is processed concurrently, but per-session concurrency is controlled
-            tasks = []
+            # Start tasks without waiting - they run in background
             for message in messages:
+                if len(running_tasks) >= settings.MAX_CONCURRENT_STEPS:
+                    logger.warning(f"At capacity, deferring {len(messages) - messages.index(message)} remaining message(s)")
+                    break
+                
                 task = asyncio.create_task(
                     process_step_request_with_error_handling(message)
                 )
-                tasks.append(task)
+                running_tasks.add(task)
+                # Add callback to remove task when done
+                task.add_done_callback(lambda t: running_tasks.discard(t))
             
-            # Wait for all tasks to complete
-            if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
-                logger.info(f"Completed processing {len(tasks)} step request(s)")
-                
-                # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
+            # Don't wait for tasks - continue loop to consume more messages
+            # Tasks run in background and clean themselves up
+            # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
         
         except Exception as e:
             logger.error(f"Worker loop error: {e}", exc_info=True)
@@ -920,10 +960,6 @@ async def process_step_request_with_error_handling(message: Dict[str, Any]) -> N
             await ack_step_request(settings.CONSUMER_GROUP, message.get("id", ""))
         except Exception as ack_error:
             logger.error(f"Failed to acknowledge message: {ack_error}", exc_info=True)
-        
-        except Exception as e:
-            logger.error(f"Worker loop error: {e}", exc_info=True)
-            await asyncio.sleep(5)  # Wait before retrying
 
 
 async def run_all_workers() -> None:

@@ -1,4 +1,4 @@
-# How to Check GitHub Actions Deployment
+image.pngstill all tools geting qur# How to Check GitHub Actions Deployment
 
 ## 1. Check GitHub Actions Status
 

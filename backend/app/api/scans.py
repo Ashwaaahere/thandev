@@ -1271,119 +1271,6 @@ async def quick_scan(
         raise
 
 
-@router.post("/{scan_id}/backfill-dependency-findings")
-async def backfill_dependency_findings(
-    scan_id: str,
-    db: Session = Depends(get_db),
-    tenant: Tenant = Depends(require_tenant),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Backfill dependency scan findings from artifacts into Finding records.
-    
-    This processes existing ScanArtifact records and creates Finding records
-    so they can be searched by CVE ID.
-    """
-    # Verify scan exists and belongs to user
-    scan_job = db.query(ScanJob).filter(
-        ScanJob.id == scan_id,
-        ScanJob.project_id.in_(
-            db.query(Project.id).filter(
-                Project.tenant_id == tenant.id,
-                Project.owner_id == current_user.id
-            )
-        )
-    ).first()
-    
-    if not scan_job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Scan not found"
-        )
-    
-    from app.models.scan_artifact import ScanArtifact
-    from app.services.findings_ingestor import create_or_update_finding
-    import json
-    
-    # Get url_sca artifacts for this scan
-    artifacts = db.query(ScanArtifact).filter(
-        ScanArtifact.scan_id == scan_id,
-        ScanArtifact.type == 'url_sca'
-    ).all()
-    
-    if not artifacts:
-        return {
-            "status": "ok",
-            "message": "No url_sca artifacts found for this scan",
-            "findings_created": 0
-        }
-    
-    findings_created = 0
-    
-    for artifact in artifacts:
-        try:
-            # Get payload
-            payload = artifact.payload
-            if isinstance(payload, str):
-                payload = json.loads(payload)
-            
-            findings_list = payload.get("findings", [])
-            if not findings_list:
-                continue
-            
-            project_id = scan_job.project_id
-            
-            for finding_data in findings_list:
-                try:
-                    # Extract CVE IDs from references field
-                    cve_id = None
-                    references = finding_data.get("references", [])
-                    if isinstance(references, list) and len(references) > 0:
-                        for ref in references:
-                            if isinstance(ref, str) and ref.upper().startswith("CVE-"):
-                                cve_id = ref.upper()
-                                break
-                    
-                    # Build finding data structure
-                    normalized_finding = {
-                        "tool": "retire",
-                        "tool_name": "retire",
-                        "title": f"{finding_data.get('package', 'Unknown')} {finding_data.get('version', '')} - Known Vulnerability",
-                        "description": f"Vulnerable dependency detected: {finding_data.get('package', 'Unknown')} version {finding_data.get('version', 'Unknown')}",
-                        "severity": finding_data.get("severity", "medium").lower(),
-                        "url": finding_data.get("evidence"),
-                        "cve_id": cve_id,
-                        "evidence": finding_data.get("evidence"),
-                        "raw_data": json.dumps(finding_data, default=str),
-                    }
-                    
-                    finding = create_or_update_finding(
-                        db=db,
-                        scan_job_id=scan_id,
-                        project_id=project_id,
-                        finding_data=normalized_finding,
-                        tool_result_id=None,
-                    )
-                    findings_created += 1
-                    
-                except Exception as e:
-                    logger.warning(f"Failed to create finding from artifact: {e}", exc_info=True)
-                    continue
-            
-        except Exception as e:
-            logger.error(f"Error processing artifact {artifact.id}: {e}", exc_info=True)
-            continue
-    
-    if findings_created > 0:
-        db.commit()
-    
-    return {
-        "status": "ok",
-        "message": f"Created {findings_created} Finding records from artifacts",
-        "findings_created": findings_created
-    }
-
-
 @router.get("/{scan_id}/artifacts", response_model=ScanArtifactsResponse)
 async def get_scan_artifacts(
     scan_id: str,
@@ -1496,6 +1383,7 @@ async def get_scan(
     status_source = "db"  # Default to DB, will be set to "brain" if brain is available
     status_reason = None
     brain_session_response: Optional[BrainSessionResponse] = None
+    all_tools_done = False  # Initialize to prevent UnboundLocalError if brain_session_id is None
     
     if scan_job.brain_session_id:
         brain_fetch_start = datetime.now(timezone.utc)
@@ -1726,6 +1614,41 @@ async def get_scan(
             status_source = "db"
             status_reason = "brain_unreachable"
             # Continue with DB status - don't fail the request
+    
+    # If no brain_session_id, calculate all_tools_done from DB
+    if not scan_job.brain_session_id:
+        from app.models.finding import ToolResult, ToolExecutionStatus
+        all_tool_results = db.query(ToolResult).filter(
+            ToolResult.scan_job_id == scan_id
+        ).all()
+        
+        # Get unique tool names and their latest status
+        tool_statuses_dict = {}
+        for tr in all_tool_results:
+            tool_name = tr.tool_name
+            if tool_name not in tool_statuses_dict or (tr.created_at and tool_statuses_dict[tool_name].created_at < tr.created_at):
+                tool_statuses_dict[tool_name] = tr
+        
+        # Check if all tools are in terminal states
+        all_tools_done = True
+        if tool_statuses_dict:
+            for tool_name, tr in tool_statuses_dict.items():
+                # If status is set, check it's in a terminal state
+                if tr.status:
+                    if tr.status not in [
+                        ToolExecutionStatus.COMPLETED,
+                        ToolExecutionStatus.FAILED,
+                        ToolExecutionStatus.SKIPPED,
+                        ToolExecutionStatus.TIMED_OUT
+                    ]:
+                        all_tools_done = False
+                        break
+                # If status is None but completed_at is set, consider it done
+                elif tr.completed_at is None:
+                    all_tools_done = False
+                    break
+        else:
+            all_tools_done = False  # No tools yet
     
     # Stalled scan detection: If scan is RUNNING for too long without progress, mark as STALLED
     if scan_job.status == ScanStatus.RUNNING:
