@@ -836,38 +836,7 @@ export default function ScanReportPage() {
   };
 
   return (
-    <>
-      <style jsx global>{`
-        @keyframes shimmer {
-          0% {
-            background-position: -200% 0;
-          }
-          100% {
-            background-position: 200% 0;
-          }
-        }
-        
-        @keyframes shimmer-slide {
-          0% {
-            transform: translateX(-100%);
-          }
-          100% {
-            transform: translateX(100%);
-          }
-        }
-        
-        @keyframes pulse-edge {
-          0%, 100% {
-            opacity: 1;
-            transform: translateX(-50%) scale(1);
-          }
-          50% {
-            opacity: 0.6;
-            transform: translateX(-50%) scale(1.2);
-          }
-        }
-      `}</style>
-      <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden">
         <DashboardSidebar 
           isOpen={sidebarOpen} 
           onClose={() => setSidebarOpen(false)} 
@@ -2350,6 +2319,5 @@ export default function ScanReportPage() {
         </main>
       </div>
     </div>
-    </>
   );
 }

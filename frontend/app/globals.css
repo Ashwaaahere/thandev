@@ -477,6 +477,36 @@ select option:hover {
   100% { transform: translateY(100vh); opacity: 0; }
 }
 
+/* -------- Progress Bar Animations -------- */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes shimmer-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes pulse-edge {
+  0%, 100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: translateX(-50%) scale(1.2);
+  }
+}
+
 .loading-float {
   animation: float 3s ease-in-out infinite;
 }
