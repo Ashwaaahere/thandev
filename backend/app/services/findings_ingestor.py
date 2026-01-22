@@ -1491,6 +1491,14 @@ def ingest_httpx_findings(
         findings_to_create.extend(others[:remaining_slots])
         others = others[remaining_slots:]
     
+    # CRITICAL FIX: If we have very few results (<= 10), always show them individually
+    # This prevents single findings from being lost or only shown as summaries
+    if len(httpx_results) <= 10 and len(findings_to_create) < len(httpx_results):
+        # Add any remaining results that weren't included
+        all_results = prioritized + others
+        findings_to_create = all_results[:MAX_INDIVIDUAL]
+        others = all_results[MAX_INDIVIDUAL:] if len(all_results) > MAX_INDIVIDUAL else []
+    
     findings = []
     
     # Create individual findings for prioritized endpoints

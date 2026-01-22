@@ -953,6 +953,7 @@ async def post_callback(
     """Post scan artifact to backend callback."""
     import hmac
     import hashlib
+    from app.config import settings
     
     body = json.dumps({
         "scan_id": scan_id,
@@ -961,6 +962,11 @@ async def post_callback(
     }).encode('utf-8')
     
     headers = {}
+    # Add Bearer token authentication (required by callback endpoint)
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+    
+    # Also include signature if secret provided (for additional verification)
     if secret:
         signature = hmac.new(
             secret.encode('utf-8'),

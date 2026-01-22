@@ -2230,9 +2230,14 @@ async def get_scan_tools(
     )
     
     # Deduplicate by tool_name (keep first occurrence = latest)
+    # Filter out dependency scanning tools (wappalyzer, retire) - they should only appear in artifacts, not in "Tools Executed"
+    DEPENDENCY_TOOLS = {"wappalyzer", "retire"}
     seen = set()
     tool_results = []
     for tr in tool_results_all:
+        # Skip dependency scanning tools - they should only create artifacts, not ToolResult entries
+        if tr.tool_name.lower() in DEPENDENCY_TOOLS:
+            continue
         if tr.tool_name in seen:
             continue
         seen.add(tr.tool_name)

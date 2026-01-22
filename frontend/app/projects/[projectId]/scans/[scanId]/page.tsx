@@ -445,11 +445,12 @@ export default function ScanReportPage() {
   };
 
   // Load artifacts when dependency tabs are activated
+  // Also reload if scan status changes (e.g., from running to completed) to pick up new artifacts
   useEffect(() => {
-    if ((activeTab === 'tech-deps' || activeTab === 'repo-deps' || activeTab === 'ai-summary') && !artifacts && !artifactsLoading && session) {
+    if ((activeTab === 'tech-deps' || activeTab === 'repo-deps' || activeTab === 'ai-summary') && !artifactsLoading && session) {
       loadArtifacts();
     }
-  }, [activeTab, session]); // Removed artifacts and artifactsLoading from deps to allow reloading
+  }, [activeTab, session, scan?.status]); // Reload when tab changes, session changes, or scan status changes
 
   // Helper functions
   const formatDate = (dateString: string | null | undefined) => {
