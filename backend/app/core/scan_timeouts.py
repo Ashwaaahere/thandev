@@ -19,31 +19,34 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
             "sslscan": 180,  # 3 minutes (increased from 120 for slow SSL connections)
             "zap": 300,  # 5 minutes (passive scan + short spider)
             "nuclei": 180,  # 3 minutes (safe tags, low rate)
+            "dalfox": 300,  # 5 minutes (safe default, though rarely used in basic)
+            "sqlmap": 300,  # 5 minutes (safe default)
         }
     },
     "pro": {
         "max_total_seconds": 3600,  # 60 minutes total (increased for medium-sized web apps)
         "per_tool": {
-            "httpx": 30,  # 30 seconds
-            "nuclei": 1800,  # 30 minutes (increased for comprehensive scanning of medium-sized apps)
-            "nmap": 600,  # 10 minutes (port scans can take longer on medium-sized apps)
-            "ffuf": 300,  # 5 minutes
-            "sslscan": 300,  # 5 minutes (increased from 90s - SSL scans need more time for thorough analysis)
-            "zap": 1800,  # 30 minutes (increased from 20min - active scans need more time for medium-sized apps)
-            "dalfox": 1500,  # 25 minutes (increased from 20min - XSS testing needs more time for medium-sized apps)
+            "httpx": 60,  # 1 minute
+            "nuclei": 3300,  # 55 minutes (increased to allow full scan duration)
+            "nmap": 3300,  # 55 minutes
+            "ffuf": 3300,  # 55 minutes
+            "sslscan": 600,  # 10 minutes
+            "zap": 3300,  # 55 minutes
+            "dalfox": 3300,  # 55 minutes (increased to allow full scan duration)
+            "sqlmap": 3300,  # 55 minutes (increased to allow full scan duration)
         }
     },
     "advanced": {
         "max_total_seconds": 5400,  # 1.5 hours total (increased for complex targets)
         "per_tool": {
-            "httpx": 30,  # 30 seconds
-            "nuclei": 1800,  # 30 minutes (comprehensive template scanning - increased from 15min)
-            "nmap": 1800,  # 30 minutes (comprehensive port scan)
-            "ffuf": 600,  # 10 minutes
-            "sslscan": 180,  # 3 minutes (normally 30s, 6x safety buffer for thorough scan)
-            "dalfox": 2400,  # 40 minutes (thorough XSS testing - increased from 20min)
-            "sqlmap": 2400,  # 40 minutes (thorough SQLi testing - increased from 20min)
-            "zap": 2700,  # 45 minutes (increased from 20min - advanced scans run ajax_spider + active_scan, needs more time for comprehensive testing)
+            "httpx": 120,  # 2 minutes
+            "nuclei": 5000,  # ~83 minutes (increased to allow full scan duration)
+            "nmap": 5000,  # ~83 minutes
+            "ffuf": 5000,  # ~83 minutes
+            "sslscan": 600,  # 10 minutes
+            "dalfox": 5000,  # ~83 minutes (increased to allow full scan duration)
+            "sqlmap": 5000,  # ~83 minutes (increased to allow full scan duration)
+            "zap": 5000,  # ~83 minutes
         }
     }
 }

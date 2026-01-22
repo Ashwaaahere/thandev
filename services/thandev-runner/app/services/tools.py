@@ -2615,6 +2615,7 @@ class ToolExecutor:
         # Start spidering (always do a basic spider first to discover URLs)
         # CRITICAL: For better spider results, use base URL if target is a specific page
         # ZAP spider works better when starting from the root of a site
+        # CRITICAL: For active_scan mode, limit spider time to leave room for active scanning
         from urllib.parse import urlparse
         target_parsed = urlparse(target_url)
         spider_start_url = target_url
@@ -2630,6 +2631,27 @@ class ToolExecutor:
             logger.info(f"Starting ZAP spider for {spider_start_url} (original target: {target_url})...")
             max_depth = kwargs.get("max_depth", 5)
             max_children = kwargs.get("max_children", 50)
+            
+            # CRITICAL: Limit spider time to leave room for scanning
+            # For active_scan mode, use shorter timeout to leave time for active scanning
+            # For passive_spider mode, also limit to prevent long timeouts
+            if mode_id == "active_scan":
+                # Limit spider to 3 depth and 30 children for active scans to save time
+                max_depth = min(max_depth, 3)
+                max_children = min(max_children, 30)
+                # Use shorter spider timeout (5 minutes max) to leave time for active scan
+                spider_timeout = min(timeout_seconds // 4, 300)  # 25% of total timeout or 5 min max
+                logger.info(f"Active scan mode: Limiting spider to depth={max_depth}, children={max_children}, timeout={spider_timeout}s")
+            elif mode_id == "passive_spider":
+                # For passive scans, limit spider aggressively to prevent long timeouts
+                # Limit depth and children to prevent discovering too many URLs
+                max_depth = min(max_depth, 2)  # Max depth 2 for passive scans
+                max_children = min(max_children, 20)  # Max 20 children per node
+                # For passive scans, limit spider to 3 minutes max to prevent long timeouts
+                spider_timeout = min(timeout_seconds, 180)  # 3 minutes max for passive scans
+                logger.info(f"Passive scan mode: Limiting spider to depth={max_depth}, children={max_children}, timeout={spider_timeout}s")
+            else:
+                spider_timeout = timeout_seconds
             # CRITICAL: Always run spider WITH context to ensure discovered URLs are added to scan tree
             # URLs discovered by spider without context may not be added to scan tree automatically
             # Using context ensures URLs are in scope and will be added to scan tree
@@ -2670,8 +2692,9 @@ class ToolExecutor:
                 
                 if status_percent >= 100:
                     break
-                if time.time() - start_time > timeout_seconds:
-                    raise subprocess.TimeoutExpired(cmd="ZAP Spider", timeout=timeout_seconds)
+                if time.time() - start_time > spider_timeout:
+                    logger.warning(f"ZAP Spider timeout after {spider_timeout}s (status: {status_percent}%). Continuing with discovered URLs for active scan.")
+                    break  # Don't raise exception, continue with whatever URLs were discovered
                 await asyncio.sleep(5)
             
             # Check final spider results
@@ -2802,9 +2825,15 @@ class ToolExecutor:
             urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
             urls_in_tree = urls_check.json().get("urls", [])
             if len(urls_in_tree) > 0:
-                logger.info(f"Found {len(urls_in_tree)} URLs in scan tree - accessing them via ZAP API to trigger passive scanning...")
+                # CRITICAL: If ZAP has accumulated too many URLs from previous scans, limit processing
+                # For passive scans, only process a reasonable number of URLs to avoid timeouts
+                max_urls_to_process = 50 if mode_id == "passive_spider" else 100
+                urls_to_process = urls_in_tree[:max_urls_to_process]
+                logger.info(f"Found {len(urls_in_tree)} URLs in scan tree - processing first {len(urls_to_process)} URLs via ZAP API to trigger passive scanning...")
+                if len(urls_in_tree) > max_urls_to_process:
+                    logger.warning(f"ZAP has {len(urls_in_tree)} URLs in scan tree (from previous scans?), limiting to {max_urls_to_process} to prevent timeout")
                 accessed_count = 0
-                for url in urls_in_tree[:10]:  # Limit to first 10 URLs
+                for url in urls_to_process:
                     try:
                         # Use ZAP's accessUrl API to access the URL - this should trigger passive scanning
                         access_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/accessUrl/?url={url}&followRedirects=true&apikey=", timeout=10)
@@ -3126,6 +3155,28 @@ class ToolExecutor:
                 await asyncio.sleep(5)
             logger.info(f"ZAP Active Scan completed for {target_url} (total time: {time.time() - start_time:.1f}s)")
             
+            # CRITICAL: Wait for ZAP to process active scan alerts before retrieving
+            # Active scan may generate alerts asynchronously, so wait a moment
+            logger.info("Waiting 5 seconds for ZAP to process active scan alerts...")
+            await asyncio.sleep(5)
+            
+            # Check if active scan generated alerts
+            try:
+                scan_details_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
+                scan_details = scan_details_response.json().get("scans", [])
+                current_scan = next((s for s in scan_details if s.get("id") == str(active_scan_id)), None)
+                if current_scan:
+                    final_alert_count = int(current_scan.get("alertCount", "0"))
+                    final_req_count = int(current_scan.get("reqCount", "0"))
+                    logger.info(f"ZAP Active Scan final stats: {final_req_count} requests, {final_alert_count} alerts")
+                    if final_alert_count == 0 and final_req_count > 0:
+                        logger.warning(f"ZAP Active Scan made {final_req_count} requests but found 0 alerts. This may indicate:")
+                        logger.warning("  - Target is secure (no vulnerabilities found)")
+                        logger.warning("  - ZAP cannot properly test URLs (network/configuration issue)")
+                        logger.warning("  - Active scan policies are too restrictive")
+            except Exception as scan_check_error:
+                logger.debug(f"Failed to check final scan stats: {scan_check_error}")
+            
         elif mode_id == "ajax_spider":
             logger.info(f"Starting ZAP AJAX Spider for {target_url}...")
             max_depth = kwargs.get("max_depth", 10)
@@ -3180,17 +3231,50 @@ class ToolExecutor:
             # #endregion
             
             # Retry alert retrieval with exponential backoff (ZAP connection can be flaky)
+            # CRITICAL: When ZAP has many URLs (e.g., 27k+), alert retrieval can take a long time
+            # Use longer timeout and more retries for large scans
             max_retries = 5
             retry_delay = 2
             all_alerts = []
+            
+            # Check how many URLs ZAP has - if many, use longer timeout
+            try:
+                urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+                urls_count = len(urls_check.json().get("urls", []))
+                # If ZAP has many URLs, use longer timeout for alert retrieval
+                # Also use baseurl filter to reduce the number of alerts retrieved
+                if urls_count > 10000:
+                    alert_timeout = 120  # 2 minutes for very large scans
+                    use_baseurl_filter = True  # Use baseurl filter to reduce alerts
+                elif urls_count > 1000:
+                    alert_timeout = 90  # 90s for large scans
+                    use_baseurl_filter = True
+                else:
+                    alert_timeout = 60  # 60s for normal scans
+                    use_baseurl_filter = False
+                logger.info(f"ZAP has {urls_count} URLs in scan tree, using {alert_timeout}s timeout for alert retrieval (baseurl_filter={use_baseurl_filter})")
+            except:
+                alert_timeout = 60
+                use_baseurl_filter = False
+                logger.warning("Failed to check URL count, using default 60s timeout for alert retrieval")
+            
             for attempt in range(max_retries):
                 try:
-                    alerts_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/alerts/?apikey=", timeout=30)
+                    # Use baseurl filter if we have many URLs to reduce the number of alerts retrieved
+                    alerts_url = f"{zap_api_url}/JSON/core/view/alerts/"
+                    if use_baseurl_filter:
+                        # Filter by base URL to only get alerts for the target domain
+                        from urllib.parse import urlparse
+                        target_parsed = urlparse(target_url)
+                        target_base = f"{target_parsed.scheme}://{target_parsed.netloc}"
+                        alerts_url = f"{zap_api_url}/JSON/core/view/alerts/?baseurl={target_base}"
+                    alerts_url += "&apikey="
+                    alerts_response = await asyncio.to_thread(http_session.get, alerts_url, timeout=alert_timeout)
                     alerts_response.raise_for_status()
                     all_alerts = alerts_response.json().get("alerts", [])
                     logger.info(f"Successfully retrieved {len(all_alerts)} alerts from ZAP (attempt {attempt + 1})")
                     break
-                except (requests.exceptions.ConnectionError, requests.exceptions.ProtocolError, requests.exceptions.Timeout) as e:
+                except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.ReadTimeout) as e:
                     if attempt < max_retries - 1:
                         logger.warning(f"Failed to retrieve ZAP alerts (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
                         await asyncio.sleep(retry_delay)

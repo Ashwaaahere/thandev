@@ -69,6 +69,8 @@ check_tool "dalfox" "dalfox version"
 check_tool "nmap" "nmap --version"
 check_tool "sslscan" "sslscan --version"
 check_tool "sqlmap" "sqlmap --version"
+check_tool "retire" "retire --version"
+
 
 echo ""
 echo "=========================================="

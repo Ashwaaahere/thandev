@@ -69,7 +69,7 @@ soupsieve==2.8.1
 SQLAlchemy==2.0.35
 sqlmap==1.9.12
 starlette==0.37.2
--e git+ssh://git@github.com/Ashwaaahere/thandev.git@dce3bda9682e4b1f8b0d50f8739e32b8f5d4c060#egg=thandev_schemas&subdirectory=packages/thandev_schemas
+./thandev_schemas_pkg
 tqdm==4.67.1
 typing_extensions==4.15.0
 tzdata==2025.3

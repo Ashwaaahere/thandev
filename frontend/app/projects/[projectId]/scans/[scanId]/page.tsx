@@ -191,6 +191,7 @@ export default function ScanReportPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'findings' | 'tech-deps' | 'repo-deps' | 'ai-summary'>('overview');
   const [artifacts, setArtifacts] = useState<any>(null);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
+  const [currentTime, setCurrentTime] = useState(Date.now()); // For real-time timer updates
 
   // Poll for scan status updates when scan is running/queued
   useEffect(() => {
@@ -301,6 +302,16 @@ export default function ScanReportPage() {
       }
     };
   }, [scanId, session]);
+
+  // Update current time every second for real-time timer countdown
+  useEffect(() => {
+    if (scan?.status === 'running' && scan?.started_at) {
+      const interval = setInterval(() => {
+        setCurrentTime(Date.now());
+      }, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [scan?.status, scan?.started_at]);
 
   // Load tools data
   useEffect(() => {
@@ -1596,9 +1607,9 @@ export default function ScanReportPage() {
 
             {/* Progress Indicator - Show when scan is running */}
             {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
-              // Calculate estimated time remaining
-              const getEstimatedTimeRemaining = (progressPct: number | null | undefined) => {
-                if (!scan.started_at || progressPct === null || progressPct === undefined || progressPct === 0) {
+              // Calculate timeout remaining (max timeout - elapsed time)
+              const getTimeoutRemaining = () => {
+                if (!scan.started_at) {
                   return null;
                 }
 
@@ -1611,37 +1622,26 @@ export default function ScanReportPage() {
 
                 const maxTimeout = maxTimeouts[scan.scan_level?.toLowerCase() || 'pro'] || 3600;
                 const startedAt = new Date(scan.started_at).getTime();
-                const now = Date.now();
+                const now = currentTime; // Use currentTime state for real-time updates
                 const elapsedSeconds = (now - startedAt) / 1000;
-                const progress = progressPct / 100;
+                const remainingSeconds = Math.max(0, maxTimeout - elapsedSeconds);
 
-                if (progress === 0 || elapsedSeconds === 0) {
-                  return null;
+                if (remainingSeconds <= 0) {
+                  return 'Timeout reached';
                 }
 
-                // Estimate: if we've done X% in Y seconds, total time = Y / X
-                const estimatedTotalSeconds = elapsedSeconds / progress;
-                const remainingSeconds = Math.max(0, estimatedTotalSeconds - elapsedSeconds);
-                
-                // Cap at max timeout
-                const maxRemaining = maxTimeout - elapsedSeconds;
-                const finalRemaining = Math.min(remainingSeconds, maxRemaining);
+                const minutes = Math.floor(remainingSeconds / 60);
+                const hours = Math.floor(minutes / 60);
+                const remainingMinutes = minutes % 60;
 
-                if (finalRemaining <= 0) {
-                  return 'Less than a minute';
+                if (hours > 0) {
+                  return `${hours}h ${remainingMinutes}m`;
                 }
-
-                const minutes = Math.floor(finalRemaining / 60);
-                const seconds = Math.floor(finalRemaining % 60);
-
-                if (minutes > 0) {
-                  return `${minutes}m ${seconds}s`;
-                }
-                return `${seconds}s`;
+                return `${minutes}m`;
               };
 
               const progressPct = scan.progress_pct ?? 0;
-              const timeRemaining = getEstimatedTimeRemaining(progressPct);
+              const timeRemaining = getTimeoutRemaining();
 
               return (
                 <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
@@ -1653,7 +1653,7 @@ export default function ScanReportPage() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
                         <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                          ~{timeRemaining} left
+                          {timeRemaining} left
                         </span>
                       </div>
                     )}
@@ -1724,7 +1724,7 @@ export default function ScanReportPage() {
                 {/* Fallback if progress_pct not available */}
                 {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (() => {
                   const fallbackProgress = (scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100;
-                  const fallbackTimeRemaining = getEstimatedTimeRemaining(fallbackProgress);
+                  const fallbackTimeRemaining = getTimeoutRemaining();
                   
                   return (
                     <>
@@ -1734,7 +1734,7 @@ export default function ScanReportPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                           <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                            ~{fallbackTimeRemaining} left
+                            {fallbackTimeRemaining} left
                           </span>
                         </div>
                       )}

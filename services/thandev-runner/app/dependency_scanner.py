@@ -86,10 +86,10 @@ async def run_url_sca_job(
             technologies = await run_wappalyzer(target_url)
             fingerprint["technologies"] = technologies
             wappalyzer_success = True
-        except FileNotFoundError:
-            logger.warning("wappalyzer CLI not found, skipping technology detection")
+        except FileNotFoundError as e:
+            logger.warning(f"Technology detection failed: {e}")
             tools_missing.append("wappalyzer")
-            wappalyzer_error = "wappalyzer CLI not found"
+            wappalyzer_error = str(e)
         except Exception as e:
             logger.warning(f"Wappalyzer failed: {e}")
             wappalyzer_error = str(e)
@@ -340,138 +340,60 @@ def extract_title(html: str) -> str:
 
 
 async def run_wappalyzer(target_url: str) -> List[Dict[str, Any]]:
-    """Run Wappalyzer to identify technologies."""
+    """
+    Detect technologies on target URL.
+    
+    Note: Wappalyzer npm packages are deprecated as of 2024. Using httpx tech-detect instead.
+    """
     technologies = []
     
-    # Try multiple wappalyzer command options
-    # Order: wrapper script -> CLI -> direct driver -> cli.js
-    wappalyzer_commands = [
-        ["node", "/usr/local/bin/wappalyzer-cli.js", target_url, "--json"],  # Wrapper script (if exists)
-        ["wappalyzer", target_url, "--json"],  # Try CLI symlink
-        ["node", "/usr/lib/node_modules/wappalyzer/cli.js", target_url, "--json"],  # Built-in CLI
-        ["node", "/usr/lib/node_modules/wappalyzer/driver.js", target_url, "--json"],  # Direct driver
-        ["node", "/usr/local/lib/node_modules/wappalyzer/driver.js", target_url, "--json"],  # Alternative location
-    ]
-    
-    wappalyzer_found = False
-    last_error = None
-    last_stderr = None
-    
-    for cmd in wappalyzer_commands:
-        try:
-            logger.debug(f"Trying wappalyzer command: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=120,  # Increased timeout for browser-based detection (Puppeteer needs time)
-            )
-            
-            # Check stdout first (wrapper script outputs JSON to stdout even on error)
-            output = result.stdout.strip() if result.stdout else ""
-            stderr_output = result.stderr.strip() if result.stderr else ""
-            
-            if stderr_output:
-                logger.debug(f"Wappalyzer stderr: {stderr_output[:200]}")
-                last_stderr = stderr_output
-            
-            if output:
-                try:
-                    data = json.loads(output)
-                    # Check if there's an error in the response
-                    if data.get("error"):
-                        error_msg = data.get("error")
-                        logger.debug(f"Wappalyzer returned error in JSON: {error_msg}, trying next command")
-                        last_error = error_msg
-                        continue
-                    
-                    tech_list = data.get("technologies", [])
-                    if isinstance(tech_list, list):
-                        # Even if empty, we found wappalyzer and it ran successfully
-                        wappalyzer_found = True
-                        for tech in tech_list:
-                            tech_name = tech.get("name", "")
-                            if tech_name:
-                                technologies.append({
-                                    "name": tech_name,
-                                    "version": tech.get("version"),
-                                    "confidence": tech.get("confidence", 0) / 100.0 if tech.get("confidence") else 0.8,
-                                })
-                        logger.info(f"wappalyzer found {len(technologies)} technologies")
-                        break
-                except json.JSONDecodeError as e:
-                    logger.debug(f"Wappalyzer returned invalid JSON: {e}, output: {output[:200]}")
-                    last_error = f"Invalid JSON: {e}"
-                    continue
-            
-            # If no stdout but exit code is 0, might still be success (empty result)
-            if result.returncode == 0:
-                logger.debug(f"Wappalyzer exited with code 0 but no output, treating as success (no technologies found)")
-                wappalyzer_found = True
-                break
-            else:
-                error_msg = stderr_output or "Unknown error"
-                logger.debug(f"wappalyzer command failed (exit {result.returncode}): {error_msg}, trying next")
-                last_error = error_msg
-                continue
-                
-        except FileNotFoundError:
-            logger.debug(f"wappalyzer command not found: {' '.join(cmd)}, trying next")
-            last_error = f"Command not found: {' '.join(cmd)}"
-            continue
-        except subprocess.TimeoutExpired:
-            logger.warning(f"wappalyzer command timed out: {' '.join(cmd)}, trying next")
-            last_error = "Command timed out after 120 seconds"
-            continue
-        except Exception as e:
-            logger.debug(f"wappalyzer command error: {e}, trying next")
-            last_error = str(e)
-            continue
-    
-    if not wappalyzer_found:
-        # Fallback: Use httpx tech-detect as alternative
-        logger.info("wappalyzer not available, falling back to httpx tech-detect")
-        try:
-            result = subprocess.run(
-                ["httpx", "-u", target_url, "-tech-detect", "-json", "-silent"],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            
-            if result.returncode == 0 and result.stdout:
-                try:
-                    data = json.loads(result.stdout.strip())
-                    tech_detected = data.get("tech", [])
-                    if isinstance(tech_detected, list):
-                        for tech_item in tech_detected:
-                            if isinstance(tech_item, str):
-                                technologies.append({
-                                    "name": tech_item,
-                                    "version": None,
-                                    "confidence": 0.7,  # Lower confidence for httpx detection
-                                })
-                            elif isinstance(tech_item, dict):
-                                technologies.append({
-                                    "name": tech_item.get("name", tech_item.get("value", "")),
-                                    "version": tech_item.get("version"),
-                                    "confidence": 0.7,
-                                })
-                        logger.info(f"httpx tech-detect found {len(technologies)} technologies as fallback")
-                except json.JSONDecodeError:
-                    pass
-        except Exception as e:
-            logger.debug(f"httpx tech-detect fallback also failed: {e}")
+    # Use httpx tech-detect as primary method (wappalyzer npm packages are all deprecated)
+    logger.info("Using httpx tech-detect for technology detection (wappalyzer is deprecated)")
+    try:
+        result = subprocess.run(
+            ["httpx", "-u", target_url, "-tech-detect", "-json", "-silent"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
         
-        # If all methods failed, raise error
-        error_msg = f"wappalyzer CLI not found or not working"
-        if last_error:
-            error_msg += f" (last error: {last_error})"
-        if last_stderr:
-            error_msg += f" (stderr: {last_stderr[:100]})"
-        raise FileNotFoundError(error_msg)
+        if result.returncode == 0 and result.stdout:
+            try:
+                data = json.loads(result.stdout.strip())
+                tech_detected = data.get("tech", [])
+                if isinstance(tech_detected, list):
+                    for tech_item in tech_detected:
+                        if isinstance(tech_item, str):
+                            technologies.append({
+                                "name": tech_item,
+                                "version": None,
+                                "confidence": 0.8,
+                            })
+                        elif isinstance(tech_item, dict):
+                            technologies.append({
+                                "name": tech_item.get("name", tech_item.get("value", "")),
+                                "version": tech_item.get("version"),
+                                "confidence": 0.8,
+                            })
+                    logger.info(f"httpx tech-detect found {len(technologies)} technologies")
+            except json.JSONDecodeError as e:
+                logger.warning(f"httpx returned invalid JSON: {e}")
+                raise FileNotFoundError("httpx tech-detect failed to parse output")
+        else:
+            stderr = result.stderr.strip() if result.stderr else ""
+            logger.warning(f"httpx tech-detect failed (exit {result.returncode}): {stderr}")
+            raise FileNotFoundError(f"httpx tech-detect failed with exit code {result.returncode}")
+    except subprocess.TimeoutExpired:
+        logger.warning("httpx tech-detect timed out after 30 seconds")
+        raise FileNotFoundError("httpx tech-detect timed out")
+    except FileNotFoundError:
+        raise  # Re-raise if httpx binary not found
+    except Exception as e:
+        logger.error(f"httpx tech-detect error: {e}")
+        raise FileNotFoundError(f"Technology detection failed: {e}")
     
     return technologies
+
 
 
 async def run_retire_js(target_url: str) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:

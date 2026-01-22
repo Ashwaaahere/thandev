@@ -197,9 +197,12 @@ def _run_single_tool(
             "scan_job_id": scan_job.id,
             "tool_run_id": tool_run_id,
             "timeout_seconds": timeout_seconds,
+            "scan_level": scan_job.scan_level.value,  # Log scan level context
             "started_at": tool_start_time.isoformat(),
         }
     )
+    # Explicitly log timeout and scan level for easier debugging in standard logs
+    logger.info(f"Running tool {result_tool_name} with timeout {timeout_seconds}s for scan level {scan_job.scan_level.value}")
     
     # Initialize result dict for exception handling
     result = {}
