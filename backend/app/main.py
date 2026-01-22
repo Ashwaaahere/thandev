@@ -16,14 +16,15 @@ from sqlalchemy.exc import ProgrammingError
 
 from app.core.config import settings
 from app.core.database import engine, Base
-from app.api import projects, scans, tenants, users, metrics, findings, performance, notifications, admin, access
+from app.api import projects, scans, tenants, users, metrics, performance, notifications, admin, access
 from app.api import findings_batch
 from app.api import auth_bootstrap
 from app.api import domain_verifications
 from app.api import stats
 from app.api import runner_ingest
+from app.api.runner_ingest import callback_router
 from app.api import integrations
-from app.api import runner_callback
+from app.api import cve
 
 # Load environment variables
 load_dotenv()
@@ -493,7 +494,6 @@ app.include_router(scans.router, prefix=settings.API_V1_PREFIX)
 app.include_router(tenants.router, prefix=settings.API_V1_PREFIX)
 app.include_router(users.router, prefix=settings.API_V1_PREFIX)
 app.include_router(metrics.router, prefix=settings.API_V1_PREFIX)
-app.include_router(findings.router, prefix=settings.API_V1_PREFIX)
 app.include_router(findings_batch.router, prefix=settings.API_V1_PREFIX)
 app.include_router(performance.router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications.router, prefix=settings.API_V1_PREFIX)
@@ -503,10 +503,11 @@ app.include_router(access.router, prefix=settings.API_V1_PREFIX)
 app.include_router(domain_verifications.router, prefix=settings.API_V1_PREFIX)
 app.include_router(stats.router, prefix=settings.API_V1_PREFIX)
 app.include_router(integrations.router, prefix=settings.API_V1_PREFIX)
+app.include_router(cve.router, prefix=settings.API_V1_PREFIX)
 # Runner service endpoints - moved from /api/internal to /api/runner to avoid Fly.io proxy blocking
 # Still requires Bearer token authentication via require_runner_service_auth
 app.include_router(runner_ingest.router, prefix="/api/runner")
-app.include_router(runner_callback.router, prefix="/api")
+app.include_router(callback_router, prefix="/api/runner")
 
 
 # Custom OpenAPI schema

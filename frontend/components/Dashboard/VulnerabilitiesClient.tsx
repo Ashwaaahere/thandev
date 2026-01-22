@@ -316,8 +316,10 @@ export default function VulnerabilitiesClient({
         );
         
         if (!cancelled) {
-          setFindings(data.items);
-          setTotal(data.total);
+          // Handle empty results gracefully - not an error
+          setFindings(data.items || []);
+          setTotal(data.total || 0);
+          setError(null); // Clear any previous errors on successful response
           
           // Compute tool counts from all findings (not just current page)
           // Only fetch counts when filters change (not on pagination)
@@ -357,7 +359,22 @@ export default function VulnerabilitiesClient({
       } catch (e) {
         console.error('Error loading findings:', e);
         if (!cancelled) {
-          setError(e instanceof Error ? e.message : 'Failed to load vulnerabilities');
+          // Only show error if it's not a "Not Found" or empty result - those are normal
+          const errorMessage = e instanceof Error ? e.message : 'Failed to load vulnerabilities';
+          // Don't show "Not Found" errors or 404s - empty results are normal, not errors
+          const isNotFoundError = errorMessage.toLowerCase().includes('not found') || 
+                                  errorMessage.toLowerCase().includes('404') ||
+                                  errorMessage.toLowerCase().includes('no findings');
+          
+          if (isNotFoundError) {
+            // Silently handle not found - just show empty state (this is normal, not an error)
+            setFindings([]);
+            setTotal(0);
+            setError(null);
+          } else {
+            // Only show real errors (network issues, auth failures, etc.)
+            setError(errorMessage);
+          }
         }
       } finally {
         if (!cancelled) {

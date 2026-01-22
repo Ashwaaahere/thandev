@@ -68,7 +68,7 @@ export default function TechDependenciesPanel({ artifact, loading }: TechDepende
     return (
       <div className="p-6 rounded-lg border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
         <p className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
-          ℹ️ Externally observable only. Backend dependencies require repo connection.
+          ℹ️ Externally observable only. Backend dependencies require repo connection <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>(coming soon)</span>.
         </p>
         <p className="text-sm" style={{ color: 'var(--muted)' }}>
           No dependency scan results available for this scan.
@@ -87,7 +87,7 @@ export default function TechDependenciesPanel({ artifact, loading }: TechDepende
       {/* Disclaimer */}
       <div className="p-4 rounded-lg border bg-yellow-50 dark:bg-yellow-900/20" style={{ borderColor: 'var(--border)' }}>
         <p className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-          ℹ️ Externally observable only. Backend dependencies require repo connection.
+          ℹ️ Externally observable only. Backend dependencies require repo connection <span style={{ color: 'var(--muted)', fontStyle: 'italic' }}>(coming soon)</span>.
         </p>
       </div>
 

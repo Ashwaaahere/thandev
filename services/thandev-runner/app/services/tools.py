@@ -1180,10 +1180,10 @@ class ToolExecutor:
             raise ValueError(f"Invalid URL: {target_url}")
         
         # Determine scan intensity based on level
-        # OPTIMIZED: Reduced port counts to prevent timeouts while maintaining good coverage
+        # OPTIMIZED: Reduced port counts and script usage to prevent timeouts
         # - Basic: Top 50 ports (fast, covers ~80% of common services)
-        # - Pro: Top 100 ports (balanced, covers ~95% of common services)
-        # - Advanced: Top 500 ports (comprehensive, covers ~99% of services)
+        # - Pro: Top 100 ports (balanced, covers ~95% of common services) - NO scripts for speed
+        # - Advanced: Top 500 ports (comprehensive, covers ~99% of services) - scripts enabled
         scan_map = {
             "basic": [
                 "-sT",              # TCP connect scan (no root needed)
@@ -1196,25 +1196,26 @@ class ToolExecutor:
             "pro": [
                 "-sT",              # TCP connect scan
                 "-Pn",              # Skip host discovery
-                "--top-ports", "100",  # Reduced from 1000 (critical fix!)
+                "--top-ports", "100",  # Top 100 ports (balanced coverage)
                 "-sV",              # Version detection
-                "--version-intensity", "3",  # Medium version probing
-                "-sC",              # Default scripts
+                "--version-intensity", "2",  # Light version probing (reduced from 3 for speed)
+                # REMOVED -sC: Default scripts are VERY slow (can add 5-10 minutes)
+                # Scripts are useful but not critical for PRO scans - can be enabled in ADVANCED
                 "-T4",              # Aggressive timing
             ],
             "advanced": [
                 "-sT",              # TCP connect scan
                 "-Pn",              # Skip host discovery
-                "--top-ports", "500",  # Reduced from 10000
+                "--top-ports", "500",  # Top 500 ports (comprehensive)
                 "-sV",              # Version detection
-                "--version-intensity", "5",  # Thorough version probing
-                "-sC",              # Default scripts
-                "-A",               # Enable OS detection, traceroute
+                "--version-intensity", "4",  # Medium-high version probing (reduced from 5)
+                "-sC",              # Default scripts (enabled for advanced only)
                 "-T4",              # Aggressive timing
             ],
         }
         
         scan_args = scan_map.get(scan_level, scan_map["basic"])
+        logger.info(f"nmap scan args for {scan_level} level: {' '.join(scan_args)}")
         
         cmd = ["nmap", "-oX", "-"] + scan_args + [hostname]
         
@@ -1447,7 +1448,9 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        # Default to 30 seconds for httpx (fast tool), not 300 seconds
+        timeout_seconds = kwargs.get("timeout_seconds", 30)
+        logger.info(f"httpx timeout for scan {scan_job_id}: {timeout_seconds}s (scan_level={scan_level})")
         
         try:
             result = await asyncio.to_thread(subprocess.run,
@@ -3274,27 +3277,53 @@ class ToolExecutor:
             alerts = []
         
         # Convert ZAP alerts to findings format
+        # Deduplicate by (alert_name, url) to avoid repeated findings
+        seen_alerts = set()
         findings = []
+        
         for alert in alerts:
-            # Map ZAP severity to Thandev severity
-            severity_map = {
-                "0": "info",      # Informational
-                "1": "low",       # Low
-                "2": "medium",    # Medium
-                "3": "high",      # High
-                "4": "critical",  # Critical
-            }
-            severity = severity_map.get(alert.get("riskcode"), "info")
+            # Get riskcode (ZAP uses integer: 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
+            riskcode = alert.get("riskcode")
+            if riskcode is None:
+                severity = "info"
+            else:
+                # Handle both integer and string riskcodes
+                if isinstance(riskcode, str):
+                    riskcode = int(riskcode) if riskcode.isdigit() else 0
+                elif not isinstance(riskcode, int):
+                    riskcode = 0
+                
+                # Map ZAP riskcode to severity
+                severity_map = {
+                    0: "info",      # Informational
+                    1: "low",        # Low
+                    2: "medium",     # Medium
+                    3: "high",       # High
+                    4: "critical",   # Critical
+                }
+                severity = severity_map.get(riskcode, "info")
+            
+            # Create unique key for deduplication: (alert_name, url)
+            alert_name = alert.get("alert", "")
+            alert_url = alert.get("url", "")
+            dedup_key = (alert_name, alert_url)
+            
+            # Skip if we've already seen this alert+URL combination
+            if dedup_key in seen_alerts:
+                logger.debug(f"Skipping duplicate ZAP alert: {alert_name} on {alert_url[:100]}")
+                continue
+            
+            seen_alerts.add(dedup_key)
             
             findings.append({
                 "tool_id": "zap",
-                "title": alert.get("alert"),
+                "title": alert_name,
                 "severity": severity,
                 "description": alert.get("description"),
                 "evidence": alert.get("solution"),
-                "url": alert.get("url"),
-                "host": urlparse(alert.get("url")).hostname,
-                "port": urlparse(alert.get("url")).port,
+                "url": alert_url,
+                "host": urlparse(alert_url).hostname if alert_url else None,
+                "port": urlparse(alert_url).port if alert_url else None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "raw": json.dumps(alert),
             })
@@ -3428,9 +3457,21 @@ class ToolExecutor:
                 "timed_out": False,
             }
         
-        # Get timeout from kwargs or default to 900 seconds (15 minutes)
-        # Increase timeout if we have many URLs
-        base_timeout = kwargs.get("timeout_seconds", 300)
+        # Get timeout from kwargs
+        # For advanced scans, default to 2400s (40 minutes) to match scan_timeouts.py
+        # For other scan levels, default to 300s (5 minutes)
+        if scan_level == "advanced":
+            default_timeout = 2400  # 40 minutes for advanced scans
+        else:
+            default_timeout = 300  # 5 minutes for basic/pro scans
+        
+        base_timeout = kwargs.get("timeout_seconds", default_timeout)
+        
+        # Log the timeout being used
+        if base_timeout != default_timeout:
+            logger.info(f"SQLMap: Using timeout_seconds={base_timeout}s from params for scan {scan_job_id} (scan_level={scan_level})")
+        else:
+            logger.info(f"SQLMap: Using default timeout of {base_timeout}s (40 minutes) for advanced scan {scan_job_id}")
         timeout = base_timeout
         if parameterized_urls:
             timeout = max(base_timeout, len(parameterized_urls) * 60) # 1 min per URL minimum
@@ -3972,7 +4013,9 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        # Default to 30 seconds for httpx (fast tool), not 300 seconds
+        timeout_seconds = kwargs.get("timeout_seconds", 30)
+        logger.info(f"httpx timeout for scan {scan_job_id}: {timeout_seconds}s (scan_level={scan_level})")
         
         try:
             result = await asyncio.to_thread(subprocess.run,
@@ -4555,7 +4598,9 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        # Default to 30 seconds for httpx (fast tool), not 300 seconds
+        timeout_seconds = kwargs.get("timeout_seconds", 30)
+        logger.info(f"httpx timeout for scan {scan_job_id}: {timeout_seconds}s (scan_level={scan_level})")
         
         try:
             result = await asyncio.to_thread(subprocess.run,
@@ -5129,7 +5174,9 @@ class ToolExecutor:
         logger.info("httpx command for scan %s: %s", scan_job_id, " ".join(cmd))
         
         # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        # Default to 30 seconds for httpx (fast tool), not 300 seconds
+        timeout_seconds = kwargs.get("timeout_seconds", 30)
+        logger.info(f"httpx timeout for scan {scan_job_id}: {timeout_seconds}s (scan_level={scan_level})")
         
         try:
             result = await asyncio.to_thread(subprocess.run,

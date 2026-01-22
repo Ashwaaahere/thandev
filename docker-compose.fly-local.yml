@@ -137,4 +137,3 @@ services:
 volumes:
   postgres_data:
   qdrant_data:
-

@@ -67,7 +67,9 @@ export default function CVEDetailPage() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
-        let data: FindingsResponse;
+        let data: FindingsResponse | null = null;
+        let cveFindings: FindingListItem[] = [];
+        
         try {
           // Use cve_id parameter for exact match instead of search
           data = await thandevFetchJSON<FindingsResponse>(
@@ -76,114 +78,220 @@ export default function CVEDetailPage() {
             { signal: controller.signal }
           );
           clearTimeout(timeoutId);
+          
+          // Backend should already filter by exact CVE ID, but double-check for safety
+          cveFindings = data.items.filter(
+            (finding) => finding.cve_id && finding.cve_id.toUpperCase() === cveId.toUpperCase()
+          );
+          setFindings(cveFindings);
         } catch (fetchError) {
           clearTimeout(timeoutId);
           
           // Check if it's a timeout/abort error
           if (fetchError instanceof Error && (fetchError.name === 'AbortError' || fetchError.message.includes('timeout') || fetchError.message.includes('aborted'))) {
-            setError('Request timed out. There may be too many findings. Please try again or contact support.');
-            setLoading(false);
-            return;
-          }
-          
-          // For other errors, try fallback with smaller limit
-          const fallbackController = new AbortController();
-          const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 15000); // 15 second timeout for fallback
-          try {
-          data = await thandevFetchJSON<FindingsResponse>(
-              `/api/findings?limit=100&cve_id=${encodeURIComponent(cveId)}`,
-              session,
-              { signal: fallbackController.signal }
-            );
-            clearTimeout(fallbackTimeoutId);
-          } catch (fallbackError) {
-            clearTimeout(fallbackTimeoutId);
-            console.error('Error loading CVE findings:', fallbackError);
-            setError('Failed to load vulnerability details. The CVE may not have any associated findings.');
-            setLoading(false);
-            return;
-          }
-        }
-
-        // Backend should already filter by exact CVE ID, but double-check for safety
-        const cveFindings = data.items.filter(
-          (finding) => finding.cve_id && finding.cve_id.toUpperCase() === cveId.toUpperCase()
-        );
-
-        setFindings(cveFindings);
-        
-        if (cveFindings.length === 0) {
-          setError(`No findings found for ${cveId.toUpperCase()}. This CVE may not be present in any scans.`);
-        }
-
-        // Fetch CVE details from NVD API
-        try {
-          const nvdResponse = await fetch(
-            `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId.toUpperCase())}`,
-            {
-              headers: {
-                'Accept': 'application/json',
-              },
-              signal: AbortSignal.timeout(10000), // 10 second timeout
+            // Don't set error yet - try NVD API first
+            console.warn('Findings API timed out, will try NVD API');
+          } else {
+            // For other errors, try fallback with smaller limit
+            const fallbackController = new AbortController();
+            const fallbackTimeoutId = setTimeout(() => fallbackController.abort(), 15000); // 15 second timeout for fallback
+            try {
+              data = await thandevFetchJSON<FindingsResponse>(
+                `/api/findings?limit=100&cve_id=${encodeURIComponent(cveId)}`,
+                session,
+                { signal: fallbackController.signal }
+              );
+              clearTimeout(fallbackTimeoutId);
+              
+              // Backend should already filter by exact CVE ID, but double-check for safety
+              cveFindings = data.items.filter(
+                (finding) => finding.cve_id && finding.cve_id.toUpperCase() === cveId.toUpperCase()
+              );
+              setFindings(cveFindings);
+            } catch (fallbackError) {
+              clearTimeout(fallbackTimeoutId);
+              console.warn('Error loading CVE findings from API, will try NVD API:', fallbackError);
+              // Don't set error yet - continue to try NVD API
+              setFindings([]);
             }
+          }
+        }
+        
+        // Don't set error if no findings - we'll check NVD API first
+        // Only show error if both findings AND NVD data are missing
+
+        // Fetch CVE details from NVD API via backend proxy (to avoid CORS issues)
+        let nvdDataFound = false;
+        try {
+          // Use backend proxy endpoint to avoid CORS issues
+          const nvdResponse = await thandevFetchJSON<{
+            vulnerabilities?: Array<{
+              cve: {
+                descriptions?: Array<{ lang: string; value: string }>;
+                metrics?: {
+                  cvssMetricV31?: Array<{ cvssData: { baseScore: number; baseSeverity: string } }>;
+                  cvssMetricV30?: Array<{ cvssData: { baseScore: number; baseSeverity: string } }>;
+                  cvssMetricV2?: Array<{ cvssData: { baseScore: number }; baseSeverity: string }>;
+                };
+                published?: string;
+                references?: Array<{ url: string }>;
+              };
+            }>;
+            totalResults?: number;
+          }>(
+            `/api/cve/${encodeURIComponent(cveId.toUpperCase())}`,
+            session,
+            { signal: AbortSignal.timeout(15000) } // 15 second timeout
           );
           
-          if (nvdResponse.ok) {
-            const nvdData = await nvdResponse.json();
-            if (nvdData.vulnerabilities && nvdData.vulnerabilities.length > 0) {
-              const cveItem = nvdData.vulnerabilities[0].cve;
-              
-              // Extract description
-              let description = '';
-              if (cveItem.descriptions) {
-                const enDesc = cveItem.descriptions.find((d: any) => d.lang === 'en');
-                if (enDesc) {
-                  description = enDesc.value;
+          if (nvdResponse.vulnerabilities && nvdResponse.vulnerabilities.length > 0) {
+            nvdDataFound = true;
+            const cveItem = nvdResponse.vulnerabilities[0].cve;
+            
+            // Extract description
+            let description = '';
+            if (cveItem.descriptions) {
+              const enDesc = cveItem.descriptions.find((d: any) => d.lang === 'en');
+              if (enDesc) {
+                description = enDesc.value;
+              }
+            }
+            
+            // Extract CVSS score - prioritize V3.1, then V3.0, then V2
+            let cvssScore: number | undefined;
+            let cvssSeverity: string | undefined;
+            if (cveItem.metrics?.cvssMetricV31?.[0]) {
+              const cvss = cveItem.metrics.cvssMetricV31[0];
+              cvssScore = cvss.cvssData.baseScore;
+              cvssSeverity = cvss.cvssData.baseSeverity;
+            } else if (cveItem.metrics?.cvssMetricV30?.[0]) {
+              const cvss = cveItem.metrics.cvssMetricV30[0];
+              cvssScore = cvss.cvssData.baseScore;
+              cvssSeverity = cvss.cvssData.baseSeverity;
+            } else if (cveItem.metrics?.cvssMetricV2?.[0]) {
+              const cvss = cveItem.metrics.cvssMetricV2[0];
+              cvssScore = cvss.cvssData.baseScore;
+              cvssSeverity = cvss.baseSeverity;
+            }
+            
+            // Extract published date
+            const publishedDate = cveItem.published;
+            
+            // Extract references
+            const references: string[] = [];
+            if (cveItem.references) {
+              cveItem.references.forEach((ref: any) => {
+                if (ref.url) {
+                  references.push(ref.url);
                 }
-              }
-              
-              // Extract CVSS score
-              let cvssScore: number | undefined;
-              let cvssSeverity: string | undefined;
-              if (cveItem.metrics?.cvssMetricV31?.[0]) {
-                const cvss = cveItem.metrics.cvssMetricV31[0];
-                cvssScore = cvss.cvssData.baseScore;
-                cvssSeverity = cvss.cvssData.baseSeverity;
-              } else if (cveItem.metrics?.cvssMetricV30?.[0]) {
-                const cvss = cveItem.metrics.cvssMetricV30[0];
-                cvssScore = cvss.cvssData.baseScore;
-                cvssSeverity = cvss.cvssData.baseSeverity;
-              } else if (cveItem.metrics?.cvssMetricV2?.[0]) {
-                const cvss = cveItem.metrics.cvssMetricV2[0];
-                cvssScore = cvss.cvssData.baseScore;
-                cvssSeverity = cvss.baseSeverity;
-              }
-              
-              // Extract published date
-              const publishedDate = cveItem.published;
-              
-              // Extract references
-              const references: string[] = [];
-              if (cveItem.references) {
-                cveItem.references.forEach((ref: any) => {
-                  if (ref.url) {
-                    references.push(ref.url);
-                  }
-                });
-              }
-              
-              setCveDetails({
-                description,
-                cvssScore,
-                cvssSeverity,
-                publishedDate,
-                references: references.slice(0, 10), // Limit to first 10 references
               });
             }
+            
+            const cveDetailsData = {
+              description,
+              cvssScore,
+              cvssSeverity,
+              publishedDate,
+              references: references.slice(0, 10), // Limit to first 10 references
+            };
+            
+            console.log('Setting CVE details from NVD:', cveDetailsData);
+            setCveDetails(cveDetailsData);
+          } else {
+            console.warn('NVD response has no vulnerabilities:', nvdResponse);
           }
         } catch (nvdError) {
-          console.warn('Failed to fetch CVE details from NVD:', nvdError);
-          // Don't fail the page if NVD API fails, just continue without CVE details
+          console.error('Failed to fetch CVE details from NVD via backend proxy:', nvdError);
+          console.error('Error details:', {
+            message: nvdError instanceof Error ? nvdError.message : String(nvdError),
+            name: nvdError instanceof Error ? nvdError.name : 'Unknown',
+            stack: nvdError instanceof Error ? nvdError.stack : undefined,
+          });
+          // Try direct NVD API as fallback (may fail due to CORS, but worth trying)
+          try {
+            const directNvdResponse = await fetch(
+              `https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${encodeURIComponent(cveId.toUpperCase())}`,
+              {
+                headers: {
+                  'Accept': 'application/json',
+                },
+                signal: AbortSignal.timeout(10000),
+              }
+            );
+            
+            if (directNvdResponse.ok) {
+              const nvdData = await directNvdResponse.json();
+              if (nvdData.vulnerabilities && nvdData.vulnerabilities.length > 0) {
+                nvdDataFound = true;
+                const cveItem = nvdData.vulnerabilities[0].cve;
+                
+                // Extract description
+                let description = '';
+                if (cveItem.descriptions) {
+                  const enDesc = cveItem.descriptions.find((d: any) => d.lang === 'en');
+                  if (enDesc) {
+                    description = enDesc.value;
+                  }
+                }
+                
+                // Extract CVSS score
+                let cvssScore: number | undefined;
+                let cvssSeverity: string | undefined;
+                if (cveItem.metrics?.cvssMetricV31?.[0]) {
+                  const cvss = cveItem.metrics.cvssMetricV31[0];
+                  cvssScore = cvss.cvssData.baseScore;
+                  cvssSeverity = cvss.cvssData.baseSeverity;
+                } else if (cveItem.metrics?.cvssMetricV30?.[0]) {
+                  const cvss = cveItem.metrics.cvssMetricV30[0];
+                  cvssScore = cvss.cvssData.baseScore;
+                  cvssSeverity = cvss.cvssData.baseSeverity;
+                } else if (cveItem.metrics?.cvssMetricV2?.[0]) {
+                  const cvss = cveItem.metrics.cvssMetricV2[0];
+                  cvssScore = cvss.cvssData.baseScore;
+                  cvssSeverity = cvss.baseSeverity;
+                }
+                
+                // Extract published date
+                const publishedDate = cveItem.published;
+                
+                // Extract references
+                const references: string[] = [];
+                if (cveItem.references) {
+                  cveItem.references.forEach((ref: any) => {
+                    if (ref.url) {
+                      references.push(ref.url);
+                    }
+                  });
+                }
+                
+                setCveDetails({
+                  description,
+                  cvssScore,
+                  cvssSeverity,
+                  publishedDate,
+                  references: references.slice(0, 10),
+                });
+              }
+            }
+          } catch (directNvdError) {
+            console.warn('Direct NVD API call also failed:', directNvdError);
+            // Don't fail the page if NVD API fails, just continue without CVE details
+          }
+        }
+        
+        // Only set error if both findings AND NVD data are missing
+        if (cveFindings.length === 0 && !nvdDataFound) {
+          setError(`No findings found for ${cveId.toUpperCase()}. This CVE may not be present in any scans, and NVD data could not be loaded.`);
+        } else {
+          // Clear any previous errors if we have either findings or NVD data
+          if (cveFindings.length > 0 || nvdDataFound) {
+            setError(null);
+          }
+          if (cveFindings.length === 0 && nvdDataFound) {
+            // If we have NVD data but no findings, just log info (not an error)
+            // The page will still display the CVE details from NVD
+            console.info(`No findings found for ${cveId.toUpperCase()}, but NVD data is available.`);
+          }
         }
       } catch (e) {
         console.error('Error loading CVE findings:', e);
@@ -210,7 +318,9 @@ export default function CVEDetailPage() {
     );
   }
 
-  if (error || !cveId) {
+  // Only show error page if we have an error AND no CVE details from NVD
+  // If we have CVE details from NVD, show the page even if there are no findings
+  if ((error && !cveDetails) || !cveId) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: 'var(--bg)' }}>
         <div className="text-center max-w-md">
@@ -243,19 +353,23 @@ export default function CVEDetailPage() {
     {} as Record<string, number>
   );
 
-  const maxSeverity = uniqueFindings.reduce((max, f) => {
-    const severityOrder = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
-    return severityOrder[f.severity as keyof typeof severityOrder] >
-      severityOrder[max.severity as keyof typeof severityOrder]
-      ? f
-      : max;
-  }, uniqueFindings[0]);
+  const maxSeverity = uniqueFindings.length > 0
+    ? uniqueFindings.reduce((max, f) => {
+        const severityOrder = { critical: 5, high: 4, medium: 3, low: 2, info: 1 };
+        return severityOrder[f.severity as keyof typeof severityOrder] >
+          severityOrder[max.severity as keyof typeof severityOrder]
+          ? f
+          : max;
+      }, uniqueFindings[0])
+    : null;
 
   const avgCvssScore =
-    uniqueFindings
-      .filter((f) => f.cvss_score != null)
-      .reduce((sum, f) => sum + (f.cvss_score || 0), 0) /
-    uniqueFindings.filter((f) => f.cvss_score != null).length;
+    uniqueFindings.filter((f) => f.cvss_score != null).length > 0
+      ? uniqueFindings
+          .filter((f) => f.cvss_score != null)
+          .reduce((sum, f) => sum + (f.cvss_score || 0), 0) /
+        uniqueFindings.filter((f) => f.cvss_score != null).length
+      : 0;
 
   const affectedProjects = Array.from(
     new Set(uniqueFindings.map((f) => f.project_name))
@@ -290,28 +404,57 @@ export default function CVEDetailPage() {
               <h1 className="text-3xl font-bold mb-2 font-mono" style={{ color: 'var(--fg)' }}>
                 {cveId.toUpperCase()}
               </h1>
-              {maxSeverity && (
+              {/* Show severity from findings OR NVD data */}
+              {(maxSeverity || cveDetails?.cvssSeverity) && (
                 <div className="flex items-center gap-3">
-                  <span
-                    className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                      maxSeverity.severity === 'critical'
-                        ? 'bg-red-900/40 text-red-200 border border-red-500/50'
-                        : maxSeverity.severity === 'high'
-                        ? 'bg-orange-900/40 text-orange-200 border border-orange-500/50'
-                        : maxSeverity.severity === 'medium'
-                        ? 'bg-yellow-900/40 text-yellow-200 border border-yellow-500/50'
-                        : maxSeverity.severity === 'low'
-                        ? 'bg-green-900/40 text-green-200 border border-green-500/50'
-                        : 'bg-blue-900/40 text-blue-200 border border-blue-500/50'
-                    }`}
-                  >
-                    {maxSeverity.severity.toUpperCase()}
-                  </span>
-                  {avgCvssScore > 0 && (
-                    <span className="text-sm" style={{ color: 'var(--muted)' }}>
-                      CVSS: {avgCvssScore.toFixed(1)}
-                    </span>
-                  )}
+                  {/* Prefer findings severity, fallback to NVD */}
+                  {maxSeverity ? (
+                    <>
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          maxSeverity.severity === 'critical'
+                            ? 'bg-red-900/40 text-red-200 border border-red-500/50'
+                            : maxSeverity.severity === 'high'
+                            ? 'bg-orange-900/40 text-orange-200 border border-orange-500/50'
+                            : maxSeverity.severity === 'medium'
+                            ? 'bg-yellow-900/40 text-yellow-200 border border-yellow-500/50'
+                            : maxSeverity.severity === 'low'
+                            ? 'bg-green-900/40 text-green-200 border border-green-500/50'
+                            : 'bg-blue-900/40 text-blue-200 border border-blue-500/50'
+                        }`}
+                      >
+                        {maxSeverity.severity.toUpperCase()}
+                      </span>
+                      {avgCvssScore > 0 && (
+                        <span className="text-sm" style={{ color: 'var(--muted)' }}>
+                          CVSS: {avgCvssScore.toFixed(1)}
+                        </span>
+                      )}
+                    </>
+                  ) : cveDetails?.cvssSeverity ? (
+                    <>
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
+                          cveDetails.cvssSeverity === 'CRITICAL'
+                            ? 'bg-red-900/40 text-red-200 border border-red-500/50'
+                            : cveDetails.cvssSeverity === 'HIGH'
+                            ? 'bg-orange-900/40 text-orange-200 border border-orange-500/50'
+                            : cveDetails.cvssSeverity === 'MEDIUM'
+                            ? 'bg-yellow-900/40 text-yellow-200 border border-yellow-500/50'
+                            : cveDetails.cvssSeverity === 'LOW'
+                            ? 'bg-green-900/40 text-green-200 border border-green-500/50'
+                            : 'bg-blue-900/40 text-blue-200 border border-blue-500/50'
+                        }`}
+                      >
+                        {cveDetails.cvssSeverity}
+                      </span>
+                      {cveDetails.cvssScore !== undefined && (
+                        <span className="text-sm" style={{ color: 'var(--muted)' }}>
+                          CVSS: {cveDetails.cvssScore.toFixed(1)}
+                        </span>
+                      )}
+                    </>
+                  ) : null}
                 </div>
               )}
             </div>
@@ -346,7 +489,8 @@ export default function CVEDetailPage() {
           </div>
         </div>
 
-        {/* Vulnerability Details */}
+        {/* Vulnerability Details - Always show if NVD data is available */}
+        {(cveDetails?.description || cveDetails?.cvssScore !== undefined || cveDetails?.publishedDate) && (
           <div className="rounded-lg border p-6 mb-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
             <h2 className="text-xl font-bold mb-4" style={{ color: 'var(--fg)' }}>Vulnerability Details</h2>
 
@@ -472,10 +616,9 @@ export default function CVEDetailPage() {
                       {ref}
                     </a>
                   ))}
-            </div>
-          </div>
-        )}
-
+                </div>
+              </div>
+            )}
             {/* Links to official CVE sources */}
             <div>
               <div className="text-sm font-medium mb-2" style={{ color: 'var(--muted)' }}>Official Sources</div>
@@ -500,8 +643,9 @@ export default function CVEDetailPage() {
                 </a>
               </div>
             </div>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Remediation */}
         {maxSeverity?.remediation_summary && (
