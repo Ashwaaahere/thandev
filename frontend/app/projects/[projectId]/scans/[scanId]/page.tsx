@@ -836,17 +836,48 @@ export default function ScanReportPage() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <DashboardSidebar 
-        isOpen={sidebarOpen} 
-        onClose={() => setSidebarOpen(false)} 
-        showLogo={!sidebarOpen}
-      />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <DashboardHeader 
-          user={session?.user} 
-          onMenuClick={() => setSidebarOpen(true)}
-          showLogo={sidebarOpen}
+    <>
+      <style jsx global>{`
+        @keyframes shimmer {
+          0% {
+            background-position: -200% 0;
+          }
+          100% {
+            background-position: 200% 0;
+          }
+        }
+        
+        @keyframes shimmer-slide {
+          0% {
+            transform: translateX(-100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+        
+        @keyframes pulse-edge {
+          0%, 100% {
+            opacity: 1;
+            transform: translateX(-50%) scale(1);
+          }
+          50% {
+            opacity: 0.6;
+            transform: translateX(-50%) scale(1.2);
+          }
+        }
+      `}</style>
+      <div className="flex h-screen overflow-hidden">
+        <DashboardSidebar 
+          isOpen={sidebarOpen} 
+          onClose={() => setSidebarOpen(false)} 
+          showLogo={!sidebarOpen}
+        />
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <DashboardHeader 
+            user={session?.user} 
+            onMenuClick={() => setSidebarOpen(true)}
+            showLogo={sidebarOpen}
         />
         <main className="flex-1 overflow-y-auto p-6" style={{ background: 'var(--bg)' }}>
           <div className="max-w-6xl mx-auto space-y-6">
@@ -1595,60 +1626,197 @@ export default function ScanReportPage() {
             </div>
 
             {/* Progress Indicator - Show when scan is running */}
-            {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (
-              <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Scan Progress</h2>
+            {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
+              // Calculate estimated time remaining
+              const getEstimatedTimeRemaining = (progressPct: number | null | undefined) => {
+                if (!scan.started_at || progressPct === null || progressPct === undefined || progressPct === 0) {
+                  return null;
+                }
+
+                // Max timeout per scan level (in seconds)
+                const maxTimeouts: Record<string, number> = {
+                  'basic': 600,    // 10 minutes
+                  'pro': 3600,     // 60 minutes
+                  'advanced': 5400, // 90 minutes
+                };
+
+                const maxTimeout = maxTimeouts[scan.scan_level?.toLowerCase() || 'pro'] || 3600;
+                const startedAt = new Date(scan.started_at).getTime();
+                const now = Date.now();
+                const elapsedSeconds = (now - startedAt) / 1000;
+                const progress = progressPct / 100;
+
+                if (progress === 0 || elapsedSeconds === 0) {
+                  return null;
+                }
+
+                // Estimate: if we've done X% in Y seconds, total time = Y / X
+                const estimatedTotalSeconds = elapsedSeconds / progress;
+                const remainingSeconds = Math.max(0, estimatedTotalSeconds - elapsedSeconds);
                 
-                {/* Progress Bar */}
-                {scan.progress_pct !== null && scan.progress_pct !== undefined && scan.total_tools !== null && scan.total_tools !== undefined && (
-                  <>
-                    <div className="mb-3">
-                      <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
-                        <div
-                          className="h-full transition-all duration-300 ease-out"
-                          style={{
-                            width: `${scan.progress_pct}%`,
-                            background: scan.progress_pct === 100 
-                              ? 'linear-gradient(90deg, #10b981 0%, #059669 100%)'
-                              : 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)'
-                          }}
-                        />
+                // Cap at max timeout
+                const maxRemaining = maxTimeout - elapsedSeconds;
+                const finalRemaining = Math.min(remainingSeconds, maxRemaining);
+
+                if (finalRemaining <= 0) {
+                  return 'Less than a minute';
+                }
+
+                const minutes = Math.floor(finalRemaining / 60);
+                const seconds = Math.floor(finalRemaining % 60);
+
+                if (minutes > 0) {
+                  return `${minutes}m ${seconds}s`;
+                }
+                return `${seconds}s`;
+              };
+
+              const progressPct = scan.progress_pct ?? 0;
+              const timeRemaining = getEstimatedTimeRemaining(progressPct);
+
+              return (
+                <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Scan Progress</h2>
+                    {timeRemaining && (
+                      <div className="flex items-center gap-2 px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                        <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
+                          ~{timeRemaining} left
+                        </span>
                       </div>
-                    </div>
-                    <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                      {(() => {
-                        const total = scan.total_tools ?? 0;
-                        const completed = scan.completed_tools ?? 0;
-                        const running = (scan.tool_statuses || []).filter(t => t.status === 'running').length;
-                        const queued = (scan.tool_statuses || []).filter(t => t.status === 'pending').length;
-                        const parts = [`${completed} / ${total} checks completed`];
-                        if (running > 0) parts.push(`${running} running`);
-                        if (queued > 0) parts.push(`${queued} queued`);
-                        return parts.join(' • ');
-                      })()}
-                    </p>
-                  </>
-                )}
+                    )}
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  {scan.progress_pct !== null && scan.progress_pct !== undefined && scan.total_tools !== null && scan.total_tools !== undefined && (
+                    <>
+                      <div className="mb-3 relative">
+                        <div className="w-full h-4 rounded-full overflow-hidden relative" style={{ background: 'var(--surface-2)' }}>
+                          {/* Animated progress bar with shimmer effect */}
+                          <div
+                            className="h-full relative transition-all duration-500 ease-out"
+                            style={{
+                              width: `${progressPct}%`,
+                              background: progressPct === 100 
+                                ? 'linear-gradient(90deg, #10b981 0%, #059669 50%, #10b981 100%)'
+                                : 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+                              backgroundSize: '200% 100%',
+                              animation: progressPct < 100 ? 'shimmer 2s infinite' : 'none',
+                            }}
+                          >
+                            {/* Shimmer overlay */}
+                            {progressPct < 100 && (
+                              <div
+                                className="absolute inset-0 opacity-30"
+                                style={{
+                                  background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+                                  animation: 'shimmer-slide 2s infinite',
+                                }}
+                              />
+                            )}
+                          </div>
+                          {/* Pulse effect on the edge */}
+                          {progressPct < 100 && progressPct > 0 && (
+                            <div
+                              className="absolute top-0 h-full w-1 rounded-full"
+                              style={{
+                                left: `${progressPct}%`,
+                                background: 'rgba(59, 130, 246, 0.8)',
+                                boxShadow: '0 0 8px rgba(59, 130, 246, 0.6)',
+                                animation: 'pulse-edge 1.5s infinite',
+                                transform: 'translateX(-50%)',
+                              }}
+                            />
+                          )}
+                        </div>
+                        {/* Progress percentage label */}
+                        <div className="absolute top-0 right-0 text-xs font-medium mt-1" style={{ color: 'var(--muted)' }}>
+                          {Math.round(progressPct)}%
+                        </div>
+                      </div>
+                      <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                        {(() => {
+                          const total = scan.total_tools ?? 0;
+                          const completed = scan.completed_tools ?? 0;
+                          const running = (scan.tool_statuses || []).filter(t => t.status === 'running').length;
+                          const queued = (scan.tool_statuses || []).filter(t => t.status === 'pending').length;
+                          const parts = [`${completed} / ${total} checks completed`];
+                          if (running > 0) parts.push(`${running} running`);
+                          if (queued > 0) parts.push(`${queued} queued`);
+                          return parts.join(' • ');
+                        })()}
+                      </p>
+                    </>
+                  )}
                 
                 {/* Fallback if progress_pct not available */}
-                {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (
-                  <>
-                    <div className="mb-3">
-                      <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
-                        <div
-                          className="h-full transition-all duration-300 ease-out"
-                          style={{
-                            width: `${(scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100}%`,
-                            background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 100%)'
-                          }}
-                        />
+                {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (() => {
+                  const fallbackProgress = (scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100;
+                  const fallbackTimeRemaining = getEstimatedTimeRemaining(fallbackProgress);
+                  
+                  return (
+                    <>
+                      {fallbackTimeRemaining && (
+                        <div className="flex items-center gap-2 px-3 py-1 rounded-full mb-4" style={{ background: 'var(--surface-2)' }}>
+                          <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
+                            ~{fallbackTimeRemaining} left
+                          </span>
+                        </div>
+                      )}
+                      <div className="mb-3 relative">
+                        <div className="w-full h-4 rounded-full overflow-hidden relative" style={{ background: 'var(--surface-2)' }}>
+                          {/* Animated progress bar with shimmer effect */}
+                          <div
+                            className="h-full relative transition-all duration-500 ease-out"
+                            style={{
+                              width: `${fallbackProgress}%`,
+                              background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+                              backgroundSize: '200% 100%',
+                              animation: fallbackProgress < 100 ? 'shimmer 2s infinite' : 'none',
+                            }}
+                          >
+                            {/* Shimmer overlay */}
+                            {fallbackProgress < 100 && (
+                              <div
+                                className="absolute inset-0 opacity-30"
+                                style={{
+                                  background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+                                  animation: 'shimmer-slide 2s infinite',
+                                }}
+                              />
+                            )}
+                          </div>
+                          {/* Pulse effect on the edge */}
+                          {fallbackProgress < 100 && fallbackProgress > 0 && (
+                            <div
+                              className="absolute top-0 h-full w-1 rounded-full"
+                              style={{
+                                left: `${fallbackProgress}%`,
+                                background: 'rgba(59, 130, 246, 0.8)',
+                                boxShadow: '0 0 8px rgba(59, 130, 246, 0.6)',
+                                animation: 'pulse-edge 1.5s infinite',
+                                transform: 'translateX(-50%)',
+                              }}
+                            />
+                          )}
+                        </div>
+                        {/* Progress percentage label */}
+                        <div className="absolute top-0 right-0 text-xs font-medium mt-1" style={{ color: 'var(--muted)' }}>
+                          {Math.round(fallbackProgress)}%
+                        </div>
                       </div>
-                    </div>
-                    <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                      {scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length} / {scan.tool_statuses.length} checks completed
-                    </p>
-                  </>
-                )}
+                      <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                        {scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length} / {scan.tool_statuses.length} checks completed
+                      </p>
+                    </>
+                  );
+                })()}
                 
                 {/* Technical Details Toggle */}
                 {scan.tool_statuses && scan.tool_statuses.length > 0 && (
@@ -2182,5 +2350,6 @@ export default function ScanReportPage() {
         </main>
       </div>
     </div>
+    </>
   );
 }

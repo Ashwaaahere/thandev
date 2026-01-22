@@ -43,8 +43,8 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
         {"key": "nuclei", "enabled": True, "profile": "pro_web"},
         {"key": "nmap", "enabled": True, "profile": "top_ports"},
         {"key": "sslscan", "enabled": True},
-        {"key": "dalfox", "enabled": True, "timeout_seconds": 300},
-        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 600},
+        {"key": "dalfox", "enabled": True, "timeout_seconds": 1500},  # 25 minutes for PRO scans
+        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 1800},  # 30 minutes for PRO scans (matches scan_timeouts.py)
     ],
     ScanLevel.ADVANCED: [
         {"key": "httpx", "enabled": True, "intensity": "high"},

@@ -2344,7 +2344,7 @@ class ToolExecutor:
         mode_id = kwargs.get("mode_id", "passive_spider")
         timeout_seconds = kwargs.get("timeout_seconds", 300)  # Default to 5 minutes
         
-        logger.info(f"Starting ZAP scan {scan_job_id} for {target_url} with mode {mode_id}")
+        logger.info(f"Starting ZAP scan {scan_job_id} for {target_url} with mode {mode_id}, timeout={timeout_seconds}s")
         
         # ZAP API URL from environment variable
         # Default to zap hostname (Docker network DNS resolution)
@@ -3013,7 +3013,7 @@ class ToolExecutor:
                 raise ValueError(f"Failed to start ZAP Active Scan: {active_scan_response.text}")
             
             # Poll active scan status
-            logger.info(f"Polling ZAP Active Scan status for scanId: {active_scan_id}")
+            logger.info(f"Polling ZAP Active Scan status for scanId: {active_scan_id}, timeout={timeout_seconds}s")
             start_time = time.time()
             poll_count = 0
             
@@ -3113,8 +3113,15 @@ class ToolExecutor:
                 if status_percent >= 100:
                     logger.info(f"ZAP Active Scan reached 100% after {poll_count} polls ({time.time() - start_time:.1f}s)")
                     break
-                if time.time() - start_time > timeout_seconds:
-                    logger.warning(f"ZAP Active Scan timeout after {timeout_seconds}s (status: {status_percent}%)")
+                
+                # Check timeout with more frequent logging as we approach the limit
+                elapsed = time.time() - start_time
+                remaining = timeout_seconds - elapsed
+                if remaining < 60 and poll_count % 2 == 0:  # Log every 10 seconds when < 1 min remaining
+                    logger.info(f"ZAP Active Scan: {status_percent}% complete, {remaining:.0f}s remaining (timeout: {timeout_seconds}s)")
+                
+                if elapsed > timeout_seconds:
+                    logger.warning(f"ZAP Active Scan timeout after {timeout_seconds}s (elapsed: {elapsed:.1f}s, status: {status_percent}%)")
                     raise subprocess.TimeoutExpired(cmd="ZAP Active Scan", timeout=timeout_seconds)
                 await asyncio.sleep(5)
             logger.info(f"ZAP Active Scan completed for {target_url} (total time: {time.time() - start_time:.1f}s)")
