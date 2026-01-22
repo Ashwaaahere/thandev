@@ -1916,7 +1916,8 @@ export default function ScanReportPage() {
                   </div>
                 )}
               </div>
-            )}
+              );
+            })()}
 
 
             {/* Tools Executed card */}
