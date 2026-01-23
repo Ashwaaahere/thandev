@@ -29,10 +29,9 @@ fi
 export CONSUMER_GROUP=${CONSUMER_GROUP:-runner-workers}
 export CONSUMER_NAME=${CONSUMER_NAME:-${HOSTNAME:-runner-1}}
 
-# CRITICAL: Runner must use the SAME database as backend
-# Backend uses PostgreSQL by default, so runner should too
-# Force-set to PostgreSQL to override .env file
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/thandev"
+# Runner must use the SAME database as backend
+# Allow overriding from environment, default to postgres service hostname
+export DATABASE_URL="${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/thandev}"
 
 echo "Configuration:"
 echo "  Consumer Group: $CONSUMER_GROUP"
@@ -41,9 +40,18 @@ echo "  Redis URL: ${REDIS_URL:-redis://localhost:6379/0}"
 echo "  Database URL: $DATABASE_URL"
 echo ""
 
-# Run worker loop
-echo "Starting worker loop..."
+# Run dependency worker in background
+echo "Starting dependency scan worker..."
+python -m app.dependency_worker &
+DEPENDENCY_WORKER_PID=$!
+
+# Run main worker loop in foreground
+echo "Starting main security scan worker..."
 python -m app.tasks
+
+# If main worker exits, kill dependency worker
+kill $DEPENDENCY_WORKER_PID 2>/dev/null || true
+
 
 
 

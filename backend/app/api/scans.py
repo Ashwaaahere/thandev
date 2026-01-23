@@ -535,37 +535,6 @@ async def create_scan(
                 f"Brain will own the closed-loop scanning process."
             )
             
-            # Enqueue dependency scan jobs for PRO and ADVANCED scans (even when using Brain)
-            scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
-            if scan_level_value in ('pro', 'advanced'):
-                try:
-                    from app.services.dependency_scanner import enqueue_dependency_scan_job
-                    from app.core.capabilities import check_capability
-                    
-                    # Check capability (will raise 403 if not allowed)
-                    try:
-                        check_capability(db, tenant, current_user, "url_sca")
-                        
-                        callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
-                        logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} scan {scan_job.id} (Brain-based)")
-                        
-                        result = await enqueue_dependency_scan_job(
-                            scan_id=scan_job.id,
-                            job_type="url_sca",
-                            target_url=project.target_url,
-                            callback_url=callback_url,
-                        )
-                        
-                        if result:
-                            logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for scan {scan_job.id} (Brain-based)")
-                        else:
-                            logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for scan {scan_job.id} (Brain-based)")
-                    except HTTPException:
-                        # Capability check failed - user doesn't have access, skip dependency scanning
-                        logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for {scan_job.id} - capability check failed")
-                except Exception as e:
-                    logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for scan {scan_job.id}: {e}", exc_info=True)
-                    # Don't fail the scan if dependency scanning fails
             
             # Verify PENDING records were created (for debugging)
             try:
@@ -656,37 +625,6 @@ async def create_scan(
                     detail=error_msg
                 )
             
-            # Enqueue dependency scan jobs for PRO and ADVANCED scans (regardless of regular scan success)
-            scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
-            if scan_level_value in ('pro', 'advanced'):
-                try:
-                    from app.services.dependency_scanner import enqueue_dependency_scan_job
-                    from app.core.capabilities import check_capability
-                    
-                    # Check capability (will raise 403 if not allowed)
-                    try:
-                        check_capability(db, tenant, current_user, "url_sca")
-                        
-                        callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
-                        logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} scan {scan_job.id}")
-                        
-                        result = await enqueue_dependency_scan_job(
-                            scan_id=scan_job.id,
-                            job_type="url_sca",
-                            target_url=project.target_url,
-                            callback_url=callback_url,
-                        )
-                        
-                        if result:
-                            logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for scan {scan_job.id}")
-                        else:
-                            logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for scan {scan_job.id}")
-                    except HTTPException:
-                        # Capability check failed - user doesn't have access, skip dependency scanning
-                        logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for {scan_job.id} - capability check failed")
-                except Exception as e:
-                    logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for scan {scan_job.id}: {e}", exc_info=True)
-                    # Don't fail the scan if dependency scanning fails
         except HTTPException:
             raise
         except Exception as e:
@@ -702,6 +640,43 @@ async def create_scan(
             )
     else:
         logger.info(f"Scan {scan_job.id} is being handled by brain service (session_id: {scan_job.brain_session_id}), skipping Runner path")
+    
+    # Enqueue dependency scan jobs for PRO and ADVANCED scans (Universal Path)
+    # This ensures dependency scans run regardless of whether Brain or Runner orchestrates the main scan
+    try:
+        scan_level_value = scan.scan_level.value if hasattr(scan.scan_level, 'value') else str(scan.scan_level).lower()
+        logger.info(f"[DEPENDENCY-SCAN-CHECK] Checking eligibility for scan {scan_job.id} with level {scan_level_value}")
+        
+        if scan_level_value in ('pro', 'advanced'):
+            try:
+                from app.services.dependency_scanner import enqueue_dependency_scan_job
+                from app.core.capabilities import check_capability
+                
+                # Check capability (will raise 403 if not allowed)
+                try:
+                    check_capability(db, tenant, current_user, "url_sca")
+                    
+                    callback_url = f"{settings.BACKEND_URL}/api/runner/callback" if hasattr(settings, 'BACKEND_URL') else None
+                    logger.info(f"[DEPENDENCY-SCAN] Enqueuing URL-SCA job for {scan_level_value} scan {scan_job.id}")
+                    
+                    result = await enqueue_dependency_scan_job(
+                        scan_id=scan_job.id,
+                        job_type="url_sca",
+                        target_url=project.target_url,
+                        callback_url=callback_url,
+                    )
+                    
+                    if result:
+                        logger.info(f"[DEPENDENCY-SCAN] Successfully enqueued URL-SCA job for scan {scan_job.id}")
+                    else:
+                        logger.error(f"[DEPENDENCY-SCAN] Failed to enqueue URL-SCA job for scan {scan_job.id}")
+                except HTTPException:
+                    # Capability check failed - user doesn't have access, skip dependency scanning
+                    logger.warning(f"[DEPENDENCY-SCAN] Skipping dependency scan for {scan_job.id} - capability check failed")
+            except Exception as inner_e:
+                logger.error(f"[DEPENDENCY-SCAN] Inner exception enqueuing dependency scan job for scan {scan_job.id}: {inner_e}", exc_info=True)
+    except Exception as e:
+        logger.error(f"[DEPENDENCY-SCAN] Exception in dependency scan block for scan {scan_job.id}: {e}", exc_info=True)
     
     # Ensure findings relationship is accessible (empty list if none)
     try:
@@ -1328,6 +1303,349 @@ async def get_scan_artifacts(
             for artifact in artifacts
         ]
     )
+
+
+@router.get("/{scan_id}/tech-stack")
+async def get_scan_tech_stack(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get aggregated tech stack and dependencies for a scan.
+    
+    Aggregates data from:
+    1. url_sca artifact (primary source - from wappalyzer/retire.js)
+    2. ToolResult.meta from various tools (fallback aggregation)
+    3. Findings from tech-detection tools
+    
+    Returns normalized tech/deps payload matching URLSCAArtifact interface.
+    This ensures Tech & Dependencies tab always shows data, even when
+    dependency scanning tools fail or aren't triggered.
+    """
+    logger.warning(f"[TECH-STACK-ENTRY] get_scan_tech_stack called for scan_id={scan_id}")
+    from app.models.scan_artifact import ScanArtifact
+    from app.models.finding import ToolResult, Finding
+    
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Verify scan belongs to tenant and user via project
+    scan_job = (
+        db.query(ScanJob)
+        .join(Project, ScanJob.project_id == Project.id)
+        .filter(
+            ScanJob.id == scan_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id
+        )
+        .first()
+    )
+    
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found. The scan ID '{scan_id}' does not exist or you don't have permission to access it."
+        )
+    
+    # Try url_sca artifact first (primary source - created by dependency_scanner.py)
+    url_sca_artifact = db.query(ScanArtifact).filter(
+        ScanArtifact.scan_id == scan_id,
+        ScanArtifact.type == "url_sca"
+    ).first()
+    
+    if url_sca_artifact and url_sca_artifact.payload:
+        # Return artifact payload directly (already in correct URLSCAArtifact format)
+        logger.info(f"[TECH-STACK] Returning url_sca artifact for scan {scan_id}")
+        payload = url_sca_artifact.payload
+        # Ensure payload is a dict (JSONB columns are already dicts, but be safe)
+        if isinstance(payload, str):
+            import json as json_module
+            payload = json_module.loads(payload)
+        return payload
+    
+    # Fallback: Aggregate from ToolResult.meta (when wappalyzer/retire didn't run or failed)
+    logger.warning(f"[TECH-STACK] No url_sca artifact for scan {scan_id}, aggregating from tool results and findings")
+    
+    tool_results = db.query(ToolResult).filter(
+        ToolResult.scan_job_id == scan_id
+    ).all()
+    
+    # Initialize aggregated data structures
+    fingerprint = {
+        "status": 0,
+        "title": "",
+        "server": "",
+        "cdn": "",
+        "technologies": [],
+        "confidence": 0.0
+    }
+    client_dependencies = []
+    findings = []
+    technologies = []
+    
+    logger.warning(f"[TECH-STACK-DEBUG] Starting aggregation: {len(tool_results)} tool results found")
+    
+    # Aggregate from each tool's meta
+    for tr in tool_results:
+        meta = tr.meta or {}
+        
+        # httpx: extract headers/server info and tech detection
+        if tr.tool_name == "httpx" and meta:
+            if "status_code" in meta:
+                fingerprint["status"] = meta["status_code"]
+            if "title" in meta:
+                fingerprint["title"] = meta["title"]
+            if "server" in meta:
+                fingerprint["server"] = meta["server"]
+            if "cdn" in meta:
+                fingerprint["cdn"] = meta["cdn"]
+            # httpx may include tech-detect results
+            if "technologies" in meta and isinstance(meta["technologies"], list):
+                technologies.extend(meta["technologies"])
+        
+        # wappalyzer: extract detected technologies
+        if tr.tool_name == "wappalyzer" and meta:
+            if "technologies" in meta and isinstance(meta["technologies"], list):
+                technologies.extend(meta["technologies"])
+        
+        # retire: extract client dependencies and vulnerability findings
+        if tr.tool_name == "retire" and meta:
+            if "client_dependencies" in meta and isinstance(meta["client_dependencies"], list):
+                client_dependencies.extend(meta["client_dependencies"])
+            if "findings" in meta and isinstance(meta["findings"], list):
+                findings.extend(meta["findings"])
+    
+    # Also aggregate from Findings table for httpx, nmap, and sslscan (they store results as Findings, not in meta)
+    from app.models.finding import Finding
+    httpx_findings = db.query(Finding).filter(
+        Finding.scan_job_id == scan_id,
+        Finding.tool_name == "httpx"
+    ).all()
+    nmap_findings = db.query(Finding).filter(
+        Finding.scan_job_id == scan_id,
+        Finding.tool_name == "nmap"
+    ).all()
+    sslscan_findings = db.query(Finding).filter(
+        Finding.scan_job_id == scan_id,
+        Finding.tool_name == "sslscan"
+    ).all()
+    
+    # Extract info from httpx findings (status_code, title, server, technologies)
+    # Prioritize findings with status 200 that match the target URL, then collect all technologies from all findings
+    logger.warning(f"[TECH-STACK-DEBUG] Found {len(httpx_findings)} httpx findings for scan {scan_id}")
+    
+    # CRITICAL: Force extraction to run - ensure httpx_findings are processed
+    if httpx_findings and len(httpx_findings) > 0:
+        logger.warning(f"[TECH-STACK-DEBUG] Processing {len(httpx_findings)} httpx findings for extraction")
+        # Get target URL for matching
+        target_url = scan_job.url or ""
+        target_domain = ""
+        if target_url:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(target_url)
+                target_domain = parsed.netloc or parsed.hostname or ""
+            except:
+                pass
+        
+        # Sort findings: prioritize status 200 that match target domain, then any status 200, then by status code descending
+        def sort_key(f):
+            score = 0
+            if f.raw_data:
+                try:
+                    import json as json_module
+                    raw = json_module.loads(f.raw_data) if isinstance(f.raw_data, str) else f.raw_data
+                    if isinstance(raw, dict):
+                        status = raw.get("status_code", 0)
+                        url = raw.get("url", "")
+                        # Prioritize status 200
+                        if status == 200:
+                            score += 1000
+                            # Extra priority if URL matches target domain
+                            if target_domain and target_domain in url:
+                                score += 500
+                        # Then by status code
+                        score += status
+                except:
+                    pass
+            return score
+        
+        sorted_findings = sorted(httpx_findings, key=sort_key, reverse=True)
+        logger.warning(f"[TECH-STACK-DEBUG] Sorted {len(sorted_findings)} findings, processing for extraction")
+        
+        primary_finding_processed = False
+        processed_count = 0
+        for f in sorted_findings:
+            # Extract from raw_data if available (backend stores "raw" field as raw_data JSON string)
+            if f.raw_data:
+                try:
+                    # raw_data is stored as JSON string of the "raw" field value from httpx parser
+                    # The httpx parser stores full JSON in "raw", backend does: json.dumps(finding_data.get("raw", finding_data))
+                    # So raw_data contains the httpx JSON object directly
+                    import json as json_module
+                    raw = json_module.loads(f.raw_data) if isinstance(f.raw_data, str) else f.raw_data
+                    # raw should be the httpx JSON object directly (not nested)
+                    actual_data = raw
+                    
+                    if not isinstance(actual_data, dict):
+                        continue
+                    
+                    # Extract status code (only set from primary finding or if not set yet)
+                    status_val = actual_data.get("status_code")
+                    if status_val is not None and (not primary_finding_processed or fingerprint["status"] == 0):
+                        fingerprint["status"] = int(status_val)
+                        logger.warning(f"[TECH-STACK-DEBUG] Extracted status_code={status_val}")
+                    
+                    # Extract title (only set from primary finding or if not set yet)
+                    title_val = actual_data.get("title")
+                    if title_val and isinstance(title_val, str) and (not primary_finding_processed or not fingerprint["title"]):
+                        fingerprint["title"] = title_val
+                        logger.warning(f"[TECH-STACK-DEBUG] Extracted title={title_val[:50]}")
+                    
+                    # Extract server header (httpx uses "webserver" field) (only set from primary finding or if not set yet)
+                    server_val = actual_data.get("webserver")
+                    if server_val and isinstance(server_val, str) and (not primary_finding_processed or not fingerprint["server"]):
+                        fingerprint["server"] = server_val
+                        logger.warning(f"[TECH-STACK-DEBUG] Extracted webserver={server_val}")
+                    
+                    # Extract CDN (httpx uses "cdn" field)
+                    cdn_val = actual_data.get("cdn")
+                    if cdn_val and isinstance(cdn_val, str) and (not primary_finding_processed or not fingerprint["cdn"]):
+                        fingerprint["cdn"] = cdn_val
+                        logger.warning(f"[TECH-STACK-DEBUG] Extracted cdn={cdn_val}")
+                    
+                    # Extract technologies from tech field (httpx tech-detect output) - collect from ALL findings
+                    tech_list = actual_data.get("tech")
+                    if tech_list and isinstance(tech_list, list):
+                        logger.warning(f"[TECH-STACK-DEBUG] Found {len(tech_list)} technologies in httpx finding: {tech_list}")
+                        for tech_item in tech_list:
+                            if isinstance(tech_item, str):
+                                technologies.append({
+                                    "name": tech_item,
+                                    "version": None,
+                                    "confidence": 0.8,
+                                })
+                            elif isinstance(tech_item, dict):
+                                tech_name = tech_item.get("name") or tech_item.get("value") or ""
+                                if tech_name:
+                                    technologies.append({
+                                        "name": tech_name,
+                                        "version": tech_item.get("version"),
+                                        "confidence": 0.8,
+                                    })
+                        logger.warning(f"[TECH-STACK-DEBUG] Added {len(tech_list)} technologies to list, total now: {len(technologies)}")
+                    
+                    if not primary_finding_processed:
+                        primary_finding_processed = True
+                    processed_count += 1
+                except Exception as e:
+                    logger.error(f"[TECH-STACK-DEBUG] Failed to parse httpx finding raw_data: {e}", exc_info=True)
+                    continue
+        
+        logger.warning(f"[TECH-STACK-DEBUG] Processed {processed_count} findings. Fingerprint: status={fingerprint['status']}, title={fingerprint['title'][:30] if fingerprint['title'] else 'N/A'}, server={fingerprint['server']}, tech_count={len(technologies)}")
+        
+        # Also extract from evidence/description if raw_data not available
+        if not fingerprint["status"]:
+            for f in sorted_findings:
+                if f.evidence and not fingerprint["status"]:
+                    # Try to extract status code from evidence like "Status: 200"
+                    import re
+                    status_match = re.search(r'Status:\s*(\d+)', f.evidence)
+                    if status_match:
+                        fingerprint["status"] = int(status_match.group(1))
+                        break
+    else:
+        logger.warning(f"[TECH-STACK-DEBUG] No httpx findings found for scan {scan_id}")
+    
+    # Extract port/service info from nmap findings for fingerprint
+    if nmap_findings:
+        # Add nmap results summary to fingerprint
+        open_ports = []
+        for f in nmap_findings:
+            if f.raw_data:
+                try:
+                    import json as json_module
+                    raw = json_module.loads(f.raw_data) if isinstance(f.raw_data, str) else f.raw_data
+                    port = raw.get("port") or raw.get("portid")
+                    service = raw.get("service") or raw.get("service_name")
+                    if port:
+                        open_ports.append(f"Port {port}" + (f" ({service})" if service else ""))
+                except:
+                    pass
+        if open_ports:
+            fingerprint["open_ports"] = open_ports[:10]  # Limit to first 10
+    
+    # Extract TLS info from sslscan findings
+    if sslscan_findings:
+        tls_issues = []
+        for f in sslscan_findings:
+            if f.title and "TLS" in f.title.upper() or "SSL" in f.title.upper() or "certificate" in f.title.lower():
+                tls_issues.append(f.title)
+        if tls_issues:
+            fingerprint["tls_issues"] = tls_issues[:10]  # Limit to first 10
+    
+    # Deduplicate technologies by (name, version) tuple
+    seen_tech = set()
+    unique_tech = []
+    for tech in technologies:
+        if not isinstance(tech, dict):
+            continue
+        tech_key = (tech.get("name"), tech.get("version"))
+        if tech_key not in seen_tech and tech.get("name"):
+            seen_tech.add(tech_key)
+            # Ensure required fields
+            unique_tech.append({
+                "name": tech.get("name"),
+                "version": tech.get("version"),
+                "confidence": tech.get("confidence", 0.8),
+            })
+    
+    fingerprint["technologies"] = unique_tech
+    logger.warning(f"[TECH-STACK] Aggregated result: status={fingerprint['status']}, title={fingerprint['title'][:50] if fingerprint['title'] else 'N/A'}, server={fingerprint['server']}, technologies={len(unique_tech)}, client_deps={len(client_dependencies)}")
+    
+    # Calculate confidence score based on data quality
+    confidence = 0.0
+    if fingerprint["status"] == 200:
+        confidence += 0.3
+    if fingerprint["title"]:
+        confidence += 0.1
+    if unique_tech:
+        confidence += min(0.4, len(unique_tech) * 0.1)
+    if client_dependencies:
+        confidence += min(0.2, len(client_dependencies) * 0.1)
+    fingerprint["confidence"] = min(1.0, confidence)
+    
+    # Get target URL from scan or project
+    target_url = scan_job.url
+    if not target_url and scan_job.project:
+        target_url = scan_job.project.target_url
+    if not target_url:
+        target_url = ""
+    
+    # Return aggregated payload in URLSCAArtifact format
+    result = {
+        "mode": "url_sca",
+        "target": target_url,
+        "fingerprint": fingerprint,
+        "client_dependencies": client_dependencies,
+        "findings": findings,
+        "meta": {
+            "tool_versions": {},
+            "duration_ms": 0,
+            "aggregated": True,  # Flag to indicate this was aggregated from ToolResult.meta, not from artifact
+        }
+    }
+    # CRITICAL DEBUG: Log what we're actually returning
+    logger.error(f"[TECH-STACK-RETURN-CRITICAL] Returning for scan {scan_id}: status={fingerprint['status']}, title='{fingerprint['title']}', server='{fingerprint['server']}', tech_count={len(fingerprint['technologies'])}")
+    logger.error(f"[TECH-STACK-RETURN-CRITICAL] Fingerprint dict keys: {list(fingerprint.keys())}")
+    logger.error(f"[TECH-STACK-RETURN-CRITICAL] Result fingerprint status: {result['fingerprint']['status']}")
+    logger.warning(f"[TECH-STACK-RETURN] Returning result for scan {scan_id}: status={fingerprint['status']}, title={fingerprint['title'][:30] if fingerprint['title'] else 'N/A'}, server={fingerprint['server']}, tech_count={len(fingerprint['technologies'])}")
+    return result
 
 
 @router.get("/{scan_id}", response_model=ScanResponse)
@@ -2592,6 +2910,62 @@ def download_scan_report_pdf(
             "Content-Disposition": f'attachment; filename="scan-{scan_id}-{mode}.pdf"'
         },
     )
+
+
+@router.get("/{scan_id}/artifacts", response_model=ScanArtifactsResponse)
+async def get_scan_artifacts(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get artifacts for a scan (e.g., dependency scan results, screenshots).
+    Requires X-Thandev-Tenant-Id or X-Thandev-User-Id header.
+    Only returns artifacts if scan belongs to the current tenant and user.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Verify scan belongs to tenant and user via project
+    scan_job = (
+        db.query(ScanJob)
+        .join(Project, ScanJob.project_id == Project.id)
+        .filter(
+            ScanJob.id == scan_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id
+        )
+        .first()
+    )
+    
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found. The scan ID '{scan_id}' does not exist or you don't have permission to access it."
+        )
+    
+    # Fetch artifacts
+    from app.models.scan_artifact import ScanArtifact
+    artifacts = db.query(ScanArtifact).filter(ScanArtifact.scan_id == scan_id).all()
+    
+    # Convert to response
+    items = []
+    for artifact in artifacts:
+        items.append(
+            ScanArtifactResponse(
+                id=artifact.id,
+                scan_id=artifact.scan_id,
+                type=artifact.type,
+                payload=artifact.payload,
+                created_at=artifact.created_at,
+            )
+        )
+    
+    return ScanArtifactsResponse(items=items)
 
 
 # Dependency Scanning Endpoints

@@ -31,12 +31,21 @@ type ProjectOverviewStats = {
   latest_scan_tools: LatestScanTool[];
 };
 
+type ProjectUrl = {
+  id: string;
+  project_id: string;
+  url: string;
+  created_at: string;
+  updated_at: string;
+};
+
 type ProjectOverview = {
   id: string;
   name: string;
   target_url: string;
   created_at: string;
   stats: ProjectOverviewStats;
+  project_urls?: ProjectUrl[];
 };
 
 type ScanListItem = {
@@ -63,6 +72,9 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
   const [recentScans, setRecentScans] = useState<ScanListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [projectUrls, setProjectUrls] = useState<ProjectUrl[]>([]);
+  const [newUrl, setNewUrl] = useState('');
+  const [addingUrl, setAddingUrl] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -81,6 +93,18 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
 
         if (!cancelled) {
           setOverview(data);
+          // Also load full project details to get project_urls
+          try {
+            const projectData = await thandevFetchJSON<ProjectOverview & { project_urls?: ProjectUrl[] }>(
+              `/api/projects/${projectId}`,
+              session
+            );
+            if (!cancelled && projectData.project_urls) {
+              setProjectUrls(projectData.project_urls);
+            }
+          } catch (e) {
+            console.error('Error loading project URLs:', e);
+          }
         }
       } catch (e) {
         console.error('Error loading project overview:', e);
@@ -270,6 +294,18 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
             <h1 className="mt-1 text-2xl font-semibold text-slate-50">{overview.name}</h1>
             {overview.target_url && (
               <p className="mt-1 text-sm text-slate-400 font-mono">{overview.target_url}</p>
+            )}
+            {projectUrls.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs text-slate-500 mb-1">Additional URLs ({projectUrls.length}):</p>
+                <div className="flex flex-wrap gap-2">
+                  {projectUrls.map((url) => (
+                    <span key={url.id} className="text-xs text-slate-400 font-mono bg-slate-900/50 px-2 py-1 rounded">
+                      {url.url}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
           <div className="flex items-center gap-3">
@@ -501,6 +537,93 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Project URLs Management */}
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 shadow-lg shadow-black/30 p-6">
+              <h2 className="text-lg font-semibold text-slate-100 mb-4">Project URLs</h2>
+              <div className="space-y-3">
+                {/* Primary URL */}
+                <div className="flex items-center justify-between p-2 rounded bg-slate-900/40">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-500 mb-1">Primary URL</p>
+                    <p className="text-sm text-slate-300 font-mono truncate">{overview.target_url}</p>
+                  </div>
+                </div>
+                
+                {/* Additional URLs */}
+                {projectUrls.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-slate-500">Additional URLs</p>
+                    {projectUrls.map((url) => (
+                      <div key={url.id} className="flex items-center justify-between p-2 rounded bg-slate-900/40">
+                        <p className="text-sm text-slate-300 font-mono truncate flex-1">{url.url}</p>
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Remove "${url.url}" from this project?`)) {
+                              try {
+                                await thandevFetchJSON(
+                                  `/api/projects/${projectId}/urls/${url.id}`,
+                                  session,
+                                  { method: 'DELETE' }
+                                );
+                                setProjectUrls(projectUrls.filter(u => u.id !== url.id));
+                              } catch (err: any) {
+                                alert(`Failed to remove URL: ${err?.message || 'Unknown error'}`);
+                              }
+                            }
+                          }}
+                          className="ml-2 p-1.5 rounded hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
+                          title="Remove URL"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {/* Add URL Form */}
+                <div className="pt-2 border-t border-slate-800">
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      value={newUrl}
+                      onChange={(e) => setNewUrl(e.target.value)}
+                      placeholder="https://example.com"
+                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-700 bg-slate-900/60 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!newUrl.trim()) return;
+                        setAddingUrl(true);
+                        try {
+                          const newUrlData = await thandevFetchJSON<ProjectUrl>(
+                            `/api/projects/${projectId}/urls`,
+                            session,
+                            {
+                              method: 'POST',
+                              body: JSON.stringify({ url: newUrl.trim() }),
+                            }
+                          );
+                          setProjectUrls([...projectUrls, newUrlData]);
+                          setNewUrl('');
+                        } catch (err: any) {
+                          alert(`Failed to add URL: ${err?.message || 'Unknown error'}`);
+                        } finally {
+                          setAddingUrl(false);
+                        }
+                      }}
+                      disabled={addingUrl || !newUrl.trim()}
+                      className="px-4 py-2 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {addingUrl ? 'Adding...' : 'Add URL'}
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -14,6 +14,22 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = Field(None, description="Project description")
 
 
+class ProjectUrlResponse(BaseModel):
+    """Schema for project URL response"""
+    id: str
+    project_id: str
+    url: str
+    created_at: datetime
+    updated_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProjectUrlCreate(BaseModel):
+    """Schema for adding a URL to a project"""
+    url: HttpUrl = Field(..., description="URL to add to the project")
+
+
 class ProjectResponse(BaseModel):
     """Schema for project response"""
     id: str
@@ -26,6 +42,7 @@ class ProjectResponse(BaseModel):
     tenant_id: str
     created_at: datetime
     updated_at: datetime
+    project_urls: list[ProjectUrlResponse] = Field(default_factory=list)
     
     model_config = ConfigDict(from_attributes=True)
 

@@ -243,6 +243,10 @@ async def post_tool_result(
             "meta": execution_result.get("meta"),
         })
     
+    # Debug: Log what we're sending for wappalyzer/retire
+    if tool_name in ('wappalyzer', 'retire'):
+        logger.error(f"[BACKEND-CLIENT-DEBUG] Sending {tool_name} payload with meta: {payload.get('meta')}")
+    
     # Prepare headers
     headers = {"Content-Type": "application/json"}
     if settings.RUNNER_API_TOKEN:

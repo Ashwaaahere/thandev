@@ -254,7 +254,26 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
         url = f"https://{host}:{port}" if port == 443 else f"https://{host}:{port}"
     
     # Look for protocol version indicators - check for "disabled" vs "enabled"
-    # Only report findings if protocols are enabled (not disabled)
+    # Also check for TLS version support - report if only TLSv1.2 is enabled (should have TLSv1.3)
+    # Only report findings if protocols are enabled (not disabled) or if there are security issues
+    
+    # Check TLSv1.3 status - if disabled, that's a finding (should be enabled)
+    tls13_match = re.search(r'TLSv1\.3\s+(\w+)', content_clean, re.IGNORECASE)
+    if tls13_match and tls13_match.group(1).lower() in ["disabled", "not supported"]:
+        findings.append({
+            "tool_id": "sslscan",
+            "title": f"TLSv1.3 not supported on {host or 'target'}:{port}",
+            "severity": "medium",
+            "description": f"TLSv1.3 is not supported on {host or 'target'}:{port}. TLSv1.3 provides better security and performance than TLSv1.2.",
+            "evidence": f"TLSv1.3 not supported on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
+            "timestamp": timestamp,
+            "raw": content,
+            "cve_id": None,
+            "cwe_id": "CWE-327",
+        })
+    
     sslv2_match = re.search(r'SSLv2\s+(\w+)', content_clean, re.IGNORECASE)
     if sslv2_match and sslv2_match.group(1).lower() == "enabled":
         findings.append({
@@ -319,22 +338,55 @@ def _parse_sslscan_text(content: str) -> List[Dict[str, Any]]:
             "cwe_id": "CWE-327",
         })
     
-    # Look for weak cipher indicators - check for weak ciphers in the cipher list
-    # Look for patterns like "bits  ECDHE-RSA-AES256-SHA" (no "GCM" means CBC mode, which is weaker)
-    weak_cipher_patterns = [
-        r'\d+\s+bits\s+(?:ECDHE-)?RSA-AES\d+-SHA(?!256)',  # AES-CBC (not GCM)
+    # Extract all cipher suites from the output
+    # Look for patterns like "Accepted  TLSv1.2  128 bits  ECDHE-RSA-AES128-SHA256"
+    cipher_lines = re.findall(r'(?:Preferred|Accepted)\s+TLSv[\d.]+\s+\d+\s+bits\s+([A-Z0-9_-]+)', content_clean, re.IGNORECASE)
+    
+    # Check for weak ciphers
+    weak_ciphers_found = []
+    weak_patterns = [
         r'RC4',
         r'DES',
         r'MD5',
+        r'AES\d+-SHA(?!256)',  # AES-CBC (not GCM or SHA256)
+        r'AES\d+-CBC',
     ]
     
-    weak_ciphers_found = []
-    for pattern in weak_cipher_patterns:
-        if re.search(pattern, content_clean, re.IGNORECASE):
-            # Extract cipher name
-            cipher_match = re.search(r'(\w+(?:-\w+)*)', content_clean)
-            if cipher_match:
-                weak_ciphers_found.append(cipher_match.group(1))
+    for cipher in cipher_lines:
+        cipher_upper = cipher.upper()
+        # Check if it's a weak cipher
+        is_weak = False
+        for pattern in weak_patterns:
+            if re.search(pattern, cipher_upper, re.IGNORECASE):
+                is_weak = True
+                break
+        
+        # Also check if it's CBC mode (not GCM) - CBC is weaker
+        if not is_weak and 'GCM' not in cipher_upper and 'CCM' not in cipher_upper:
+            # Check if it's a known weak cipher suite
+            if any(weak in cipher_upper for weak in ['SHA1', 'SHA ', 'CBC']):
+                is_weak = True
+        
+        if is_weak:
+            weak_ciphers_found.append(cipher)
+    
+    # Also report if only TLSv1.2 is supported (should have TLSv1.3)
+    tls12_enabled = bool(re.search(r'TLSv1\.2\s+enabled', content_clean, re.IGNORECASE))
+    tls13_enabled = bool(re.search(r'TLSv1\.3\s+enabled', content_clean, re.IGNORECASE))
+    if tls12_enabled and not tls13_enabled:
+        findings.append({
+            "tool_id": "sslscan",
+            "title": f"Only TLSv1.2 supported (TLSv1.3 not available) on {host or 'target'}:{port}",
+            "severity": "low",
+            "description": f"Server only supports TLSv1.2 on {host or 'target'}:{port}. TLSv1.3 should be enabled for better security.",
+            "evidence": f"TLSv1.2 enabled, TLSv1.3 disabled on {host or 'target'}:{port}",
+            "url": url,
+            "host": host,
+            "timestamp": timestamp,
+            "raw": content,
+            "cve_id": None,
+            "cwe_id": "CWE-327",
+        })
     
     if weak_ciphers_found:
         findings.append({

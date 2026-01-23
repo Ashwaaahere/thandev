@@ -495,8 +495,12 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         
                         # CRITICAL: For ZAP, ALWAYS write output (even if empty array "[]")
                         # ZAP output is a JSON string of findings array, so we must write it
+                        # For other tools, write if we have any output (even if it's just whitespace)
+                        # Tools like httpx, nmap, sslscan may have output that needs parsing
                         is_zap = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
-                        should_write = output_text.strip() or is_zap
+                        # Always write if we have output text (even if empty string - parsers will handle it)
+                        # Only skip if output_text is None or completely missing
+                        should_write = output_text is not None and (len(output_text) > 0 or is_zap)
                         
                         if should_write:
                             output_file.write_text(output_text, encoding="utf-8")
@@ -533,6 +537,7 @@ async def process_step_request(message: Dict[str, Any]) -> None:
 
             # Parse findings if we have an output file
             # CRITICAL: Always try to parse if file exists, regardless of other conditions
+            # Also try to parse if we have output in result but file doesn't exist yet (write it first)
             # #region agent log
             try:
                 with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
@@ -541,6 +546,18 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:509","message":"Before file existence check","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False,"output_file_size":output_file.stat().st_size if output_file and output_file.exists() else 0},"timestamp":int(time.time()*1000)})+"\n")
             except: pass
             # #endregion
+            
+            # CRITICAL FIX: If we have output in result but file doesn't exist, write it now before parsing
+            if result and result.get("output") and output_file and not output_file.exists():
+                try:
+                    output_text = result.get("output") or ""
+                    if output_text:
+                        output_file.parent.mkdir(parents=True, exist_ok=True)
+                        output_file.write_text(output_text, encoding="utf-8")
+                        logger.info(f"[FALLBACK-WRITE] Wrote output to {output_file} (size={len(output_text)})")
+                except Exception as e:
+                    logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
+            
             if output_file and output_file.exists():
                 try:
                     logger.info(
@@ -578,7 +595,15 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         logger.info(f"Parsed {len(findings)} findings from nuclei")
                     elif tool_name == "httpx":
                         findings = parse_httpx_output(output_file)
-                        logger.info(f"Parsed {len(findings)} findings from httpx")
+                        logger.info(f"Parsed {len(findings)} findings from httpx (file={output_file}, size={output_file.stat().st_size if output_file.exists() else 0})")
+                        if len(findings) == 0 and output_file.exists() and output_file.stat().st_size > 0:
+                            # Log first few lines of output for debugging
+                            try:
+                                with open(output_file, 'r') as f:
+                                    first_lines = [f.readline().strip() for _ in range(3)]
+                                logger.warning(f"[HTTPX-DEBUG] No findings parsed but file has content. First lines: {first_lines}")
+                            except:
+                                pass
                     elif tool_name == "sslscan":
                         findings = parse_sslscan_output(output_file)
                         logger.info(f"Parsed {len(findings)} findings from sslscan")
@@ -587,7 +612,15 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         logger.info(f"Parsed {len(findings)} findings from dalfox")
                     elif tool_name == "nmap":
                         findings = parse_nmap_output(output_file)
-                        logger.info(f"Parsed {len(findings)} findings from nmap")
+                        logger.info(f"Parsed {len(findings)} findings from nmap (file={output_file}, size={output_file.stat().st_size if output_file.exists() else 0})")
+                        if len(findings) == 0 and output_file.exists() and output_file.stat().st_size > 0:
+                            # Log first few lines of output for debugging
+                            try:
+                                with open(output_file, 'r') as f:
+                                    first_chars = f.read(200)
+                                logger.warning(f"[NMAP-DEBUG] No findings parsed but file has content. First 200 chars: {first_chars}")
+                            except:
+                                pass
                     elif tool_name == "sqlmap":
                         findings = parse_sqlmap_output(output_file)
                         logger.info(f"Parsed {len(findings)} findings from sqlmap")
@@ -621,7 +654,51 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     except: pass
                     # #endregion
             else:
-                logger.warning(f"[PARSE-SKIP] Step {step_id} (tool={tool_name}): No output file to parse - output_file={output_file}, exists={output_file.exists() if output_file else False}")
+                # FALLBACK: If we have output in result but no file, try to parse from result directly
+                # This handles cases where file write failed or output wasn't written
+                if result and result.get("output") and result.get("output").strip():
+                    logger.warning(f"[PARSE-FALLBACK] Step {step_id} (tool={tool_name}): No output file, but have output in result. Attempting to parse from result output directly.")
+                    try:
+                        # Create a temporary file-like object or parse directly
+                        # For now, try to write to file one more time and then parse
+                        if output_file:
+                            output_file.parent.mkdir(parents=True, exist_ok=True)
+                            output_text = result.get("output")
+                            output_file.write_text(output_text, encoding="utf-8")
+                            logger.info(f"[PARSE-FALLBACK-WRITE] Wrote output to {output_file} for parsing")
+                            
+                            # Now try parsing again
+                            if output_file.exists() and output_file.stat().st_size > 0:
+                                if tool_name == "httpx":
+                                    findings = parse_httpx_output(output_file)
+                                elif tool_name == "nmap":
+                                    findings = parse_nmap_output(output_file)
+                                elif tool_name == "sslscan":
+                                    findings = parse_sslscan_output(output_file)
+                                elif tool_name == "nuclei":
+                                    findings = parse_nuclei_output(output_file)
+                                elif tool_name == "dalfox":
+                                    findings = parse_dalfox_output(output_file)
+                                elif tool_name == "sqlmap":
+                                    findings = parse_sqlmap_output(output_file)
+                                else:
+                                    findings = []
+                                findings_count = len(findings)
+                                logger.info(f"[PARSE-FALLBACK-SUCCESS] Parsed {findings_count} findings from fallback write")
+                            else:
+                                logger.warning(f"[PARSE-FALLBACK-FAIL] File still doesn't exist or is empty after write")
+                                findings = []
+                                findings_count = 0
+                        else:
+                            logger.warning(f"[PARSE-FALLBACK-SKIP] No output_file path available for fallback")
+                            findings = []
+                            findings_count = 0
+                    except Exception as fallback_err:
+                        logger.error(f"[PARSE-FALLBACK-ERROR] Failed to parse from fallback: {fallback_err}", exc_info=True)
+                        findings = []
+                        findings_count = 0
+                else:
+                    logger.warning(f"[PARSE-SKIP] Step {step_id} (tool={tool_name}): No output file to parse - output_file={output_file}, exists={output_file.exists() if output_file else False}, has_output_in_result={bool(result.get('output') if result else False)}")
                 # #region agent log
                 try:
                     with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
@@ -630,6 +707,8 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:557","message":"Parse skipped - file check failed","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False},"timestamp":int(time.time()*1000)})+"\n")
                 except: pass
                 # #endregion
+                    findings = []
+                    findings_count = 0
         except Exception as parse_section_error:
             logger.error(
                 f"[CRITICAL-PARSE-EXCEPTION] Exception in parsing section for step {step_id} (tool={tool_id}): {parse_section_error}",
@@ -688,6 +767,16 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             }) + '\n')
                     except: pass
                     # #endregion
+                    # CRITICAL: Log findings before POST to debug why findings_count is 0
+                    logger.info(
+                        f"[BEFORE-POST] Step {step_id} (tool={tool_name}): "
+                        f"findings_count={len(findings)}, "
+                        f"findings_sample={findings[0] if len(findings) > 0 else None}, "
+                        f"output_file={output_file}, "
+                        f"output_file_exists={output_file.exists() if output_file else False}, "
+                        f"result_has_output={bool(result.get('output') if result else False)}"
+                    )
+                    
                     success = await post_tool_result(
                         scan_job_id=scan_job_id,
                         step_id=step_id,
@@ -696,6 +785,11 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         findings=findings,
                         execution_result=result,
                         tool_run_id=tool_run_id,
+                    )
+                    
+                    logger.info(
+                        f"[AFTER-POST] Step {step_id} (tool={tool_name}): "
+                        f"POST success={success}, findings_count={len(findings)}"
                     )
                     # #region agent log
                     try:

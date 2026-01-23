@@ -97,6 +97,10 @@ async def run_url_sca_job(
         # Create ToolResult entry for wappalyzer
         wappalyzer_duration = time.time() - wappalyzer_start
         wappalyzer_count = len(technologies) if technologies else 0
+        # Log what we're sending
+        meta_to_send = {"technologies": technologies} if technologies else None
+        logger.warning(f"[WAPPALYZER-DEBUG] Sending wappalyzer result: technologies={len(technologies) if technologies else 0}, meta_data={meta_to_send}")
+        
         await create_dependency_tool_result(
             backend_url=backend_url,
             scan_id=scan_id,
@@ -106,6 +110,7 @@ async def run_url_sca_job(
             execution_time=wappalyzer_duration,
             findings_count=wappalyzer_count,
             error_message=wappalyzer_error,
+            meta_data=meta_to_send,
         )
         
         # Step 3: Retire.js
@@ -127,6 +132,11 @@ async def run_url_sca_job(
         # Create ToolResult entry for retire.js
         retire_duration = time.time() - retire_start
         retire_findings_count = len(findings) if findings else 0
+        retire_meta = {}
+        if client_deps:
+            retire_meta["client_dependencies"] = client_deps
+        if findings:
+            retire_meta["findings"] = findings
         await create_dependency_tool_result(
             backend_url=backend_url,
             scan_id=scan_id,
@@ -136,6 +146,7 @@ async def run_url_sca_job(
             execution_time=retire_duration,
             findings_count=retire_findings_count,
             error_message=retire_error,
+            meta_data=retire_meta if retire_meta else None,
         )
         
         # Calculate confidence
@@ -357,7 +368,11 @@ async def run_wappalyzer(target_url: str) -> List[Dict[str, Any]]:
             timeout=30,
         )
         
-        if result.returncode == 0 and result.stdout:
+        if result.returncode == 0:
+            if not result.stdout or not result.stdout.strip():
+                # Exit code 0 but no output - might be no technologies detected, which is valid
+                logger.info("httpx tech-detect completed with no technologies detected (exit code 0, empty output)")
+                return technologies  # Return empty list, not an error
             try:
                 data = json.loads(result.stdout.strip())
                 tech_detected = data.get("tech", [])
@@ -376,13 +391,18 @@ async def run_wappalyzer(target_url: str) -> List[Dict[str, Any]]:
                                 "confidence": 0.8,
                             })
                     logger.info(f"httpx tech-detect found {len(technologies)} technologies")
+                else:
+                    logger.info("httpx tech-detect returned no technologies (tech field is not a list)")
             except json.JSONDecodeError as e:
-                logger.warning(f"httpx returned invalid JSON: {e}")
-                raise FileNotFoundError("httpx tech-detect failed to parse output")
+                logger.warning(f"httpx returned invalid JSON: {e}, stdout: {result.stdout[:200]}")
+                # Don't fail completely - return empty list instead
+                logger.info("Returning empty technologies list due to JSON parse error")
+                return technologies
         else:
             stderr = result.stderr.strip() if result.stderr else ""
-            logger.warning(f"httpx tech-detect failed (exit {result.returncode}): {stderr}")
-            raise FileNotFoundError(f"httpx tech-detect failed with exit code {result.returncode}")
+            stdout_preview = result.stdout[:200] if result.stdout else ""
+            logger.warning(f"httpx tech-detect failed (exit {result.returncode}): {stderr}, stdout: {stdout_preview}")
+            raise FileNotFoundError(f"httpx tech-detect failed with exit code {result.returncode}: {stderr or 'unknown error'}")
     except subprocess.TimeoutExpired:
         logger.warning("httpx tech-detect timed out after 30 seconds")
         raise FileNotFoundError("httpx tech-detect timed out")
@@ -813,6 +833,7 @@ async def create_dependency_tool_result(
     execution_time: float,
     findings_count: int = 0,
     error_message: Optional[str] = None,
+    meta_data: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Create a ToolResult entry for dependency scanning tools (wappalyzer, retire.js).
@@ -825,6 +846,16 @@ async def create_dependency_tool_result(
         # Generate unique tool_run_id for idempotency
         tool_run_id = str(uuid.uuid4())
         
+        # Build meta dict with dependency scan flag and any additional data
+        meta_dict = {
+            "dependency_scan_tool": True,
+            "findings_count": findings_count,  # Store actual count in meta
+        }
+        if meta_data:
+            meta_dict.update(meta_data)
+        
+        logger.warning(f"[DEPENDENCY-TOOL-DEBUG] Creating {tool_name} tool result: meta_dict={meta_dict}")
+        
         # Build execution result payload
         execution_result = {
             "success": success,
@@ -833,11 +864,10 @@ async def create_dependency_tool_result(
             "error": error_message,
             "error_message": error_message,
             "timed_out": False,
-            "meta": {
-                "dependency_scan_tool": True,
-                "findings_count": findings_count,  # Store actual count in meta
-            },
+            "meta": meta_dict,
         }
+        
+        logger.warning(f"[DEPENDENCY-TOOL-DEBUG] execution_result.meta={execution_result.get('meta')}")
         
         # Use the same post_tool_result function that regular tools use
         from app.backend_client import post_tool_result
@@ -897,10 +927,15 @@ async def post_callback(
         ).hexdigest()
         headers["X-Runner-Signature"] = signature
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            callback_url,
-            content=body,
-            headers=headers,
-        )
-        response.raise_for_status()
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                callback_url,
+                content=body,
+                headers=headers,
+            )
+            response.raise_for_status()
+            logger.info(f"Posted scan artifact {artifact_type} to backend callback (status code {response.status_code})")
+    except Exception as e:
+        logger.error(f"Failed to post callback for {artifact_type} (scan {scan_id}): {e}", exc_info=True)
+        raise  # Re-raise to let caller handle it

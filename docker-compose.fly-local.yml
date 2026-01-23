@@ -10,7 +10,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h localhost"]
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h localhost" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,7 +22,7 @@ services:
     ports:
       - "6380:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -49,7 +49,7 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
-    command: ["./entrypoint.sh"]
+    command: [ "./entrypoint.sh" ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
@@ -69,9 +69,9 @@ services:
         condition: service_started
     ports:
       - "8001:8001"
-    command: ["./start_brain.sh"]
+    command: [ "./start_brain.sh" ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8001/docs"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8001/docs" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -84,10 +84,10 @@ services:
     container_name: zap
     ports:
       - "8090:8090"
-      - "8080:8080"  # Expose proxy port so runner can access URLs through ZAP
-    command: ["zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "api.disablekey=true", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true", "-config", "api.addrs.addr.enabled=true"]
+      - "8080:8080" # Expose proxy port so runner can access URLs through ZAP
+    command: [ "zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "api.disablekey=true", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true", "-config", "api.addrs.addr.enabled=true" ]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -125,7 +125,7 @@ services:
         condition: service_started
       zap:
         condition: service_healthy
-    command: ["./start_runner.sh"]
+    command: [ "./start_runner.sh" ]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     dns:

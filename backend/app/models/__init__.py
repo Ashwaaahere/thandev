@@ -3,6 +3,7 @@
 from app.models.user import User
 from app.models.tenant import Tenant
 from app.models.project import Project
+from app.models.project_url import ProjectUrl
 from app.models.scan import ScanJob
 from app.models.finding import Finding, ToolResult
 from app.models.domain_verification import DomainVerification, DomainVerificationStatus
@@ -19,6 +20,7 @@ __all__ = [
     "User",
     "Tenant",
     "Project",
+    "ProjectUrl",
     "ScanJob",
     "Finding",
     "ToolResult",

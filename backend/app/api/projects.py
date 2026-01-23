@@ -40,7 +40,10 @@ from app.schemas.project import (
     ProjectListWithStatsResponse,
     ProjectOverviewResponse,
     ProjectOverviewStats,
+    ProjectUrlResponse,
+    ProjectUrlCreate,
 )
+from app.models.project_url import ProjectUrl
 
 router = APIRouter(
     prefix="/projects",
@@ -113,6 +116,10 @@ def create_project(
             project = db.query(Project).filter(Project.id == project.id).first()
         else:
             raise
+    
+    # Load project_urls relationship
+    project_urls = db.query(ProjectUrl).filter(ProjectUrl.project_id == project.id).all()
+    project.project_urls = project_urls
     
     # ProjectResponse is a Pydantic model; from_attributes is enabled in its Config
     # ProjectResponse doesn't include performance_scans, so this should be safe
@@ -374,7 +381,11 @@ async def get_project(
             detail=f"Project not found. The project ID '{project_id}' does not exist or you don't have permission to access it."
         )
     
-    return project
+    # Load project_urls relationship
+    project_urls = db.query(ProjectUrl).filter(ProjectUrl.project_id == project.id).all()
+    project.project_urls = project_urls
+    
+    return ProjectResponse.model_validate(project)
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -471,6 +482,89 @@ def delete_project(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete project: {str(e)}",
         )
+
+
+@router.post("/{project_id}/urls", response_model=ProjectUrlResponse, status_code=status.HTTP_201_CREATED)
+def add_project_url(
+    project_id: str,
+    payload: ProjectUrlCreate,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Add a URL to a project.
+    Requires X-Thandev-Tenant-Id and X-Thandev-User-Id headers.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    project = _project_for_tenant_user(db, project_id, tenant, current_user)
+    
+    # Convert HttpUrl to string
+    url_str = str(payload.url)
+    
+    # Check if URL already exists for this project
+    existing = db.query(ProjectUrl).filter(
+        ProjectUrl.project_id == project.id,
+        ProjectUrl.url == url_str
+    ).first()
+    
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This URL already exists for this project"
+        )
+    
+    # Create new project URL
+    project_url = ProjectUrl(
+        project_id=project.id,
+        url=url_str
+    )
+    db.add(project_url)
+    db.commit()
+    db.refresh(project_url)
+    
+    return ProjectUrlResponse.model_validate(project_url)
+
+
+@router.delete("/{project_id}/urls/{url_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_project_url(
+    project_id: str,
+    url_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Delete a URL from a project.
+    Requires X-Thandev-Tenant-Id and X-Thandev-User-Id headers.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    project = _project_for_tenant_user(db, project_id, tenant, current_user)
+    
+    # Find the URL and verify it belongs to this project
+    project_url = db.query(ProjectUrl).filter(
+        ProjectUrl.id == url_id,
+        ProjectUrl.project_id == project.id
+    ).first()
+    
+    if not project_url:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="URL not found"
+        )
+    
+    db.delete(project_url)
+    db.commit()
 
 
 @router.get("/{project_id}/overview", response_model=ProjectOverviewResponse)

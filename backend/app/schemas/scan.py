@@ -221,7 +221,9 @@ class ToolResultCreate(BaseModel):
     stderr_preview: Optional[str] = None
     # Tool run tracking
     targets_count: int = Field(0, description="Number of targets (URLs/params/requests) fed to tool")
-    meta: Optional[Dict[str, Any]] = Field(None, description="Additional metadata (tool args, version, harvester stats)")
+    meta: Optional[Dict[str, Any]] = Field(default=None, description="Additional metadata (tool args, version, harvester stats)")
+    
+    model_config = ConfigDict(extra="allow")  # Allow extra fields to ensure meta is not dropped
 
 
 class ToolResultResponse(BaseModel):

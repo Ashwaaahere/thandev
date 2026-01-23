@@ -62,6 +62,17 @@ def parse_nmap_output(path: Path) -> List[Dict[str, Any]]:
             if ports_elem is None:
                 continue
             
+            # Check for extraports (filtered/closed ports summary)
+            extraports = ports_elem.find("extraports")
+            extraports_state = None
+            extraports_count = 0
+            if extraports is not None:
+                extraports_state = extraports.get("state", "")
+                extraports_count = int(extraports.get("count", "0"))
+            
+            # Track if we found any open ports
+            open_ports_found = False
+            
             for port in ports_elem.findall("port"):
                 port_id = port.get("portid")
                 protocol = port.get("protocol", "tcp")
@@ -72,8 +83,11 @@ def parse_nmap_output(path: Path) -> List[Dict[str, Any]]:
                 
                 state = state_elem.get("state", "unknown")
                 
-                # Only report open ports
-                if state != "open":
+                # Track open ports
+                if state == "open":
+                    open_ports_found = True
+                # Only report open ports (filtered/closed ports are not security findings)
+                elif state != "open":
                     continue
                 
                 # Get service information
@@ -136,6 +150,40 @@ def parse_nmap_output(path: Path) -> List[Dict[str, Any]]:
                 }
                 
                 findings.append(finding)
+            
+            # If no open ports were found but we have filtered ports, report them as informational findings
+            # This ensures nmap scans always produce some results when ports are discovered (even if filtered)
+            if not open_ports_found and extraports_state == "filtered" and extraports_count > 0:
+                # Extract port ranges from extraports if available
+                extraports_reasons = extraports.findall("extrareasons")
+                port_ranges = []
+                for reason in extraports_reasons:
+                    ports_attr = reason.get("ports", "")
+                    if ports_attr:
+                        port_ranges.append(ports_attr)
+                
+                # Create informational finding about filtered ports
+                filtered_ports_desc = f"{extraports_count} ports are filtered (no response)"
+                if port_ranges:
+                    filtered_ports_desc += f" on ports: {', '.join(port_ranges[:3])}"  # Show first 3 ranges
+                    if len(port_ranges) > 3:
+                        filtered_ports_desc += f" and {len(port_ranges) - 3} more"
+                
+                findings.append({
+                    "tool_id": "nmap",
+                    "title": f"Filtered ports detected on {hostname}",
+                    "severity": "info",
+                    "description": f"Nmap scan detected {extraports_count} filtered ports on {hostname} ({host_ip}). Filtered ports typically indicate firewall rules or network filtering. {filtered_ports_desc}.",
+                    "evidence": f"{extraports_count} filtered ports detected on {hostname}",
+                    "host": hostname,
+                    "url": None,
+                    "raw": {
+                        "host": hostname,
+                        "ip": host_ip,
+                        "filtered_ports_count": extraports_count,
+                        "port_ranges": port_ranges,
+                    },
+                })
         
         logger.info("Parsed %d nmap findings from file %s", len(findings), path)
         return findings

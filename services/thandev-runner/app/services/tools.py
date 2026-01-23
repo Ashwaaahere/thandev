@@ -1239,12 +1239,16 @@ class ToolExecutor:
             exec_duration = time.time() - exec_start_time
             logger.info(f"nmap execution completed in {exec_duration:.2f}s for {hostname}")
             
+            # nmap can return non-zero exit codes even when it finds ports
+            # Consider it successful if we have output OR exit code is 0
+            is_success = result.returncode == 0 or (result.stdout and len(result.stdout.strip()) > 0)
+            
             return {
                 "tool_name": "nmap",
                 "output": result.stdout or "",
                 "exit_code": result.returncode,
                 "command": " ".join(cmd),
-                "success": result.returncode == 0,
+                "success": is_success,
                 "execution_time": exec_duration,  # Accurate subprocess-only execution time
             }
         except subprocess.TimeoutExpired:
@@ -2355,19 +2359,32 @@ class ToolExecutor:
         
         # If using hostname, try to resolve it first, fallback to alternative DNS
         # Try .internal first (standard for Fly.io private networking), then .flycast as fallback
+        # Also handle simple "zap" hostname (docker-compose local setup)
+        from urllib.parse import urlparse
+        import socket
+        parsed_original = urlparse(zap_api_url)
         zap_api_urls_to_try = [zap_api_url]
-        if "thandev-zap.internal" in zap_api_url:
+        
+        # Handle simple "zap" hostname (docker-compose local setup)
+        if parsed_original.hostname == "zap":
+            # Simple "zap" hostname - try as-is first (docker-compose), then try thandev-zap variants
+            # Replace hostname while preserving port
+            port = f":{parsed_original.port}" if parsed_original.port else ""
+            zap_api_urls_to_try.extend([
+                f"{parsed_original.scheme}://thandev-zap.internal{port}{parsed_original.path or ''}",
+                f"{parsed_original.scheme}://thandev-zap.flycast{port}{parsed_original.path or ''}",
+            ])
+        elif "thandev-zap.internal" in zap_api_url:
             # Add .flycast fallback (though .internal should work)
             zap_api_urls_to_try.append(zap_api_url.replace(".internal", ".flycast"))
         elif "thandev-zap.flycast" in zap_api_url:
             # Add .internal fallback (preferred)
             zap_api_urls_to_try.insert(0, zap_api_url.replace(".flycast", ".internal"))
         
-        if "zap:" in zap_api_url or "thandev-zap" in zap_api_url:
+        # Try to resolve hostname for any ZAP URL
+        if parsed_original.hostname and (parsed_original.hostname == "zap" or "thandev-zap" in parsed_original.hostname):
             for url_to_try in zap_api_urls_to_try:
                 try:
-                    import socket
-                    from urllib.parse import urlparse
                     parsed = urlparse(url_to_try)
                     hostname = parsed.hostname
                     if hostname:
@@ -2387,71 +2404,63 @@ class ToolExecutor:
         # Ensure ZAP is running and accessible - retry with backoff
         # Note: ZAP API may require apikey parameter even if disabled, so we add it as empty
         # CRITICAL: ZAP container may need time to fully start, so we increase retries and delays
-        health_check_url = f"{zap_api_url}/JSON/core/view/version/?apikey="
+        # Try all fallback URLs during connection attempts, not just DNS resolution
         max_retries = 10  # Increased from 5 to 10 for better reliability
         retry_delay = 5  # Increased from 3 to 5 seconds
         zap_accessible = False
         http_session = None
+        working_url = None
         
+        # Try each URL in the fallback list during connection attempts
         for attempt in range(max_retries):
-            try:
-                http_session = requests.Session()
-                http_session.mount('http://', requests.adapters.HTTPAdapter(max_retries=1))
-                # Increased timeout to 30s for better reliability on slow networks
-                response = await asyncio.to_thread(http_session.get, health_check_url, timeout=30)
-                response.raise_for_status()
-                logger.info(f"ZAP API is accessible: {response.json().get('version')}")
-                zap_accessible = True
+            # Try each URL in the fallback list
+            for url_to_try in zap_api_urls_to_try:
+                health_check_url = f"{url_to_try}/JSON/core/view/version/?apikey="
+                try:
+                    http_session = requests.Session()
+                    http_session.mount('http://', requests.adapters.HTTPAdapter(max_retries=1))
+                    # Increased timeout to 30s for better reliability on slow networks
+                    response = await asyncio.to_thread(http_session.get, health_check_url, timeout=30)
+                    response.raise_for_status()
+                    logger.info(f"ZAP API is accessible at {url_to_try}: {response.json().get('version')}")
+                    zap_accessible = True
+                    zap_api_url = url_to_try  # Update to working URL
+                    working_url = url_to_try
+                    break
+                except requests.exceptions.ConnectionError as e:
+                    # Try next URL in fallback list
+                    logger.debug(f"ZAP connection error for {url_to_try}: {e}. Trying next URL...")
+                    continue
+                except requests.exceptions.Timeout as e:
+                    # Try next URL in fallback list
+                    logger.debug(f"ZAP timeout for {url_to_try}: {e}. Trying next URL...")
+                    continue
+                except Exception as e:
+                    # Try next URL in fallback list
+                    logger.debug(f"ZAP health check failed for {url_to_try}: {e}. Trying next URL...")
+                    continue
+            
+            # If we found a working URL, break out of retry loop
+            if zap_accessible:
                 break
-            except requests.exceptions.ConnectionError as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"ZAP connection error (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.3, 20)  # Cap at 20s max delay
-                else:
-                    error_msg = f"ZAP API connection failed at {zap_api_url} after {max_retries} attempts: {e}. Check if ZAP service is running."
-                    logger.error(error_msg)
-                    return {
-                        "tool_name": "zap",
-                        "output": "[]",
-                        "exit_code": -1,
-                        "error": error_msg,
-                        "command": f"ZAP API call to {health_check_url}",
-                        "success": False,
-                    }
-            except requests.exceptions.Timeout as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"ZAP timeout (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {retry_delay}s...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.3, 20)
-                else:
-                    error_msg = f"ZAP API timeout at {zap_api_url} after {max_retries} attempts: {e}. ZAP may be overloaded or unreachable."
-                    logger.error(error_msg)
-                    return {
-                        "tool_name": "zap",
-                        "output": "[]",
-                        "exit_code": -1,
-                        "error": error_msg,
-                        "command": f"ZAP API call to {health_check_url}",
-                        "success": False,
-                    }
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"ZAP health check attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {retry_delay}s...")
-                    await asyncio.sleep(retry_delay)
-                    retry_delay = min(retry_delay * 1.3, 20)
-                else:
-                    error_msg = f"ZAP API not accessible at {zap_api_url} after {max_retries} attempts: {e}. ZAP is not deployed to Fly.io - skipping ZAP scan."
-                    logger.warning(error_msg)
-                    # Return empty results instead of failing - ZAP is optional in Fly.io deployment
-                    return {
-                        "tool_name": "zap",
-                        "output": "[]",
-                        "exit_code": -1,
-                        "error": error_msg,
-                        "command": f"ZAP API call to {health_check_url}",
-                        "success": False,
-                    }
+            
+            # If all URLs failed, wait and retry
+            if attempt < max_retries - 1:
+                logger.warning(f"ZAP connection failed for all URLs (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay}s...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.3, 20)  # Cap at 20s max delay
+            else:
+                # All attempts exhausted
+                error_msg = f"ZAP API connection failed after {max_retries} attempts. Tried URLs: {', '.join(zap_api_urls_to_try)}. Check if ZAP service is running."
+                logger.error(error_msg)
+                return {
+                    "tool_name": "zap",
+                    "output": "[]",
+                    "exit_code": -1,
+                    "error": error_msg,
+                    "command": f"ZAP API call to {zap_api_urls_to_try[0]}/JSON/core/view/version/",
+                    "success": False,
+                }
         
         if not zap_accessible or not http_session:
             return {
