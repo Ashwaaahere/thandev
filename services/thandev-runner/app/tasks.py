@@ -707,8 +707,6 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:557","message":"Parse skipped - file check failed","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False},"timestamp":int(time.time()*1000)})+"\n")
                 except: pass
                 # #endregion
-                    findings = []
-                    findings_count = 0
         except Exception as parse_section_error:
             logger.error(
                 f"[CRITICAL-PARSE-EXCEPTION] Exception in parsing section for step {step_id} (tool={tool_id}): {parse_section_error}",
