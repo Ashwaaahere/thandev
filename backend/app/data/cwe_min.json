@@ -1,0 +1,642 @@
+{
+  "79": {
+    "id": 79,
+    "title": "Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting')",
+    "summary": "The application does not neutralize or incorrectly neutralizes user-controllable input before it is placed in output that is used as a web page that is served to other users.",
+    "why_it_matters": "XSS vulnerabilities allow attackers to inject malicious scripts into web pages viewed by other users. This can lead to session hijacking, defacement, or theft of sensitive data.",
+    "common_impacts": [
+      "Session hijacking",
+      "Account takeover",
+      "Theft of sensitive data",
+      "Website defacement",
+      "Malware distribution"
+    ],
+    "basic_mitigations": [
+      "Use output encoding/escaping for all user-supplied data",
+      "Implement Content Security Policy (CSP)",
+      "Use framework-provided templating that auto-escapes",
+      "Validate and sanitize all input",
+      "Use HTTP-only cookies for session management"
+    ]
+  },
+  "89": {
+    "id": 89,
+    "title": "Improper Neutralization of Special Elements used in an SQL Command ('SQL Injection')",
+    "summary": "The application constructs all or part of an SQL command using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended SQL command when it is sent to a downstream component.",
+    "why_it_matters": "SQL injection allows attackers to execute arbitrary SQL commands, potentially leading to unauthorized data access, data modification, or complete database compromise.",
+    "common_impacts": [
+      "Unauthorized data access",
+      "Data modification or deletion",
+      "Authentication bypass",
+      "Complete database compromise",
+      "Remote code execution (in some cases)"
+    ],
+    "basic_mitigations": [
+      "Use parameterized queries (prepared statements)",
+      "Use ORM frameworks with built-in protection",
+      "Validate and sanitize all input",
+      "Use least-privilege database accounts",
+      "Implement input whitelisting where possible"
+    ]
+  },
+  "1021": {
+    "id": 1021,
+    "title": "Improper Restriction of Rendered UI Layers or Frames",
+    "summary": "The web application does not restrict or incorrectly restricts frame objects or UI layers that belong to another application or domain, which can lead to user confusion about which interface the user is interacting with.",
+    "why_it_matters": "Clickjacking attacks trick users into clicking on elements they cannot see, potentially leading to unauthorized actions or data exposure.",
+    "common_impacts": [
+      "Session riding",
+      "UI redress attacks",
+      "Unauthorized actions",
+      "Data exposure",
+      "Account compromise"
+    ],
+    "basic_mitigations": [
+      "Set X-Frame-Options header to DENY or SAMEORIGIN",
+      "Use Content Security Policy (CSP) frame-ancestors directive",
+      "Implement frame-busting JavaScript (less reliable)",
+      "Use SameSite cookie attribute"
+    ]
+  },
+  "319": {
+    "id": 319,
+    "title": "Cleartext Transmission of Sensitive Information",
+    "summary": "The software transmits sensitive or security-critical data in cleartext in a communication channel that can be sniffed by unauthorized actors.",
+    "why_it_matters": "Transmitting sensitive data over unencrypted channels allows attackers to intercept and read the information, leading to data breaches and privacy violations.",
+    "common_impacts": [
+      "Data interception",
+      "Credential theft",
+      "Privacy violations",
+      "Man-in-the-middle attacks",
+      "Compliance violations"
+    ],
+    "basic_mitigations": [
+      "Use HTTPS/TLS for all sensitive communications",
+      "Implement HTTP Strict Transport Security (HSTS)",
+      "Never send credentials or sensitive data over HTTP",
+      "Use secure protocols (TLS 1.2+)",
+      "Validate SSL/TLS certificates properly"
+    ]
+  },
+  "200": {
+    "id": 200,
+    "title": "Exposure of Sensitive Information to an Unauthorized Actor",
+    "summary": "The product exposes sensitive information to an actor that is not explicitly authorized to have access to that information.",
+    "why_it_matters": "Information disclosure vulnerabilities can reveal sensitive data, system information, or implementation details that aid attackers in further exploitation.",
+    "common_impacts": [
+      "Sensitive data exposure",
+      "System information disclosure",
+      "Credential exposure",
+      "Privacy violations",
+      "Aid to further attacks"
+    ],
+    "basic_mitigations": [
+      "Remove sensitive information from error messages",
+      "Implement proper access controls",
+      "Use secure defaults",
+      "Encrypt sensitive data at rest",
+      "Audit and log access to sensitive information"
+    ]
+  },
+  "352": {
+    "id": 352,
+    "title": "Cross-Site Request Forgery (CSRF)",
+    "summary": "The web application does not, or can not, sufficiently verify that a well-formed, valid, consistent request was intentionally provided by the user who submitted the request.",
+    "why_it_matters": "CSRF attacks force authenticated users to perform unwanted actions on web applications, potentially leading to unauthorized state changes or data modifications.",
+    "common_impacts": [
+      "Unauthorized state changes",
+      "Account modification",
+      "Data manipulation",
+      "Privilege escalation",
+      "Financial fraud"
+    ],
+    "basic_mitigations": [
+      "Use CSRF tokens (synchronizer tokens)",
+      "Implement SameSite cookie attribute",
+      "Verify Origin/Referer headers",
+      "Use double-submit cookies",
+      "Require re-authentication for sensitive operations"
+    ]
+  },
+  "434": {
+    "id": 434,
+    "title": "Unrestricted Upload of File with Dangerous Type",
+    "summary": "The application allows the upload of a file with a dangerous type that can be automatically processed within the product's environment.",
+    "why_it_matters": "Unrestricted file uploads can allow attackers to upload malicious files that are executed on the server, leading to remote code execution or system compromise.",
+    "common_impacts": [
+      "Remote code execution",
+      "System compromise",
+      "Malware distribution",
+      "Denial of service",
+      "Data exfiltration"
+    ],
+    "basic_mitigations": [
+      "Validate file types (check MIME type and extension)",
+      "Scan uploaded files for malware",
+      "Store uploaded files outside web root",
+      "Use whitelist of allowed file types",
+      "Rename uploaded files to prevent execution"
+    ]
+  },
+  "601": {
+    "id": 601,
+    "title": "URL Redirection to Untrusted Site ('Open Redirect')",
+    "summary": "A web application accepts a user-controlled input that specifies a link to an external site, and uses that link in a Redirect.",
+    "why_it_matters": "Open redirects can be used in phishing attacks to trick users into visiting malicious sites that appear to be legitimate, leading to credential theft or malware installation.",
+    "common_impacts": [
+      "Phishing attacks",
+      "Credential theft",
+      "Malware distribution",
+      "User confusion",
+      "Trust exploitation"
+    ],
+    "basic_mitigations": [
+      "Whitelist allowed redirect URLs",
+      "Validate redirect URLs against allowed domains",
+      "Use relative URLs when possible",
+      "Warn users before external redirects",
+      "Implement redirect confirmation pages"
+    ]
+  },
+  "798": {
+    "id": 798,
+    "title": "Use of Hard-coded Credentials",
+    "summary": "The software contains hard-coded credentials, such as a password or cryptographic key, which it uses for its own inbound authentication, outbound communication to external components, or encryption of internal data.",
+    "why_it_matters": "Hard-coded credentials can be easily discovered and exploited, leading to unauthorized access and complete system compromise.",
+    "common_impacts": [
+      "Unauthorized access",
+      "System compromise",
+      "Data breach",
+      "Privilege escalation",
+      "Compliance violations"
+    ],
+    "basic_mitigations": [
+      "Use environment variables or secure vaults",
+      "Implement credential rotation",
+      "Never commit credentials to source code",
+      "Use secure key management systems",
+      "Implement proper access controls"
+    ]
+  },
+  "209": {
+    "id": 209,
+    "title": "Generation of Error Message Containing Sensitive Information",
+    "summary": "The software generates an error message that includes sensitive information about its environment, users, or associated data.",
+    "why_it_matters": "Error messages that leak sensitive information can reveal system details, user data, or implementation specifics that aid attackers in further exploitation.",
+    "common_impacts": [
+      "Information disclosure",
+      "System fingerprinting",
+      "Aid to further attacks",
+      "Privacy violations",
+      "Credential exposure"
+    ],
+    "basic_mitigations": [
+      "Use generic error messages for users",
+      "Log detailed errors server-side only",
+      "Sanitize error messages before display",
+      "Implement proper error handling",
+      "Avoid exposing stack traces to users"
+    ]
+  },
+  "311": {
+    "id": 311,
+    "title": "Missing Encryption of Sensitive Data",
+    "summary": "The software does not encrypt sensitive or critical information before storage or transmission.",
+    "why_it_matters": "Unencrypted sensitive data can be easily accessed if storage or transmission channels are compromised, leading to data breaches and privacy violations.",
+    "common_impacts": [
+      "Data breach",
+      "Privacy violations",
+      "Compliance violations",
+      "Identity theft",
+      "Financial fraud"
+    ],
+    "basic_mitigations": [
+      "Encrypt sensitive data at rest",
+      "Use strong encryption algorithms",
+      "Implement proper key management",
+      "Encrypt data in transit (TLS/SSL)",
+      "Follow encryption best practices"
+    ]
+  },
+  "326": {
+    "id": 326,
+    "title": "Inadequate Encryption Strength",
+    "summary": "The software stores or transmits sensitive data using an encryption scheme that is theoretically sound, but is not strong enough for the level of protection required.",
+    "why_it_matters": "Weak encryption can be easily broken by attackers, rendering the protection ineffective and exposing sensitive data.",
+    "common_impacts": [
+      "Data decryption by attackers",
+      "Privacy violations",
+      "Compliance violations",
+      "Credential exposure",
+      "System compromise"
+    ],
+    "basic_mitigations": [
+      "Use strong encryption algorithms (AES-256, RSA-2048+)",
+      "Avoid deprecated algorithms (MD5, SHA1, DES)",
+      "Use proper key sizes",
+      "Implement key rotation",
+      "Follow current encryption standards"
+    ]
+  },
+  "327": {
+    "id": 327,
+    "title": "Use of a Broken or Risky Cryptographic Algorithm",
+    "summary": "The use of a broken or risky cryptographic algorithm is an unnecessary risk that may result in the exposure of sensitive information.",
+    "why_it_matters": "Broken cryptographic algorithms can be easily compromised, allowing attackers to decrypt protected data or forge authentication tokens.",
+    "common_impacts": [
+      "Data decryption",
+      "Authentication bypass",
+      "Data integrity violations",
+      "Privacy violations",
+      "System compromise"
+    ],
+    "basic_mitigations": [
+      "Use modern, secure cryptographic algorithms",
+      "Avoid deprecated algorithms (MD5, SHA1, RC4, DES)",
+      "Use TLS 1.2+ for transport encryption",
+      "Implement proper key management",
+      "Follow cryptographic best practices"
+    ]
+  },
+  "22": {
+    "id": 22,
+    "title": "Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')",
+    "summary": "The software uses external input to construct a pathname that is intended to identify a file or directory that is located underneath a restricted parent directory, but the software does not properly neutralize special elements within the pathname that can cause the pathname to resolve to a location that is outside of the restricted directory.",
+    "why_it_matters": "Path traversal vulnerabilities allow attackers to access files and directories outside the intended directory, potentially leading to sensitive file disclosure or system compromise.",
+    "common_impacts": [
+      "Sensitive file disclosure",
+      "System information exposure",
+      "Configuration file access",
+      "Source code exposure",
+      "System compromise"
+    ],
+    "basic_mitigations": [
+      "Validate and sanitize file paths",
+      "Use whitelist of allowed files",
+      "Use chroot or similar sandboxing",
+      "Normalize paths before use",
+      "Implement proper access controls"
+    ]
+  },
+  "306": {
+    "id": 306,
+    "title": "Missing Authentication for Critical Function",
+    "summary": "The software does not perform any authentication for functionality that requires a provable user identity or consumes a significant amount of resources.",
+    "why_it_matters": "Missing authentication allows unauthorized users to access critical functionality, potentially leading to data breaches, system compromise, or resource exhaustion.",
+    "common_impacts": [
+      "Unauthorized access",
+      "Data breach",
+      "System compromise",
+      "Resource exhaustion",
+      "Privilege escalation"
+    ],
+    "basic_mitigations": [
+      "Require authentication for all critical functions",
+      "Implement proper session management",
+      "Use multi-factor authentication for sensitive operations",
+      "Validate user identity before operations",
+      "Implement role-based access control"
+    ]
+  },
+  "307": {
+    "id": 307,
+    "title": "Improper Restriction of Excessive Authentication Attempts",
+    "summary": "The software does not implement rate limiting or other restrictions on authentication attempts, allowing brute force attacks.",
+    "why_it_matters": "Unrestricted authentication attempts allow attackers to brute force credentials, potentially leading to unauthorized access and account compromise.",
+    "common_impacts": [
+      "Credential theft",
+      "Account compromise",
+      "Unauthorized access",
+      "System compromise",
+      "Data breach"
+    ],
+    "basic_mitigations": [
+      "Implement account lockout after failed attempts",
+      "Use CAPTCHA after multiple failures",
+      "Implement rate limiting",
+      "Use progressive delays",
+      "Monitor and alert on suspicious patterns"
+    ]
+  },
+  "502": {
+    "id": 502,
+    "title": "Deserialization of Untrusted Data",
+    "summary": "The application deserializes untrusted data without sufficient verification of the resulting data, potentially leading to remote code execution.",
+    "why_it_matters": "Deserialization vulnerabilities can allow attackers to execute arbitrary code, leading to complete system compromise.",
+    "common_impacts": [
+      "Remote code execution",
+      "System compromise",
+      "Data breach",
+      "Privilege escalation",
+      "Denial of service"
+    ],
+    "basic_mitigations": [
+      "Avoid deserializing untrusted data",
+      "Use safe serialization formats (JSON)",
+      "Implement integrity checks",
+      "Use whitelist of allowed classes",
+      "Isolate deserialization in sandboxed environment"
+    ]
+  },
+  "918": {
+    "id": 918,
+    "title": "Server-Side Request Forgery (SSRF)",
+    "summary": "The web server receives a URL or similar request from an upstream component and retrieves the contents of this URL, but it does not sufficiently ensure that the request is being sent to the expected destination.",
+    "why_it_matters": "SSRF vulnerabilities allow attackers to make requests from the server to internal resources or external systems, potentially leading to information disclosure or system compromise.",
+    "common_impacts": [
+      "Internal network access",
+      "Information disclosure",
+      "System compromise",
+      "Cloud metadata access",
+      "Port scanning"
+    ],
+    "basic_mitigations": [
+      "Validate and whitelist allowed URLs",
+      "Block private IP ranges",
+      "Use URL parsing libraries carefully",
+      "Implement network segmentation",
+      "Monitor outbound requests"
+    ]
+  },
+  "693": {
+    "id": 693,
+    "title": "Protection Mechanism Failure",
+    "summary": "The product does not use or incorrectly uses a protection mechanism that provides sufficient defense against directed attacks against the product.",
+    "why_it_matters": "Missing or misconfigured security mechanisms leave applications vulnerable to attacks that could otherwise be prevented by proper security controls.",
+    "common_impacts": [
+      "Bypass of security controls",
+      "Unauthorized access",
+      "Data exposure",
+      "System compromise",
+      "Compliance violations"
+    ],
+    "basic_mitigations": [
+      "Implement defense-in-depth security",
+      "Use framework-provided security features",
+      "Configure security headers properly",
+      "Enable and test security mechanisms",
+      "Regular security audits"
+    ]
+  },
+  "497": {
+    "id": 497,
+    "title": "Exposure of Sensitive System Information to an Unauthorized Control Sphere",
+    "summary": "The application does not properly prevent sensitive system-level information from being accessed by unauthorized actors.",
+    "why_it_matters": "Exposure of system information can reveal implementation details, configuration, or infrastructure that aids attackers in planning further attacks.",
+    "common_impacts": [
+      "System fingerprinting",
+      "Information disclosure",
+      "Aid to further attacks",
+      "Configuration exposure",
+      "Infrastructure mapping"
+    ],
+    "basic_mitigations": [
+      "Remove or obfuscate system information from responses",
+      "Disable verbose error messages in production",
+      "Remove server version headers",
+      "Implement proper access controls",
+      "Audit information disclosure points"
+    ]
+  },
+  "345": {
+    "id": 345,
+    "title": "Insufficient Verification of Data Authenticity",
+    "summary": "The software does not sufficiently verify the origin or authenticity of data, allowing it to be spoofed or tampered with.",
+    "why_it_matters": "Without proper verification, attackers can inject malicious data or impersonate legitimate sources, leading to various security breaches.",
+    "common_impacts": [
+      "Data tampering",
+      "Impersonation attacks",
+      "Man-in-the-middle attacks",
+      "Integrity violations",
+      "Trust exploitation"
+    ],
+    "basic_mitigations": [
+      "Use digital signatures for data verification",
+      "Implement HMAC for message authentication",
+      "Verify SSL/TLS certificates properly",
+      "Use secure protocols with built-in authentication",
+      "Implement integrity checks"
+    ]
+  },
+  "829": {
+    "id": 829,
+    "title": "Inclusion of Functionality from Untrusted Control Sphere",
+    "summary": "The software imports, requires, or includes executable functionality from a source that is outside of the intended control sphere.",
+    "why_it_matters": "Including untrusted code can introduce malicious functionality or vulnerabilities into the application, leading to system compromise.",
+    "common_impacts": [
+      "Remote code execution",
+      "System compromise",
+      "Data breach",
+      "Supply chain attacks",
+      "Malware injection"
+    ],
+    "basic_mitigations": [
+      "Use Subresource Integrity (SRI) for external scripts",
+      "Whitelist allowed sources in Content Security Policy",
+      "Verify integrity of third-party libraries",
+      "Use dependency scanning tools",
+      "Host critical resources locally"
+    ]
+  },
+  "264": {
+    "id": 264,
+    "title": "Permissions, Privileges, and Access Controls",
+    "summary": "Weaknesses in this category are related to the management of permissions, privileges, and other security features that are used to perform access control.",
+    "why_it_matters": "Improper access controls can allow unauthorized users to access sensitive functionality or data, leading to privilege escalation and data breaches.",
+    "common_impacts": [
+      "Unauthorized access",
+      "Privilege escalation",
+      "Data breach",
+      "System compromise",
+      "Compliance violations"
+    ],
+    "basic_mitigations": [
+      "Implement principle of least privilege",
+      "Use role-based access control (RBAC)",
+      "Enforce proper authorization checks",
+      "Audit access control implementations",
+      "Regular permission reviews"
+    ]
+  },
+  "598": {
+    "id": 598,
+    "title": "Use of GET Request Method With Sensitive Query Strings",
+    "summary": "The web application uses the GET method to process requests that contain sensitive information in the query string.",
+    "why_it_matters": "GET requests with sensitive data can be logged in server logs, browser history, and referrer headers, leading to information disclosure.",
+    "common_impacts": [
+      "Credential exposure in logs",
+      "Browser history leakage",
+      "Referrer header disclosure",
+      "Cache exposure",
+      "Privacy violations"
+    ],
+    "basic_mitigations": [
+      "Use POST method for sensitive data",
+      "Never include credentials in URLs",
+      "Use request body for sensitive parameters",
+      "Implement proper session management",
+      "Clear sensitive data from logs"
+    ]
+  },
+  "1004": {
+    "id": 1004,
+    "title": "Sensitive Cookie Without 'HttpOnly' Flag",
+    "summary": "The software uses a cookie to store sensitive information, but the cookie is not marked with the HttpOnly flag.",
+    "why_it_matters": "Without HttpOnly flag, cookies can be accessed by client-side JavaScript, making them vulnerable to XSS attacks and session hijacking.",
+    "common_impacts": [
+      "Session hijacking via XSS",
+      "Cookie theft",
+      "Account takeover",
+      "Credential exposure",
+      "Privacy violations"
+    ],
+    "basic_mitigations": [
+      "Set HttpOnly flag on all sensitive cookies",
+      "Use Secure flag for HTTPS-only cookies",
+      "Implement SameSite attribute",
+      "Use short cookie expiration times",
+      "Implement proper session management"
+    ]
+  },
+  "614": {
+    "id": 614,
+    "title": "Sensitive Cookie in HTTPS Session Without 'Secure' Attribute",
+    "summary": "The Secure attribute for sensitive cookies in HTTPS sessions is not set, which could cause the user agent to send those cookies in plaintext over an HTTP session.",
+    "why_it_matters": "Cookies without the Secure flag can be transmitted over unencrypted HTTP connections, allowing attackers to intercept them.",
+    "common_impacts": [
+      "Session hijacking",
+      "Cookie theft",
+      "Man-in-the-middle attacks",
+      "Credential exposure",
+      "Account compromise"
+    ],
+    "basic_mitigations": [
+      "Set Secure flag on all cookies in HTTPS applications",
+      "Implement HTTP Strict Transport Security (HSTS)",
+      "Never allow HTTP fallback for authenticated sessions",
+      "Use SameSite attribute",
+      "Implement proper session management"
+    ]
+  },
+  "1275": {
+    "id": 1275,
+    "title": "Sensitive Cookie with Improper SameSite Attribute",
+    "summary": "The SameSite attribute for sensitive cookies is not set, or an insecure value is used.",
+    "why_it_matters": "Without proper SameSite attribute, cookies can be sent in cross-site requests, enabling CSRF attacks and cross-site information leakage.",
+    "common_impacts": [
+      "Cross-Site Request Forgery (CSRF)",
+      "Cross-site information leakage",
+      "Session riding",
+      "Unauthorized actions",
+      "Privacy violations"
+    ],
+    "basic_mitigations": [
+      "Set SameSite=Strict or SameSite=Lax for sensitive cookies",
+      "Use SameSite=Strict for authentication cookies",
+      "Implement CSRF tokens as additional protection",
+      "Test cookie behavior across browsers",
+      "Use HttpOnly and Secure flags together"
+    ]
+  },
+  "201": {
+    "id": 201,
+    "title": "Insertion of Sensitive Information Into Sent Data",
+    "summary": "The code transmits data to another actor, but a portion of the data includes sensitive information that should not be accessible to that actor.",
+    "why_it_matters": "Unintended transmission of sensitive data can lead to information disclosure, privacy violations, and compliance issues.",
+    "common_impacts": [
+      "Sensitive data exposure",
+      "Privacy violations",
+      "Compliance violations",
+      "Credential leakage",
+      "System information disclosure"
+    ],
+    "basic_mitigations": [
+      "Sanitize data before transmission",
+      "Remove sensitive fields from responses",
+      "Implement data minimization",
+      "Use field-level encryption",
+      "Audit data flows regularly"
+    ]
+  },
+  "538": {
+    "id": 538,
+    "title": "Insertion of Sensitive Information into Externally-Accessible File or Directory",
+    "summary": "The product places sensitive information into files or directories that are accessible to actors who are allowed to have access to the files, but not to the sensitive information.",
+    "why_it_matters": "Sensitive information in accessible files can be discovered by unauthorized users, leading to data breaches and system compromise.",
+    "common_impacts": [
+      "Sensitive file disclosure",
+      "Credential exposure",
+      "Configuration exposure",
+      "Source code disclosure",
+      "System compromise"
+    ],
+    "basic_mitigations": [
+      "Store sensitive files outside web root",
+      "Implement proper file permissions",
+      "Encrypt sensitive files at rest",
+      "Use .gitignore for sensitive files",
+      "Regular file permission audits"
+    ]
+  },
+  "1295": {
+    "id": 1295,
+    "title": "Debug Messages Revealing Unnecessary Information",
+    "summary": "The product fails to adequately prevent the revealing of unnecessary and potentially sensitive system information within debugging messages.",
+    "why_it_matters": "Debug messages in production can reveal implementation details, system information, and sensitive data that aid attackers.",
+    "common_impacts": [
+      "Information disclosure",
+      "System fingerprinting",
+      "Aid to further attacks",
+      "Credential exposure",
+      "Implementation detail leakage"
+    ],
+    "basic_mitigations": [
+      "Disable debug mode in production",
+      "Remove or obfuscate debug messages",
+      "Use proper logging levels",
+      "Sanitize error messages",
+      "Implement separate debug and production configs"
+    ]
+  },
+  "548": {
+    "id": 548,
+    "title": "Exposure of Information Through Directory Listing",
+    "summary": "A directory listing is inappropriately exposed, yielding potentially sensitive information to attackers.",
+    "why_it_matters": "Directory listings can reveal file structure, sensitive files, and implementation details that aid attackers in planning further attacks.",
+    "common_impacts": [
+      "File structure disclosure",
+      "Sensitive file discovery",
+      "Implementation detail leakage",
+      "Aid to further attacks",
+      "Privacy violations"
+    ],
+    "basic_mitigations": [
+      "Disable directory listing in web server config",
+      "Use index files in all directories",
+      "Implement proper access controls",
+      "Remove unnecessary files from web root",
+      "Regular security audits"
+    ]
+  },
+  "550": {
+    "id": 550,
+    "title": "Server-Generated Error Message Containing Sensitive Information",
+    "summary": "Certain conditions, such as network failure, will cause a server error message to be displayed.",
+    "why_it_matters": "Server error messages can reveal system information, database details, or implementation specifics that aid attackers.",
+    "common_impacts": [
+      "System information disclosure",
+      "Database structure exposure",
+      "Implementation detail leakage",
+      "Aid to further attacks",
+      "Privacy violations"
+    ],
+    "basic_mitigations": [
+      "Use custom error pages",
+      "Log detailed errors server-side only",
+      "Show generic error messages to users",
+      "Disable verbose error reporting in production",
+      "Implement proper error handling"
+    ]
+  }
+}
+

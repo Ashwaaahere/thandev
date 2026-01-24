@@ -45,8 +45,15 @@ class Finding(Base):
     
     # CVE/CWE information
     cve_id = Column(String(50), nullable=True, index=True)
-    cwe_id = Column(String(50), nullable=True)
+    cwe_id = Column(String(50), nullable=True)  # CWE ID as string (e.g., "CWE-79")
     cvss_score = Column(Float, nullable=True)
+    
+    # ZAP-specific metadata
+    wasc_id = Column(Integer, nullable=True)  # WASC ID (integer, e.g., 15)
+    plugin_id = Column(String(50), nullable=True)  # ZAP plugin ID (e.g., "10020")
+    alert_ref = Column(String(50), nullable=True)  # ZAP alert reference (e.g., "10020")
+    zap_confidence = Column(Integer, nullable=True)  # ZAP confidence (0=Low, 1=Medium, 2=High, 3=Confirmed)
+    zap_riskcode = Column(Integer, nullable=True)  # ZAP riskcode (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
     
     # Identification / Linking
     tool_name = Column(String(100), nullable=True, index=True)  # Kept for backwards compatibility
@@ -69,6 +76,9 @@ class Finding(Base):
     # Evidence
     evidence = Column(Text, nullable=True)  # Short evidence snippet (payload, response snippet)
     raw_data = Column(Text, nullable=True)  # JSON string of raw finding data
+    
+    # Severity metadata
+    needs_verification = Column(Boolean, nullable=False, default=False, server_default="false")  # Flag: true if confidence is low and needs manual verification
     
     # Lifecycle fields
     dedup_key = Column(String(64), nullable=True, index=True)  # Deterministic hash for deduplication

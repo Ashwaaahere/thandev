@@ -21,6 +21,12 @@ class FindingListItem(BaseModel):
     description: Optional[str] = None
     cve_id: Optional[str] = None
     cwe_id: Optional[str] = None
+    # ZAP-specific metadata
+    wasc_id: Optional[int] = None  # WASC ID (integer, e.g., 15)
+    plugin_id: Optional[str] = None  # ZAP plugin ID (e.g., "10020")
+    alert_ref: Optional[str] = None  # ZAP alert reference (e.g., "10020")
+    zap_confidence: Optional[int] = None  # ZAP confidence (0=Low, 1=Medium, 2=High, 3=Confirmed)
+    zap_riskcode: Optional[int] = None  # ZAP riskcode (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
     tool: Optional[str] = None
     categories: Optional[List[str]] = None  # Vulnerability categories (e.g., ["xss", "sqli"])
     # New fields for improved UX
@@ -31,6 +37,8 @@ class FindingListItem(BaseModel):
     path: Optional[str] = None  # Path component
     # Evidence field
     evidence: Optional[str] = None  # Short evidence snippet (payload, DBMS, template context)
+    # Severity metadata
+    needs_verification: Optional[bool] = None  # Flag: true if confidence is low and needs manual verification
     # Lifecycle fields
     first_seen_at: Optional[datetime] = None  # When first detected (from lifecycle)
     last_seen_at: Optional[datetime] = None  # When last detected (from lifecycle)
@@ -80,6 +88,12 @@ class FindingDetailResponse(BaseModel):
     cve_id: Optional[str] = None
     cwe_id: Optional[str] = None
     cvss_score: Optional[float] = None
+    # ZAP-specific metadata
+    wasc_id: Optional[int] = None  # WASC ID (integer, e.g., 15)
+    plugin_id: Optional[str] = None  # ZAP plugin ID (e.g., "10020")
+    alert_ref: Optional[str] = None  # ZAP alert reference (e.g., "10020")
+    zap_confidence: Optional[int] = None  # ZAP confidence (0=Low, 1=Medium, 2=High, 3=Confirmed)
+    zap_riskcode: Optional[int] = None  # ZAP riskcode (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
     tool: Optional[str] = None
     categories: Optional[List[str]] = None
     vuln_type: Optional[str] = None
@@ -88,6 +102,7 @@ class FindingDetailResponse(BaseModel):
     url: Optional[str] = None
     path: Optional[str] = None
     evidence: Optional[str] = None
+    needs_verification: Optional[bool] = None  # Flag: true if confidence is low and needs manual verification
     first_seen_at: Optional[datetime] = None
     last_seen_at: Optional[datetime] = None
     not_seen_in_latest_scan: Optional[bool] = None

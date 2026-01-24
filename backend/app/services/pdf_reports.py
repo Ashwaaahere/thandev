@@ -306,12 +306,47 @@ def _build_status_pill(status: str) -> Table:
     return pill_table
 
 
-def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict]:
-    """Compute findings count and severity breakdown from actual findings."""
+def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict, float]:
+    """Compute findings count, severity breakdown, and risk score from actual findings."""
+    import math
+    
     findings_count = len(findings)
     severity_counts = Counter(_severity_label(getattr(f, "severity", "info")) for f in findings)
     breakdown = {sev: severity_counts.get(sev, 0) for sev in ["critical", "high", "medium", "low", "info"]}
-    return findings_count, breakdown
+    
+    # Calculate risk score (0-10 scale)
+    # Formula: max severity (Critical=10, High=8, Medium=5, Low=2, Info=0)
+    #          + log factor for medium+ findings (min(3, log2(1+count_medium_high)))
+    max_severity_scores = {
+        "critical": 10,
+        "high": 8,
+        "medium": 5,
+        "low": 2,
+        "info": 0,
+    }
+    
+    # Find max severity present
+    max_severity_score = 0
+    for severity, count in breakdown.items():
+        if count > 0:
+            max_severity_score = max(max_severity_score, max_severity_scores.get(severity, 0))
+    
+    # Count medium+ findings for log factor
+    count_medium_high = breakdown["medium"] + breakdown["high"] + breakdown["critical"]
+    log_factor = min(3.0, math.log2(1 + count_medium_high)) if count_medium_high > 0 else 0.0
+    
+    # Calculate base score
+    base_score = max_severity_score + log_factor
+    
+    # Clamp to 0-10 and round to 1 decimal
+    risk_score = max(0.0, min(10.0, base_score))
+    risk_score = round(risk_score, 1)
+    
+    # Ensure > 0 if there's at least one Medium finding
+    if breakdown["medium"] > 0 and risk_score == 0:
+        risk_score = 0.1
+    
+    return findings_count, breakdown, risk_score
 
 
 def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> List:
@@ -352,8 +387,7 @@ def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> L
     
     # Metadata table (narrower, card-like)
     summary = getattr(scan, "summary", None)
-    risk_score = _safe_summary_value(summary, "risk_score", 0)
-    findings_count, severity_breakdown = _compute_findings_metrics(findings)
+    findings_count, severity_breakdown, risk_score = _compute_findings_metrics(findings)
     
     created_at = getattr(scan, "created_at", None)
     created_at_str = created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if created_at else "N/A"
@@ -427,8 +461,7 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
     story = []
     
     summary = getattr(scan, "summary", None)
-    findings_count, severity_breakdown = _compute_findings_metrics(findings)
-    risk_score = _safe_summary_value(summary, "risk_score", 0)
+    findings_count, severity_breakdown, risk_score = _compute_findings_metrics(findings)
     
     # Section 1: Risk at a glance
     story.append(Paragraph("Risk at a Glance", styles["section_title"]))
@@ -1325,12 +1358,13 @@ def _build_findings_overview(findings: List[Finding], styles: dict, mode: str) -
         )[:5]
         
         for f in sorted_findings:
+            from xml.sax.saxutils import escape as xml_escape
             sev = _severity_label(getattr(f, "severity", "info"))
             sev_color = SEVERITY_COLORS[sev]
             title = getattr(f, "title", "") or "(no title)"
             tool = getattr(f, "tool_name", "") or ""
             
-            text = f'<font color="{sev_color.hexval()}"><b>[{sev.upper()}]</b></font> <b>{title}</b>'
+            text = f'<font color="{sev_color.hexval()}"><b>[{sev.upper()}]</b></font> <b>{xml_escape(title)}</b>'
             if tool:
                 muted_hex = COLOR_TEXT_MUTED.hexval()
                 text += f' <font color="{muted_hex}">({tool})</font>'
@@ -1412,9 +1446,18 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
             if hasattr(status, "value"):
                 status = str(status.value)
             
-            # Title with severity badge
+            # ZAP-specific metadata
+            wasc_id = getattr(f, "wasc_id", None)
+            plugin_id = getattr(f, "plugin_id", None)
+            alert_ref = getattr(f, "alert_ref", None)
+            zap_confidence = getattr(f, "zap_confidence", None)
+            zap_riskcode = getattr(f, "zap_riskcode", None)
+            
+            # Title with severity badge (escape XML special characters)
+            from xml.sax.saxutils import escape as xml_escape
+            escaped_title = xml_escape(title)
             sev_badge_text = f'<font color="{sev_text_color.hexval()}"><b>{sev.upper()}</b></font>'
-            title_text = f'[{sev_badge_text}] {title}'
+            title_text = f'[{sev_badge_text}] {escaped_title}'
             story.append(Paragraph(title_text, styles["finding_title"]))
             
             # Metadata line
@@ -1427,6 +1470,12 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
                 metadata_parts.append(f"CVE: {cve_id}")
             if cwe_id:
                 metadata_parts.append(f"CWE: {cwe_id}")
+            if wasc_id:
+                metadata_parts.append(f"WASC: {wasc_id}")
+            if zap_confidence is not None:
+                conf_labels = {0: "Low", 1: "Medium", 2: "High", 3: "Confirmed"}
+                conf_label = conf_labels.get(zap_confidence, f"Unknown({zap_confidence})")
+                metadata_parts.append(f"Confidence: {conf_label}")
             if status:
                 metadata_parts.append(f"Status: {status.upper()}")
             
@@ -1442,13 +1491,13 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
             if description:
                 story.append(Spacer(1, 4))
                 story.append(Paragraph("<b>Description:</b>", styles["body"]))
-                story.append(Paragraph(str(description), styles["body"]))
+                story.append(Paragraph(xml_escape(str(description)), styles["body"]))
             
             # Recommendation
             if recommendation:
                 story.append(Spacer(1, 4))
                 story.append(Paragraph("<b>Recommendation:</b>", styles["body"]))
-                story.append(Paragraph(str(recommendation), styles["body"]))
+                story.append(Paragraph(xml_escape(str(recommendation)), styles["body"]))
             
             # Location
             location_parts = []

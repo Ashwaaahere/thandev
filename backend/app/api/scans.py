@@ -40,6 +40,8 @@ from app.services.domain_verification import (
     ensure_project_root_domain,
 )
 from app.services.scan_enforcement import enforce_scan_permissions
+from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata, normalize_cwe_id
+from app.core.severity import zap_to_severity
 
 router = APIRouter(
     prefix="/scans",
@@ -2759,17 +2761,48 @@ async def get_scan_findings(
                     categories = raw_data_dict["categories"]
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        # Backfill CWE for ZAP findings if missing
+        cwe_id = finding.cwe_id
+        severity_value = finding.severity
+        tool_name = finding.tool_name or ""
+        if tool_name.lower() == "zap" and finding.raw_data:
+            raw_dict = parse_raw_json(finding.raw_data)
+            if raw_dict:
+                zap_meta = extract_zap_metadata(raw_dict)
+                if not cwe_id:
+                    cwe_id = normalize_cwe_id(zap_meta.get("cweid"))
+                # Backfill severity for ZAP findings if stored severity is missing/INFO
+                current_severity = None
+                if hasattr(severity_value, "value"):
+                    current_severity = severity_value.value
+                else:
+                    current_severity = str(severity_value) if severity_value is not None else None
+                if not current_severity or current_severity.lower() == "info":
+                    computed_severity, _ = zap_to_severity(
+                        zap_meta.get("riskcode", 0),
+                        zap_meta.get("confidence", 0),
+                        zap_meta.get("alert") or finding.title,
+                        zap_meta.get("raw_dict", raw_dict),
+                    )
+                    severity_value = computed_severity
         
         items.append(
             FindingResponse(
                 id=finding.id,
                 title=finding.title,
                 description=finding.description,
-                severity=finding.severity,
+                severity=severity_value,
                 status=finding.status.value if hasattr(finding.status, 'value') else str(finding.status) if finding.status else 'open',
                 cve_id=finding.cve_id,
-                cwe_id=finding.cwe_id,
+                cwe_id=cwe_id,
                 cvss_score=finding.cvss_score,
+                # ZAP-specific metadata
+                wasc_id=finding.wasc_id if hasattr(finding, 'wasc_id') else None,
+                plugin_id=finding.plugin_id if hasattr(finding, 'plugin_id') else None,
+                alert_ref=finding.alert_ref if hasattr(finding, 'alert_ref') else None,
+                zap_confidence=finding.zap_confidence if hasattr(finding, 'zap_confidence') else None,
+                zap_riskcode=finding.zap_riskcode if hasattr(finding, 'zap_riskcode') else None,
                 url=url,
                 path=finding.path,
                 recommendation=finding.recommendation,

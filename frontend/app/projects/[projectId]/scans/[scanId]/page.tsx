@@ -18,6 +18,7 @@ import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
 import AIAttackPlan from '@/components/Scans/AIAttackPlan';
 import TechDependenciesPanel from '@/components/Scans/TechDependenciesPanel';
 import RepoDependenciesPanel from '@/components/Scans/RepoDependenciesPanel';
+import CWEDrawer from '@/components/Dashboard/CWEDrawer';
 import AISummaryPanel from '@/components/Scans/AISummaryPanel';
 
 // Types
@@ -194,6 +195,8 @@ export default function ScanReportPage() {
   const [techStack, setTechStack] = useState<any>(null);  // Tech stack from /tech-stack endpoint
   const [techStackLoading, setTechStackLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(Date.now()); // For real-time timer updates
+  const [cweDrawerOpen, setCweDrawerOpen] = useState(false);
+  const [selectedCweId, setSelectedCweId] = useState<string | null>(null);
 
   // Poll for scan status updates when scan is running/queued
   useEffect(() => {
@@ -1509,9 +1512,26 @@ export default function ScanReportPage() {
                                     </Link>
                                   )}
                                   {finding.cwe_id && (
-                                    <span className="px-2 py-1 text-xs font-mono rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setSelectedCweId(finding.cwe_id || null);
+                                        setCweDrawerOpen(true);
+                                      }}
+                                      className="px-2 py-1 text-xs font-mono rounded border transition-colors cursor-pointer"
+                                      style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                                      onMouseEnter={(e) => {
+                                        e.currentTarget.style.background = 'var(--surface-2)';
+                                      }}
+                                      onMouseLeave={(e) => {
+                                        e.currentTarget.style.background = 'var(--surface)';
+                                      }}
+                                      aria-label={`View CWE-${String(finding.cwe_id).replace(/^CWE-/i, '')} details`}
+                                    >
                                       CWE: {finding.cwe_id}
-                                    </span>
+                                    </button>
                                   )}
                                   {finding.cvss_score !== null && finding.cvss_score !== undefined && typeof finding.cvss_score === 'number' && (
                                     <span className="px-2 py-1 text-xs rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
@@ -2350,6 +2370,17 @@ export default function ScanReportPage() {
             )}
           </div>
         </main>
+
+        {selectedCweId && (
+          <CWEDrawer
+            cweId={selectedCweId}
+            open={cweDrawerOpen}
+            onClose={() => {
+              setCweDrawerOpen(false);
+              setSelectedCweId(null);
+            }}
+          />
+        )}
       </div>
     </div>
   );

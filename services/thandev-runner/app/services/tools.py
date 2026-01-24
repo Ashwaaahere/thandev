@@ -3383,8 +3383,12 @@ class ToolExecutor:
         
         for alert in alerts:
             # Get riskcode (ZAP uses integer: 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
+            # CRITICAL: Always extract riskcode, even if it's None (backend will handle it)
             riskcode = alert.get("riskcode")
+            
+            # If riskcode is missing, default to 0 (Informational) but still include it in metadata
             if riskcode is None:
+                riskcode = 0  # Default to Informational
                 severity = "info"
             else:
                 # Handle both integer and string riskcodes
@@ -3393,7 +3397,7 @@ class ToolExecutor:
                 elif not isinstance(riskcode, int):
                     riskcode = 0
                 
-                # Map ZAP riskcode to severity
+                # Map ZAP riskcode to severity (backend will recompute using severity engine)
                 severity_map = {
                     0: "info",      # Informational
                     1: "low",        # Low
@@ -3402,6 +3406,10 @@ class ToolExecutor:
                     4: "critical",   # Critical
                 }
                 severity = severity_map.get(riskcode, "info")
+            
+            # Extract confidence (ZAP uses integer: 0=Low, 1=Medium, 2=High, 3=Confirmed)
+            # or string: "Low", "Medium", "High", "Confirmed"
+            confidence = alert.get("confidence")
             
             # Create unique key for deduplication: (alert_name, url)
             alert_name = alert.get("alert", "")
@@ -3415,17 +3423,33 @@ class ToolExecutor:
             
             seen_alerts.add(dedup_key)
             
+            # Include riskcode and confidence in raw data for backend severity engine
+            # CRITICAL: Always include riskcode and confidence, even if None (backend needs them)
+            alert_with_metadata = alert.copy()
+            # Always include riskcode (we defaulted to 0 if it was None)
+            alert_with_metadata["riskcode"] = riskcode
+            # Always include confidence (can be None, backend will handle it)
+            if confidence is not None:
+                alert_with_metadata["confidence"] = confidence
+            else:
+                # Default to Low confidence if missing
+                alert_with_metadata["confidence"] = 0
+            
+            # CRITICAL: Store raw ONCE as JSON string (avoid double-encoding)
+            # The backend will parse this, so we only encode once here
+            raw_json_string = json.dumps(alert_with_metadata)
+            
             findings.append({
                 "tool_id": "zap",
                 "title": alert_name,
-                "severity": severity,
+                "severity": severity,  # Backend will recompute using severity engine (this is just a hint)
                 "description": alert.get("description"),
                 "evidence": alert.get("solution"),
                 "url": alert_url,
                 "host": urlparse(alert_url).hostname if alert_url else None,
                 "port": urlparse(alert_url).port if alert_url else None,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "raw": json.dumps(alert),
+                "raw": raw_json_string,  # Single JSON encoding - backend will parse this
             })
         
         # Return findings as JSON string

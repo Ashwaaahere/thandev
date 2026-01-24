@@ -22,6 +22,9 @@ from app.models.scan import ScanJob, ScanStatus
 from app.models.finding import ToolResult, ToolExecutionStatus
 from app.schemas.scan import ToolResultCreate, ToolResultResponse
 from app.services.findings_ingestor import create_or_update_finding
+from app.core.severity import normalize_severity, zap_to_severity, nuclei_to_severity, retire_to_severity, sslscan_to_severity, portfinding_to_severity, httpx_wappalyzer_to_severity, header_finding_to_severity
+from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
+from app.models.finding import Severity
 
 router = APIRouter(
     prefix="/scans",
@@ -432,25 +435,140 @@ async def create_tool_result(
                     f"[INGEST-DEBUG] Processing finding {idx+1}/{len(tool_result.findings)}: "
                     f"title={finding_data.get('title', 'N/A')[:50] if finding_data else 'None'}"
                 )
+                
+                # Extract raw data using robust parser (handles double-encoding)
+                raw_data_dict = parse_raw_json(finding_data.get("raw", finding_data))
+                
+                tool_name = finding_data.get("tool_id") or tool_result.tool_name
+                severity = None
+                needs_verification = False
+                
+                # Use severity engine based on tool type
+                if tool_name.lower() == "zap":
+                    # CRITICAL: Enforce ZAP severity from riskcode
+                    # Extract ZAP metadata using robust parser
+                    zap_meta = extract_zap_metadata(finding_data.get("raw", finding_data))
+                    riskcode = zap_meta["riskcode"]  # Always int, defaults to 0
+                    confidence = zap_meta["confidence"]  # Always int, defaults to 0
+                    alert_name = zap_meta["alert"] or finding_data.get("title", "")
+                    
+                    # Store ZAP metadata for database
+                    zap_riskcode_int = riskcode
+                    zap_confidence_int = confidence
+                    cwe_id = zap_meta["cweid"]
+                    wasc_id = zap_meta["wascid"]
+                    plugin_id = zap_meta["pluginId"]
+                    alert_ref = zap_meta["alertRef"]
+                    
+                    # CRITICAL: Compute severity from riskcode using severity engine
+                    # This is the SOURCE OF TRUTH - do NOT use runner-provided severity string
+                    severity, needs_verification = zap_to_severity(
+                        riskcode, 
+                        confidence, 
+                        alert_name, 
+                        zap_meta["raw_dict"]
+                    )
+                    
+                    # Log one sample alert per scan (first finding only)
+                    if idx == 0:
+                        logger.info(
+                            f"[ZAP-SEVERITY] Sample ZAP finding: "
+                            f"title={alert_name[:60]}, "
+                            f"riskcode={riskcode}, "
+                            f"confidence={confidence}, "
+                            f"computed_severity={severity.value}, "
+                            f"needs_verification={needs_verification}, "
+                            f"runner_severity={finding_data.get('severity', 'N/A')}"
+                        )
+                    
+                    # Normalize CWE ID format
+                    if cwe_id:
+                        if isinstance(cwe_id, (int, float)):
+                            cwe_id = f"CWE-{int(cwe_id)}"
+                        elif isinstance(cwe_id, str) and not cwe_id.upper().startswith("CWE-"):
+                            try:
+                                cwe_num = int(cwe_id)
+                                cwe_id = f"CWE-{cwe_num}"
+                            except (ValueError, TypeError):
+                                pass
+                elif tool_name.lower() == "nuclei":
+                    # Use nuclei severity engine
+                    severity = nuclei_to_severity(raw_data_dict if isinstance(raw_data_dict, dict) else finding_data)
+                elif tool_name.lower() == "retire":
+                    # Use retire severity engine
+                    severity = retire_to_severity(raw_data_dict if isinstance(raw_data_dict, dict) else finding_data)
+                elif tool_name.lower() == "sslscan":
+                    # Use sslscan severity engine
+                    severity = sslscan_to_severity(raw_data_dict if isinstance(raw_data_dict, dict) else finding_data)
+                elif tool_name.lower() in ["httpx", "wappalyzer"]:
+                    # Use httpx/wappalyzer severity engine
+                    severity = httpx_wappalyzer_to_severity(raw_data_dict if isinstance(raw_data_dict, dict) else finding_data)
+                elif tool_name.lower() == "nmap":
+                    # Use portfinding severity engine for nmap
+                    service = finding_data.get("service") or raw_data_dict.get("service", "") if isinstance(raw_data_dict, dict) else ""
+                    port = finding_data.get("port") or raw_data_dict.get("port") if isinstance(raw_data_dict, dict) else None
+                    evidence = finding_data.get("evidence", "")
+                    title = finding_data.get("title", "")
+                    severity = portfinding_to_severity(service, port, evidence, title)
+                else:
+                    # Fallback: normalize provided severity or default to INFO
+                    # For non-ZAP tools, use the severity provided by the tool/runner
+                    provided_severity = finding_data.get("severity", "info")
+                    severity = normalize_severity(provided_severity)
+                    if idx == 0:
+                        logger.debug(
+                            f"[SEVERITY-DEBUG] Non-ZAP tool '{tool_name}': "
+                            f"provided_severity={provided_severity}, normalized={severity.value if hasattr(severity, 'value') else severity}"
+                        )
+                
+                # Check for header findings (can apply to any tool)
+                header_name = finding_data.get("header_name")
+                if header_name:
+                    header_severity = header_finding_to_severity(header_name, finding_data)
+                    # Use header severity if it's higher than computed severity
+                    if header_severity.value != "info":
+                        severity = header_severity
+                
                 # Normalize finding data to match backend's expected format
+                # IMPORTANT: severity is already computed by severity engine above
                 normalized_finding = {
-                    "tool": finding_data.get("tool_id") or tool_result.tool_name,
+                    "tool": tool_name,
                     "title": finding_data.get("title", "Security Finding"),
                     "description": finding_data.get("description"),
-                    "severity": finding_data.get("severity", "info").lower(),
+                    "severity": severity,  # Already computed Severity enum from severity engine
+                    "needs_verification": needs_verification,
                     "url": finding_data.get("url"),
                     "host": finding_data.get("host"),
                     "cve_id": finding_data.get("cve_id"),
-                    "cwe_id": finding_data.get("cwe_id"),
+                    "cwe_id": finding_data.get("cwe_id") or (cwe_id if tool_name.lower() == "zap" else None),
                     "cvss_score": finding_data.get("cvss_score"),
                     "template_id": finding_data.get("template_id"),
                     "rule_id": finding_data.get("rule_id"),
                     "categories": finding_data.get("categories", []),
                     "http_method": finding_data.get("http_method"),
                     "parameter": finding_data.get("parameter"),
+                    "header_name": finding_data.get("header_name"),
                     "evidence": finding_data.get("evidence"),
-                    "raw_data": json.dumps(finding_data.get("raw", finding_data), default=str),
+                    "raw_data": json.dumps(raw_data_dict, default=str),
                 }
+                
+                # Add ZAP-specific metadata if this is a ZAP finding
+                if tool_name.lower() == "zap":
+                    normalized_finding["wasc_id"] = wasc_id
+                    normalized_finding["plugin_id"] = plugin_id
+                    normalized_finding["alert_ref"] = alert_ref
+                    normalized_finding["zap_confidence"] = zap_confidence_int
+                    normalized_finding["zap_riskcode"] = zap_riskcode_int
+                    
+                    # CRITICAL: Ensure severity is NOT overwritten - it's already computed from riskcode
+                    # Do NOT allow any later code to change it back to INFO
+                    assert severity is not None, "ZAP severity must be computed from riskcode"
+                    assert severity != Severity.INFO or riskcode == 0, f"ZAP finding with riskcode={riskcode} should not be INFO"
+                    
+                    # CRITICAL: Ensure severity is NOT overwritten - it's already computed from riskcode
+                    # Do NOT allow any later code to change it back to INFO
+                    assert severity is not None, "ZAP severity must be computed from riskcode"
+                    assert severity != Severity.INFO or riskcode == 0, f"ZAP finding with riskcode={riskcode} should not be INFO"
                 
                 # Create or update finding
                 finding = create_or_update_finding(

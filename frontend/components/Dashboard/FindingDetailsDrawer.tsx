@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useSession } from 'next-auth/react';
 import { thandevFetchJSON } from '@/lib/thandevApi';
+import CWEDrawer from './CWEDrawer';
 
 type FindingStatus = "open" | "acknowledged" | "resolved" | "suppressed";
 
@@ -19,6 +20,12 @@ type FindingListItem = {
   cve_id?: string | null;
   cwe_id?: string | null;
   cvss_score?: number | null;
+  // ZAP-specific metadata
+  wasc_id?: number | null;
+  plugin_id?: string | null;
+  alert_ref?: string | null;
+  zap_confidence?: number | null;
+  zap_riskcode?: number | null;
   tool?: string | null;
   categories?: string[] | null;
   vuln_type?: string | null;
@@ -190,6 +197,8 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
   const [loadingFull, setLoadingFull] = useState(false);
   const [showRawData, setShowRawData] = useState(false);
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [cweDrawerOpen, setCweDrawerOpen] = useState(false);
+  const [selectedCweId, setSelectedCweId] = useState<string | null>(null);
 
   // Load full finding data when drawer opens
   useEffect(() => {
@@ -210,6 +219,8 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
     } else if (!open) {
       setFullFinding(null);
       setShowRawData(false);
+      setCweDrawerOpen(false);
+      setSelectedCweId(null);
     }
   }, [open, finding, session]);
 
@@ -296,7 +307,7 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
           </div>
 
           {/* Content */}
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="flex-1 overflow-y-auto p-6 space-y-6" style={{ position: 'relative', zIndex: 1 }}>
             {loadingFull ? (
               <div className="text-center py-8" style={{ color: 'var(--muted)' }}>
                 Loading details...
@@ -453,19 +464,87 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
                   </div>
                 )}
 
-                {/* CVE/CWE */}
-                {(displayFinding.cve_id || displayFinding.cwe_id) && (
-                  <div>
+                {/* CVE/CWE/References */}
+                {(displayFinding.cve_id || displayFinding.cwe_id || displayFinding.wasc_id || displayFinding.plugin_id || displayFinding.alert_ref) && (
+                  <div style={{ position: 'relative', zIndex: 1 }}>
                     <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>References</h3>
-                    <div className="flex gap-2 flex-wrap">
+                    <div className="flex flex-wrap gap-2" style={{ position: 'relative', zIndex: 1 }}>
                       {displayFinding.cve_id && (
-                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                          CVE: {displayFinding.cve_id}
+                        <a
+                          href={`https://nvd.nist.gov/vuln/detail/${displayFinding.cve_id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-2 py-1 rounded text-xs font-semibold border transition-colors"
+                          style={{ 
+                            borderColor: 'var(--border)', 
+                            color: 'var(--fg)',
+                            background: 'var(--surface-2)',
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.background = 'var(--surface-3)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.background = 'var(--surface-2)';
+                          }}
+                        >
+                          {displayFinding.cve_id}
+                        </a>
+                      )}
+                      {displayFinding.cwe_id && (() => {
+                        const cweIdValue = displayFinding.cwe_id.replace(/^CWE-/i, '');
+                        const cweId = displayFinding.cwe_id;
+                        return (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSelectedCweId(cweId);
+                              setCweDrawerOpen(true);
+                            }}
+                            className="px-2 py-1 rounded text-xs font-semibold border transition-colors cursor-pointer"
+                            style={{ 
+                              borderColor: 'var(--brand)', 
+                              color: 'var(--brand)',
+                              background: 'var(--surface-2)',
+                              zIndex: 9999,
+                              position: 'relative',
+                              pointerEvents: 'auto',
+                              cursor: 'pointer',
+                              userSelect: 'none',
+                              touchAction: 'manipulation',
+                            }}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.background = 'var(--surface-3)';
+                              e.currentTarget.style.borderColor = 'var(--brand-hover)';
+                              e.currentTarget.style.opacity = '0.9';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.background = 'var(--surface-2)';
+                              e.currentTarget.style.borderColor = 'var(--brand)';
+                              e.currentTarget.style.opacity = '1';
+                            }}
+                            aria-label={`View CWE-${cweIdValue} details`}
+                            tabIndex={0}
+                            data-testid="cwe-badge-button"
+                          >
+                            CWE-{cweIdValue}
+                          </button>
+                        );
+                      })()}
+                      {displayFinding.wasc_id && (
+                        <span className="px-2 py-1 rounded text-xs font-semibold border" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--surface-2)' }}>
+                          WASC-{displayFinding.wasc_id}
                         </span>
                       )}
-                      {displayFinding.cwe_id && (
-                        <span className="inline-flex items-center px-2 py-1 rounded text-xs font-medium" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                          CWE: {displayFinding.cwe_id}
+                      {displayFinding.plugin_id && (
+                        <span className="px-2 py-1 rounded text-xs font-mono border" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--surface-2)' }}>
+                          Plugin: {displayFinding.plugin_id}
+                        </span>
+                      )}
+                      {displayFinding.alert_ref && (
+                        <span className="px-2 py-1 rounded text-xs font-mono border" style={{ borderColor: 'var(--border)', color: 'var(--muted)', background: 'var(--surface-2)' }}>
+                          Alert: {displayFinding.alert_ref}
                         </span>
                       )}
                     </div>
@@ -484,6 +563,36 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
                         <span className="text-xs font-mono" style={{ color: 'var(--fg)' }}>{displayFinding.tool}</span>
                       </div>
                     )}
+                    
+                    {/* ZAP-specific metadata */}
+                    {(displayFinding.zap_confidence !== null && displayFinding.zap_confidence !== undefined) && (
+                      <div>
+                        <span className="text-xs font-medium" style={{ color: 'var(--muted)' }}>Confidence: </span>
+                        <span className="text-xs font-mono" style={{ color: 'var(--fg)' }}>
+                          {displayFinding.zap_confidence === 0 ? 'Low' :
+                           displayFinding.zap_confidence === 1 ? 'Medium' :
+                           displayFinding.zap_confidence === 2 ? 'High' :
+                           displayFinding.zap_confidence === 3 ? 'Confirmed' :
+                           `Unknown (${displayFinding.zap_confidence})`}
+                        </span>
+                      </div>
+                    )}
+                    
+                    {/* ZAP riskcode (optional, can be hidden behind debug toggle) */}
+                    {displayFinding.zap_riskcode !== null && displayFinding.zap_riskcode !== undefined && (
+                      <div>
+                        <span className="text-xs font-medium" style={{ color: 'var(--muted)' }}>ZAP Riskcode: </span>
+                        <span className="text-xs font-mono" style={{ color: 'var(--fg)' }}>
+                          {displayFinding.zap_riskcode} ({displayFinding.zap_riskcode === 0 ? 'Info' :
+                           displayFinding.zap_riskcode === 1 ? 'Low' :
+                           displayFinding.zap_riskcode === 2 ? 'Medium' :
+                           displayFinding.zap_riskcode === 3 ? 'High' :
+                           displayFinding.zap_riskcode === 4 ? 'Critical' :
+                           'Unknown'})
+                        </span>
+                      </div>
+                    )}
+                    
                     {fullFinding?.raw_data && (
                       <div>
                         <button
@@ -529,6 +638,18 @@ export default function FindingDetailsDrawer({ finding, open, onClose, onStatusU
           </div>
         </div>
       </div>
+
+      {/* CWE Drawer */}
+      {selectedCweId && (
+        <CWEDrawer
+          cweId={selectedCweId}
+          open={cweDrawerOpen}
+          onClose={() => {
+            setCweDrawerOpen(false);
+            setSelectedCweId(null);
+          }}
+        />
+      )}
     </>
   );
 }

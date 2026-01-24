@@ -27,6 +27,12 @@ class FindingResponse(BaseModel):
     cve_id: Optional[str]
     cwe_id: Optional[str]
     cvss_score: Optional[float]
+    # ZAP-specific metadata
+    wasc_id: Optional[int] = None  # WASC ID (integer, e.g., 15)
+    plugin_id: Optional[str] = None  # ZAP plugin ID (e.g., "10020")
+    alert_ref: Optional[str] = None  # ZAP alert reference (e.g., "10020")
+    zap_confidence: Optional[int] = None  # ZAP confidence (0=Low, 1=Medium, 2=High, 3=Confirmed)
+    zap_riskcode: Optional[int] = None  # ZAP riskcode (0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
     url: Optional[str]
     path: Optional[str]
     recommendation: Optional[str]

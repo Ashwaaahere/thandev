@@ -22,6 +22,7 @@ from app.utils.finding_utils import (
     extract_vuln_type_from_categories,
 )
 from app.services.tool_name_utils import canonical_tool_name
+from app.core.severity import normalize_severity, nuclei_to_severity
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,34 @@ def create_or_update_finding(
         if "description" in finding_data:
             existing_finding.description = finding_data.get("description")
         if "severity" in finding_data:
-            existing_finding.severity = finding_data["severity"]
+            # IMPORTANT: Preserve computed severity, do NOT overwrite with default INFO
+            new_severity = normalize_severity(finding_data["severity"])
+            # CRITICAL: For ZAP findings, do NOT allow overwriting computed severity back to INFO
+            # unless riskcode is actually 0
+            if existing_finding.tool_name == "zap" and hasattr(existing_finding, "zap_riskcode"):
+                if existing_finding.zap_riskcode is not None and existing_finding.zap_riskcode != 0:
+                    if new_severity == Severity.INFO:
+                        logger.warning(
+                            f"[SEVERITY-GUARD] Blocked overwrite of ZAP finding severity to INFO. "
+                            f"Finding: {existing_finding.title[:50]}, riskcode={existing_finding.zap_riskcode}, "
+                            f"keeping existing severity={existing_finding.severity.value}"
+                        )
+                        # Don't update severity if it would downgrade a non-zero riskcode to INFO
+                        return existing_finding
+            existing_finding.severity = new_severity
+        if "needs_verification" in finding_data:
+            existing_finding.needs_verification = finding_data.get("needs_verification", False)
+        # Update ZAP metadata if provided
+        if "wasc_id" in finding_data:
+            existing_finding.wasc_id = finding_data.get("wasc_id")
+        if "plugin_id" in finding_data:
+            existing_finding.plugin_id = finding_data.get("plugin_id")
+        if "alert_ref" in finding_data:
+            existing_finding.alert_ref = finding_data.get("alert_ref")
+        if "zap_confidence" in finding_data:
+            existing_finding.zap_confidence = finding_data.get("zap_confidence")
+        if "zap_riskcode" in finding_data:
+            existing_finding.zap_riskcode = finding_data.get("zap_riskcode")
         if "url" in finding_data:
             existing_finding.url = (finding_data["url"][:2048] if finding_data["url"] else None)
         if "cve_id" in finding_data:
@@ -252,6 +280,27 @@ def create_or_update_finding(
             if not finding_data.get("remediation_summary") and not finding_data.get("remediation_steps"):
                 remediation = get_remediation_hint(vuln_type)
         
+        # Normalize severity using severity engine
+        # IMPORTANT: Do NOT default to INFO if severity is provided - preserve computed severity
+        # If severity is already a Severity enum, use it directly; otherwise normalize
+        provided_severity = finding_data.get("severity")
+        if provided_severity is None:
+            # Only default to INFO if severity is completely missing
+            severity = Severity.INFO
+            logger.warning(
+                f"[SEVERITY-DEBUG] Finding '{finding_data.get('title', 'Unknown')[:50]}' has no severity, defaulting to INFO"
+            )
+        else:
+            severity = normalize_severity(provided_severity)
+            # DEBUG: Log severity assignment for first finding
+            if hasattr(severity, 'value'):
+                logger.debug(
+                    f"[SEVERITY-DEBUG] Finding '{finding_data.get('title', 'Unknown')[:50]}': "
+                    f"provided={provided_severity} (type={type(provided_severity).__name__}), "
+                    f"normalized={severity.value}"
+                )
+        needs_verification = finding_data.get("needs_verification", False)
+        
         # Use factory function to ensure canonical tool_name (choke point)
         finding = _create_finding_with_canonical_name(
             tool_name=canonical_tool,
@@ -260,7 +309,13 @@ def create_or_update_finding(
             project_id=project_id,
             title=finding_data.get("title", "Security Finding")[:500],
             description=finding_data.get("description"),
-            severity=finding_data.get("severity", Severity.INFO),
+            severity=severity,
+            needs_verification=needs_verification,
+            wasc_id=finding_data.get("wasc_id"),
+            plugin_id=finding_data.get("plugin_id"),
+            alert_ref=finding_data.get("alert_ref"),
+            zap_confidence=finding_data.get("zap_confidence"),
+            zap_riskcode=finding_data.get("zap_riskcode"),
             cve_id=(finding_data.get("cve_id")[:50] if finding_data.get("cve_id") else None),
             cwe_id=(finding_data.get("cwe_id")[:50] if finding_data.get("cwe_id") else None),
             cvss_score=finding_data.get("cvss_score"),
@@ -363,22 +418,8 @@ def ingest_nuclei_findings(
     
     for nuclei_data in nuclei_results:
         try:
-            # Extract severity
-            severity_str = nuclei_data.get("info", {}).get("severity", "info")
-            if isinstance(severity_str, str):
-                severity_str = severity_str.lower()
-            else:
-                severity_str = "info"
-            
-            # Normalize severity to allowed enum values
-            severity_map = {
-                "critical": Severity.CRITICAL,
-                "high": Severity.HIGH,
-                "medium": Severity.MEDIUM,
-                "low": Severity.LOW,
-                "info": Severity.INFO,
-            }
-            severity = severity_map.get(severity_str, Severity.INFO)
+            # Use severity engine for Nuclei findings
+            severity = nuclei_to_severity(nuclei_data)
             
             # Extract title
             title = (

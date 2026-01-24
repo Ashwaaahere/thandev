@@ -17,7 +17,7 @@ from sqlalchemy.exc import ProgrammingError
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.api import projects, scans, tenants, users, metrics, performance, notifications, admin, access
-from app.api import findings_batch
+from app.api import findings_batch, findings
 from app.api import auth_bootstrap
 from app.api import domain_verifications
 from app.api import stats
@@ -25,6 +25,7 @@ from app.api import runner_ingest
 from app.api.runner_ingest import callback_router
 from app.api import integrations
 from app.api import cve
+from app.api import reference
 
 # Load environment variables
 load_dotenv()
@@ -495,6 +496,8 @@ app.include_router(tenants.router, prefix=settings.API_V1_PREFIX)
 app.include_router(users.router, prefix=settings.API_V1_PREFIX)
 app.include_router(metrics.router, prefix=settings.API_V1_PREFIX)
 app.include_router(findings_batch.router, prefix=settings.API_V1_PREFIX)
+app.include_router(findings.router, prefix=settings.API_V1_PREFIX)
+app.include_router(reference.router, prefix=settings.API_V1_PREFIX)
 app.include_router(performance.router, prefix=settings.API_V1_PREFIX)
 app.include_router(notifications.router, prefix=settings.API_V1_PREFIX)
 app.include_router(auth_bootstrap.router, prefix=settings.API_V1_PREFIX)
