@@ -223,24 +223,38 @@ export const authOptions: NextAuthOptions = {
             name,
           }
 
-          const res = await fetch(`${backendApiBase}/api/auth/bootstrap`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(bootstrapPayload),
-          })
+          // Fetch with timeout to prevent hanging
+          const controller = new AbortController()
+          const timeoutId = setTimeout(() => controller.abort(), 8000) // 8 second timeout
+          
+          try {
+            const res = await fetch(`${backendApiBase}/api/auth/bootstrap`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(bootstrapPayload),
+              signal: controller.signal,
+            })
+            clearTimeout(timeoutId)
 
-          if (!res.ok) {
-            const detail = await res.text()
-            throw new Error(`Bootstrap failed: ${res.status} ${detail}`)
+            if (!res.ok) {
+              const detail = await res.text()
+              throw new Error(`Bootstrap failed: ${res.status} ${detail}`)
+            }
+
+            const data = await res.json()
+            token.userId = data.user_id
+            token.tenantId = data.tenant_id
+            token.tenantPlan = data.tenant_plan
+            token.isAdmin = data.is_admin ?? false
+            token.isApproved = data.is_approved ?? true
+            token.bootstrapError = undefined
+          } catch (fetchError) {
+            clearTimeout(timeoutId)
+            if (fetchError instanceof Error && fetchError.name === 'AbortError') {
+              throw new Error('Bootstrap failed: Request timeout after 8s')
+            }
+            throw fetchError
           }
-
-          const data = await res.json()
-          token.userId = data.user_id
-          token.tenantId = data.tenant_id
-          token.tenantPlan = data.tenant_plan
-          token.isAdmin = data.is_admin ?? false
-          token.isApproved = data.is_approved ?? true
-          token.bootstrapError = undefined
         } catch (err) {
           console.error('[Auth] Bootstrap failed', err)
           token.bootstrapError = err instanceof Error ? err.message : 'Bootstrap failed'

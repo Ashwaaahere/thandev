@@ -17,12 +17,18 @@ if settings.DATABASE_URL.startswith("sqlite"):
         echo=settings.DEBUG,
     )
 else:
-    # PostgreSQL configuration
+    # PostgreSQL configuration with optimized connection pooling
     engine = create_engine(
         settings.DATABASE_URL,
         pool_pre_ping=True,
         pool_size=10,
         max_overflow=20,
+        pool_timeout=10,  # Timeout for getting a connection from pool
+        pool_recycle=3600,  # Recycle connections after 1 hour
+        connect_args={
+            "connect_timeout": 5,  # Connection timeout (seconds)
+            "options": "-c statement_timeout=10000"  # Query timeout (10s in milliseconds)
+        },
         echo=settings.DEBUG,
     )
 

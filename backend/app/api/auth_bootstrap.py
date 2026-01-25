@@ -32,13 +32,16 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
     - Updates username/email on each call.
     """
     import logging
+    import time
     logger = logging.getLogger(__name__)
+    
+    start_time = time.time()
     
     try:
         env_lower = settings.ENVIRONMENT.strip().lower()
         self_service_enabled = _is_self_service_enabled()
         
-        logger.info(f"Bootstrap request: provider={payload.provider}, external_user_id={payload.external_user_id}, email={payload.email}, env={env_lower}, self_service_enabled={self_service_enabled}")
+        logger.info(f"[Bootstrap] START: provider={payload.provider}, external_user_id={payload.external_user_id}, email={payload.email}, env={env_lower}, self_service_enabled={self_service_enabled}")
 
         # Find by external identity first
         user: User | None = (
@@ -158,6 +161,9 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
         db.commit()
         db.refresh(user)
         db.refresh(tenant)
+        
+        elapsed_time = time.time() - start_time
+        logger.info(f"[Bootstrap] SUCCESS: user_id={user.id}, tenant_id={tenant.id}, created={created}, elapsed={elapsed_time:.3f}s")
 
         return BootstrapResponse(
             user_id=user.id,
@@ -170,7 +176,8 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Bootstrap error: {type(e).__name__}: {str(e)}", exc_info=True)
+        elapsed_time = time.time() - start_time
+        logger.error(f"[Bootstrap] ERROR after {elapsed_time:.3f}s: {type(e).__name__}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Bootstrap failed: {str(e)}",
