@@ -97,7 +97,8 @@ def get_redis_client() -> Redis:
             "socket_timeout": 30,  # Increased from 5 to 30 seconds to prevent timeout errors
         }
         if use_tls:
-            redis_kwargs["ssl"] = True
+            # redis-py 5.x handles SSL automatically based on rediss:// scheme
+            # Only add SSL parameters if we need to disable certificate verification
             if os.getenv("REDIS_TLS_INSECURE", "").lower() in ("true", "1", "yes"):
                 import ssl
                 redis_kwargs["ssl_cert_reqs"] = ssl.CERT_NONE
