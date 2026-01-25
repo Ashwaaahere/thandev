@@ -93,8 +93,10 @@ def get_redis_client() -> Redis:
         use_tls = parsed.scheme == "rediss"
         redis_kwargs = {
             "decode_responses": True,
-            "socket_connect_timeout": 10,  # Increased from 5 to 10 seconds
-            "socket_timeout": 30,  # Increased from 5 to 30 seconds to prevent timeout errors
+            "socket_connect_timeout": 30,  # Increased for Azure Container Apps internal networking
+            "socket_timeout": 60,  # Increased for slow connections
+            "retry_on_timeout": True,
+            "health_check_interval": 30,
         }
         if use_tls:
             # redis-py 5.x handles SSL automatically based on rediss:// scheme
