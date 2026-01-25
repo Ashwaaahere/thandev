@@ -915,23 +915,24 @@ async def run_worker_loop() -> None:
                 logger.error(f"Task completed with error: {e}", exc_info=True)
         return len(completed)
     
+    logger.info("Entering main worker loop...")
     while True:
         try:
             # Clean up completed tasks before checking capacity
             completed_count = cleanup_completed_tasks()
             if completed_count > 0:
-                logger.debug(f"Cleaned up {completed_count} completed task(s), {len(running_tasks)} still running")
+                logger.info(f"Cleaned up {completed_count} completed task(s), {len(running_tasks)} still running")
             
             # Check if we're at capacity
             available_slots = settings.MAX_CONCURRENT_STEPS - len(running_tasks)
             if available_slots <= 0:
                 # At capacity, wait a bit before checking again
-                logger.debug(f"At capacity ({len(running_tasks)}/{settings.MAX_CONCURRENT_STEPS}), waiting...")
+                logger.info(f"At capacity ({len(running_tasks)}/{settings.MAX_CONCURRENT_STEPS}), waiting...")
                 await asyncio.sleep(1)
                 continue
             
             # Consume step requests
-            logger.debug(f"Waiting for step requests from stream {settings.CONSUMER_GROUP}... (available slots: {available_slots})")
+            logger.info(f"Waiting for step requests from stream {settings.CONSUMER_GROUP}... (available slots: {available_slots})")
             
             # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
             
@@ -1058,11 +1059,17 @@ async def run_all_workers() -> None:
     """
     Run both step request worker and dependency scan worker in parallel.
     """
-    await asyncio.gather(
+    logger.info("Starting both worker loops in parallel...")
+    results = await asyncio.gather(
         run_worker_loop(),
         run_dependency_worker_loop(),
         return_exceptions=True,
     )
+    # Log any exceptions that were caught
+    for i, result in enumerate(results):
+        if isinstance(result, Exception):
+            worker_name = "step_worker" if i == 0 else "dependency_worker"
+            logger.error(f"{worker_name} failed with exception: {result}", exc_info=result)
 
 
 if __name__ == "__main__":

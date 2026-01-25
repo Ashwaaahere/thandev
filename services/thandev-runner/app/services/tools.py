@@ -3382,30 +3382,49 @@ class ToolExecutor:
         findings = []
         
         for alert in alerts:
-            # Get riskcode (ZAP uses integer: 0=Info, 1=Low, 2=Medium, 3=High, 4=Critical)
-            # CRITICAL: Always extract riskcode, even if it's None (backend will handle it)
+            # ZAP API returns "risk" as string ("Informational", "Low", "Medium", "High")
+            # and sometimes "riskcode" as integer (0, 1, 2, 3)
+            # We need to handle BOTH formats
+            
+            # First try the "risk" field (string) - this is what ZAP API actually returns
+            risk_string = alert.get("risk", "").lower()
             riskcode = alert.get("riskcode")
             
-            # If riskcode is missing, default to 0 (Informational) but still include it in metadata
-            if riskcode is None:
-                riskcode = 0  # Default to Informational
-                severity = "info"
-            else:
+            # Map string risk levels to severity
+            risk_string_map = {
+                "informational": "info",
+                "low": "low",
+                "medium": "medium",
+                "high": "high",
+                "critical": "critical",
+            }
+            
+            # Map integer riskcodes to severity (fallback)
+            riskcode_map = {
+                0: "info",      # Informational
+                1: "low",       # Low
+                2: "medium",    # Medium
+                3: "high",      # High
+                4: "critical",  # Critical
+            }
+            
+            # Determine severity - prefer string "risk" field, fall back to "riskcode"
+            if risk_string and risk_string in risk_string_map:
+                severity = risk_string_map[risk_string]
+                # Convert string to riskcode for metadata
+                riskcode_reverse = {"informational": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+                riskcode = riskcode_reverse.get(risk_string, 0)
+            elif riskcode is not None:
                 # Handle both integer and string riskcodes
                 if isinstance(riskcode, str):
                     riskcode = int(riskcode) if riskcode.isdigit() else 0
                 elif not isinstance(riskcode, int):
                     riskcode = 0
-                
-                # Map ZAP riskcode to severity (backend will recompute using severity engine)
-                severity_map = {
-                    0: "info",      # Informational
-                    1: "low",        # Low
-                    2: "medium",     # Medium
-                    3: "high",       # High
-                    4: "critical",   # Critical
-                }
-                severity = severity_map.get(riskcode, "info")
+                severity = riskcode_map.get(riskcode, "info")
+            else:
+                # Default to informational if neither field is present
+                riskcode = 0
+                severity = "info"
             
             # Extract confidence (ZAP uses integer: 0=Low, 1=Medium, 2=High, 3=Confirmed)
             # or string: "Low", "Medium", "High", "Confirmed"
