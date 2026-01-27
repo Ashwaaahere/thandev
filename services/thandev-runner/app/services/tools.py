@@ -197,6 +197,7 @@ class ToolExecutor:
             "dalfox": self._run_dalfox,
             "sqlmap": self._run_sqlmap,
             "zap": self._run_zap,
+            "enumeration": self._run_enumeration,  # Asset discovery (katana, gau, arjun)
         }
         
         # Load catalog for tool_id/mode_id mapping
@@ -457,6 +458,11 @@ class ToolExecutor:
         mode_config = self._tool_mode_map[mode_key]
         params = params or {}
         
+        # DEBUG: Log params to verify scan_level is present
+        logger.info(f"[SCAN_LEVEL_DEBUG] run_step called for {tool_id}/{mode_id}, params keys: {list(params.keys())}, scan_level in params: {'scan_level' in params}")
+        if 'scan_level' in params:
+            logger.info(f"[SCAN_LEVEL_DEBUG] scan_level value from params: {params['scan_level']}")
+        
         # Defense-in-depth: Validate params against mode's params_schema
         # (Plan validation already does this, but we validate again here for security)
         params_schema = mode_config.get("params_schema", {})
@@ -509,10 +515,11 @@ class ToolExecutor:
         if "scan_level" in params:
             # Use scan_level from params (more accurate than inferring from mode_id)
             scan_level = params["scan_level"]
-            logger.info(f"Using scan_level={scan_level} from params for {tool_id}/{mode_id}")
+            logger.info(f"[SCAN_LEVEL] Using scan_level={scan_level} from params for {tool_id}/{mode_id}")
         else:
             # Fallback: Determine scan_level from mode_id (for backward compatibility)
             scan_level = self._infer_scan_level_from_mode(mode_id)
+            logger.warning(f"[SCAN_LEVEL] scan_level NOT in params for {tool_id}/{mode_id}, inferred from mode_id: {scan_level}. Available params keys: {list(params.keys())}")
         
         # CRITICAL: Do NOT add scan_level to internal_kwargs - it's passed as positional argument
         # Adding it to kwargs would cause "got multiple values for argument 'scan_level'" error
@@ -681,12 +688,16 @@ class ToolExecutor:
         
         This will be removed once we fully migrate away from scan_level.
         """
-        if "basic" in mode_id.lower():
+        mode_lower = mode_id.lower()
+        if "basic" in mode_lower:
             return "basic"
-        elif "pro" in mode_id.lower() or "standard" in mode_id.lower():
+        elif "pro" in mode_lower or "standard" in mode_lower:
             return "pro"
-        elif "advanced" in mode_id.lower() or "aggressive" in mode_id.lower():
+        elif "advanced" in mode_lower or "aggressive" in mode_lower:
             return "advanced"
+        elif mode_lower == "active_scan":
+            # ZAP active_scan mode is typically used for pro/advanced scans
+            return "pro"
         else:
             return "basic"  # Default
     
@@ -755,12 +766,41 @@ class ToolExecutor:
             profile: profile name from tool config (e.g., "basic_web", "pro_web", "advanced_web")
                     If provided, uses NUCLEI_PROFILE_TAGS to determine which tags to use
         """
-        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        from app.backend_client import get_scan_inventory_with_retry
         
-        # 1. Crawl first to get all endpoints
-        logger.info(f"Crawling target for Nuclei scan {scan_job_id}...")
-        all_urls, _ = await self._crawl_target(target_url, scan_job_id, scan_level)
-        logger.info(f"Nuclei will scan {len(all_urls)} URLs found by crawler")
+        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        # Note: scan_level is passed as positional argument, NOT in kwargs
+        
+        # 1. Try to get URLs from inventory first (if enumeration was run)
+        # For Pro/Advanced scans, wait for inventory to be available
+        all_urls = []
+        inventory = None
+        
+        logger.info(f"[NUCLEI] Starting for scan {scan_job_id}, scan_level={scan_level}")
+        if scan_level in ["pro", "advanced"]:
+            logger.info(f"[NUCLEI] Waiting for inventory (Pro/Advanced scan) for {scan_job_id}")
+            inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+        
+        if inventory and isinstance(inventory, dict):
+            # Extract URLs from inventory
+            discovery = inventory.get("discovery", {})
+            merged_urls = discovery.get("merged", {}).get("all_urls", [])
+            
+            if merged_urls:
+                all_urls = list(set(merged_urls))  # Deduplicate
+                logger.info(
+                    f"[NUCLEI] Will scan {len(all_urls)} URLs from asset inventory for scan {scan_job_id}"
+                )
+            else:
+                logger.info(f"[NUCLEI] Asset inventory found but contains no URLs for scan {scan_job_id}")
+        else:
+            logger.info(f"[NUCLEI] No asset inventory found for scan {scan_job_id}, will crawl target")
+        
+        # 2. Fall back to crawling if no inventory URLs
+        if not all_urls:
+            logger.info(f"Crawling target for Nuclei scan {scan_job_id}...")
+            all_urls, _ = await self._crawl_target(target_url, scan_job_id, scan_level)
+            logger.info(f"Nuclei will scan {len(all_urls)} URLs found by crawler")
         
         if not all_urls:
             logger.warning(f"No URLs found for Nuclei scan {scan_job_id} (crawler failed or returned nothing). Skipping Nuclei.")
@@ -1020,15 +1060,103 @@ class ToolExecutor:
             import time
             exec_start_time = time.time()
 
+            # CRITICAL FIX: Use Popen with manual output reading to capture partial output on timeout
+            # When subprocess.run() times out, it raises TimeoutExpired and we lose all output
+            # With Popen + threads, we can read output as it's generated and keep it even if timeout occurs
+            def run_with_timeout_capture():
+                import threading
+                import queue
+                
+                process = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    bufsize=0  # Unbuffered for immediate reading
+                )
+                
+                # Queues to collect output from threads
+                stdout_queue = queue.Queue()
+                stderr_queue = queue.Queue()
+                
+                def read_stdout():
+                    try:
+                        for line in process.stdout:
+                            stdout_queue.put(line)
+                    except Exception:
+                        pass
+                    finally:
+                        stdout_queue.put(None)  # Sentinel
+                
+                def read_stderr():
+                    try:
+                        for line in process.stderr:
+                            stderr_queue.put(line)
+                    except Exception:
+                        pass
+                    finally:
+                        stderr_queue.put(None)  # Sentinel
+                
+                # Start reader threads
+                stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+                stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+                stdout_thread.start()
+                stderr_thread.start()
+                
+                # Write URLs to stdin
+                try:
+                    process.stdin.write(urls_input)
+                    process.stdin.close()
+                except Exception:
+                    pass
+                
+                # Wait for process with timeout
+                try:
+                    process.wait(timeout=timeout_seconds)
+                    exit_code = process.returncode
+                except subprocess.TimeoutExpired:
+                    # Process timed out - kill it but keep output we've read
+                    process.kill()
+                    exit_code = -1
+                
+                # Collect all output from queues
+                stdout_lines = []
+                stderr_lines = []
+                
+                # Read stdout until sentinel
+                while True:
+                    line = stdout_queue.get()
+                    if line is None:
+                        break
+                    stdout_lines.append(line)
+                
+                # Read stderr until sentinel
+                while True:
+                    line = stderr_queue.get()
+                    if line is None:
+                        break
+                    stderr_lines.append(line)
+                
+                stdout_data = "".join(stdout_lines)
+                stderr_data = "".join(stderr_lines)
+                
+                # Wait for threads to finish
+                stdout_thread.join(timeout=1)
+                stderr_thread.join(timeout=1)
+                
+                # Return a CompletedProcess-like object
+                class ProcessResult:
+                    def __init__(self, cmd, exit_code, stdout, stderr):
+                        self.args = cmd
+                        self.returncode = exit_code
+                        self.stdout = stdout
+                        self.stderr = stderr
+                
+                return ProcessResult(cmd, exit_code, stdout_data, stderr_data)
+            
             # Use asyncio.to_thread to prevent blocking event loop
-            result = await asyncio.to_thread(
-                subprocess.run,
-                cmd,
-                input=urls_input,
-                capture_output=True,
-                text=True,
-                timeout=timeout_seconds,
-            )
+            result = await asyncio.to_thread(run_with_timeout_capture)
 
             exec_duration = time.time() - exec_start_time
             logger.info(
@@ -1041,12 +1169,18 @@ class ToolExecutor:
                 logger.warning(
                     f"Nuclei scan {scan_job_id}: Execution completed in {exec_duration:.2f}s which is "
                     f"suspiciously fast for {len(all_urls)} URLs. This might indicate an error."
-            )
+                )
             
             # Calculate sizes
             stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
             stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
             exit_code = result.returncode
+            
+            # Log if we have partial output from timeout
+            if exit_code == -1 and stdout_bytes > 0:
+                logger.info(
+                    f"Nuclei scan {scan_job_id}: Timed out but captured {stdout_bytes} bytes of partial output (findings may be present)"
+                )
             
             # Log execution summary - clear distinction between success and failure
             logger.info(
@@ -1140,7 +1274,8 @@ class ToolExecutor:
                 "execution_time": exec_duration,  # Accurate subprocess-only execution time
             }
         except subprocess.TimeoutExpired:
-            # Calculate execution time even on timeout
+            # This should not happen now since we handle timeout in run_with_timeout_capture
+            # But keep as fallback
             exec_duration = time.time() - exec_start_time
             logger.warning(f"Nuclei scan {scan_job_id} timed out after {timeout_seconds} seconds ({timeout_seconds // 60} minutes, actual: {exec_duration:.2f}s)")
             return {
@@ -1880,27 +2015,61 @@ class ToolExecutor:
             timeout_seconds: timeout in seconds (default: 900 for Pro, 1800 for Advanced)
         """
         from app.utils.param_harvester import ParamHarvester, create_fallback_targets
+        from app.backend_client import get_scan_inventory_with_retry
         
         scan_job_id = kwargs.get("scan_job_id", "unknown")
         scan_job_dir = kwargs.get("scan_job_dir")
+        # Note: scan_level is passed as positional argument, NOT in kwargs
         
-        # 1. Harvest parameterized requests from ZAP/crawler outputs first
-        logger.info(f"Harvesting parameterized endpoints for Dalfox scan {scan_job_id}: {target_url}")
+        # 1. Try to get parameterized URLs from inventory first
+        # For Pro/Advanced scans, wait for inventory to be available
         harvester = ParamHarvester(job_dir=scan_job_dir)
+        inventory_param_urls = []
+        inventory = None
         
-        # Try to harvest from job directory (ZAP output, etc.)
-        if scan_job_dir:
+        logger.info(f"[DALFOX] Starting for scan {scan_job_id}, scan_level={scan_level}")
+        if scan_level in ["pro", "advanced"]:
+            logger.info(f"[DALFOX] Waiting for inventory (Pro/Advanced scan) for {scan_job_id}")
+            inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+        
+        if inventory and isinstance(inventory, dict):
+            discovery = inventory.get("discovery", {})
+            merged = discovery.get("merged", {})
+            inventory_param_urls = merged.get("param_urls", [])
+            
+            if inventory_param_urls:
+                logger.info(
+                    f"[DALFOX] scan {scan_job_id}: Found {len(inventory_param_urls)} parameterized URLs "
+                    f"in asset inventory"
+                )
+                # Add inventory URLs to harvester
+                for url in inventory_param_urls:
+                    harvester.add_manual_url(url)
+            else:
+                logger.info(f"[DALFOX] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}")
+        else:
+            logger.info(f"[DALFOX] No asset inventory found for scan {scan_job_id}, will harvest from job dir")
+        
+        # 2. Also harvest from job directory (ZAP output, etc.) if no inventory URLs
+        if not inventory_param_urls and scan_job_dir:
+            logger.info(f"Harvesting parameterized endpoints for Dalfox scan {scan_job_id}: {target_url}")
             harvested_count = harvester.harvest_from_job_dir()
             logger.info(f"Dalfox scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
         
-        # 2. Also crawl to get additional endpoints
-        logger.info(f"Crawling target for Dalfox scan {scan_job_id}: {target_url} (scan_level: {scan_level})")
-        all_urls, parameterized_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
+        # 3. Crawl only if we don't have inventory URLs (to save time and resources)
+        all_urls = []
+        parameterized_urls = []
+        
+        if not inventory_param_urls:
+            logger.info(f"Crawling target for Dalfox scan {scan_job_id}: {target_url} (scan_level: {scan_level})")
+            all_urls, parameterized_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
         
         # Add crawler results to harvester
         if parameterized_urls:
             crawler_count = harvester.harvest_from_crawler_output(parameterized_urls)
             logger.info(f"Dalfox scan {scan_job_id}: Added {crawler_count} URLs from crawler")
+        else:
+            logger.info(f"Skipping crawler for Dalfox scan {scan_job_id} (using inventory URLs)")
         
         # Get all harvested parameterized URLs
         harvested_param_urls = harvester.get_parameterized_urls()
@@ -2620,6 +2789,52 @@ class ToolExecutor:
         if not proxy_accessed:
             logger.warning(f"Could not access URL via ZAP proxy on any port (tried {proxy_ports_to_try}) - will try spider")
             # Continue - spider will discover URLs (but won't add them to scan tree without proxy)
+        
+        # Seed ZAP with inventory URLs (if available)
+        # For Pro/Advanced scans, wait for inventory to be available
+        # Note: scan_level is passed as positional argument, NOT in kwargs
+        from app.backend_client import get_scan_inventory_with_retry
+        inventory = None
+        
+        logger.info(f"[ZAP] Starting for scan {scan_job_id}, scan_level={scan_level}")
+        if scan_level in ["pro", "advanced"]:
+            logger.info(f"[ZAP] Waiting for inventory (Pro/Advanced scan) for {scan_job_id}")
+            inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+        
+        if inventory and isinstance(inventory, dict):
+            discovery = inventory.get("discovery", {})
+            merged = discovery.get("merged", {})
+            inventory_urls = merged.get("all_urls", [])
+            
+            if inventory_urls:
+                logger.info(
+                    f"[ZAP] Seeding ZAP with {len(inventory_urls)} URLs from asset inventory for scan {scan_job_id}"
+                )
+                # Limit to first 50 URLs to avoid overwhelming ZAP
+                urls_to_seed = inventory_urls[:50]
+                seeded_count = 0
+                
+                for url in urls_to_seed:
+                    try:
+                        access_response = await asyncio.to_thread(
+                            http_session.get,
+                            f"{zap_api_url}/JSON/core/action/accessUrl/?url={url}&followRedirects=false&apikey=",
+                            timeout=5
+                        )
+                        access_result = access_response.json()
+                        if access_result.get("Result") == "OK":
+                            seeded_count += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to seed URL {url} in ZAP: {e}")
+                
+                logger.info(f"Successfully seeded {seeded_count}/{len(urls_to_seed)} inventory URLs in ZAP")
+                # Give ZAP a moment to process the seeded URLs
+                if seeded_count > 0:
+                    await asyncio.sleep(2)
+            else:
+                logger.debug(f"Asset inventory found but contains no URLs for scan {scan_job_id}")
+        else:
+            logger.debug(f"No asset inventory found for scan {scan_job_id}")
         
         # Start spidering (always do a basic spider first to discover URLs)
         # CRITICAL: For better spider results, use base URL if target is a specific page
@@ -3501,32 +3716,64 @@ class ToolExecutor:
         scan_job_dir = kwargs.get("scan_job_dir")
         logger.info(f"Checking sqlmap availability for scan {scan_job_id}, mode={mode_id}")
         
-        # 1. Harvest parameterized requests from ZAP/crawler outputs first
-        logger.info(f"Harvesting parameterized endpoints for SQLMap scan {scan_job_id}: {target_url}")
+        # 1. Try to get parameterized URLs from inventory first (for Advanced scans with enumeration)
+        # For Pro/Advanced scans, wait for inventory to be available
+        # Note: scan_level is passed as positional argument, NOT in kwargs
+        from app.backend_client import get_scan_inventory_with_retry
         harvester = ParamHarvester(job_dir=scan_job_dir)
-        
-        # Try to harvest from job directory (ZAP output, etc.)
         parameterized_urls = []
+        inventory = None
+        
+        logger.info(f"[SQLMAP] Starting for scan {scan_job_id}, scan_level={scan_level}")
+        if scan_level in ["pro", "advanced"]:
+            logger.info(f"[SQLMAP] Waiting for inventory (Pro/Advanced scan) for {scan_job_id}")
+            inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+        
+        if inventory and isinstance(inventory, dict):
+            discovery = inventory.get("discovery", {})
+            merged = discovery.get("merged", {})
+            inventory_param_urls = merged.get("param_urls", [])
+            
+            if inventory_param_urls:
+                # For SQLMap, limit to first 20 URLs to avoid very long scans
+                limited_urls = inventory_param_urls[:20]
+                logger.info(
+                    f"[SQLMAP] scan {scan_job_id}: Found {len(inventory_param_urls)} parameterized URLs "
+                    f"in asset inventory, using first {len(limited_urls)}"
+                )
+                # Add inventory URLs to harvester
+                for url in limited_urls:
+                    harvester.add_url(url)
+                parameterized_urls = limited_urls
+            else:
+                logger.info(f"Asset inventory found but contains no parameterized URLs for scan {scan_job_id}")
+        else:
+            logger.info(f"No asset inventory found for scan {scan_job_id}")
+        
+        # 2. Fall back to harvesting from job directory if no inventory URLs
         harvested_requests = []
-        if scan_job_dir:
+        if not parameterized_urls and scan_job_dir:
+            logger.info(f"Harvesting parameterized endpoints for SQLMap scan {scan_job_id}: {target_url}")
             harvested_count = harvester.harvest_from_job_dir()
             logger.info(f"SQLMap scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
             harvested_requests = harvester.get_all_requests()
         
-        # 2. Also crawl to get additional endpoints (only if in generic scan mode)
-        if mode_id in ["sqli_light", "sqli_get_basic"]:
+        # 3. Crawl only if we don't have inventory URLs and are in generic scan mode
+        if not parameterized_urls and mode_id in ["sqli_light", "sqli_get_basic"]:
             logger.info(f"Crawling target for SQLMap scan {scan_job_id}...")
             try:
-                _, parameterized_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
-                logger.info(f"SQLMap found {len(parameterized_urls)} parameterized URLs from crawler")
+                _, crawler_param_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
+                logger.info(f"SQLMap found {len(crawler_param_urls)} parameterized URLs from crawler")
                 
                 # Add crawler results to harvester
-                if parameterized_urls:
-                    crawler_count = harvester.harvest_from_crawler_output(parameterized_urls)
+                if crawler_param_urls:
+                    crawler_count = harvester.harvest_from_crawler_output(crawler_param_urls)
                     logger.info(f"SQLMap scan {scan_job_id}: Added {crawler_count} URLs from crawler")
+                    parameterized_urls = crawler_param_urls
             except Exception as crawl_error:
                 logger.warning(f"SQLMap crawler failed for {scan_job_id}: {crawl_error}. Will test target URL directly.")
-                parameterized_urls = []
+        elif parameterized_urls:
+            logger.info(f"Skipping crawler for SQLMap scan {scan_job_id} (using inventory URLs)")
         
         # Get all harvested parameterized URLs
         harvested_param_urls = harvester.get_parameterized_urls()
@@ -5726,4 +5973,94 @@ class ToolExecutor:
                 "timed_out": False,
             }
     
+
+    async def _run_enumeration(self, target_url: str, scan_level: str, **kwargs) -> Dict:
+        """
+        Run asset enumeration (Katana + GAU + Arjun) to discover URLs and parameters.
+        
+        This creates an asset inventory that other tools can consume for more comprehensive scanning.
+        
+        Optional kwargs:
+            scan_job_id: Scan job ID for tracking and event emission
+            timeout_seconds: Overall timeout for enumeration phase
+        """
+        from app.enumeration import run_enumeration
+        from app.backend_client import post_scan_inventory
+        
+        scan_job_id = kwargs.get("scan_job_id", "unknown")
+        timeout_seconds = kwargs.get("timeout_seconds", 600)  # Default 10 minutes
+        
+        logger.info(f"Starting enumeration phase for scan {scan_job_id}: {target_url}")
+        
+        try:
+            # Run enumeration and get asset inventory
+            start_time = time.time()
+            inventory = await run_enumeration(
+                target_url=target_url,
+                scan_job_id=scan_job_id,
+                scan_level=scan_level,
+                timeout_seconds=timeout_seconds
+            )
+            execution_time = time.time() - start_time
+            
+            if not inventory:
+                logger.warning(f"Enumeration returned no inventory for scan {scan_job_id}")
+                return {
+                    "tool_name": "enumeration",
+                    "output": "{}",
+                    "exit_code": 1,
+                    "execution_time": execution_time,
+                    "success": False,
+                    "error": "No assets discovered during enumeration",
+                }
+            
+            # Post inventory to backend
+            inventory_posted = await post_scan_inventory(scan_job_id, inventory)
+            if not inventory_posted:
+                logger.warning(f"Failed to post inventory to backend for scan {scan_job_id}")
+            
+            # Count discovered assets for reporting
+            discovery = inventory.get("discovery", {})
+            merged = discovery.get("merged", {})
+            urls_count = len(merged.get("all_urls", []))
+            param_urls_count = len(merged.get("param_urls", []))
+            interesting_count = len(merged.get("interesting_endpoints", []))
+            
+            logger.info(
+                f"Enumeration completed for scan {scan_job_id}: "
+                f"{urls_count} URLs, {param_urls_count} parameterized, "
+                f"{interesting_count} interesting endpoints"
+            )
+            
+            return {
+                "tool_name": "enumeration",
+                "output": json.dumps(inventory, indent=2),
+                "exit_code": 0,
+                "execution_time": execution_time,
+                "success": True,
+                "command": "katana + gau + arjun",
+                "timed_out": False,
+            }
+            
+        except asyncio.TimeoutError:
+            logger.warning(f"Enumeration timed out after {timeout_seconds}s for scan {scan_job_id}")
+            return {
+                "tool_name": "enumeration",
+                "output": "",
+                "exit_code": None,
+                "error": f"Enumeration timed out after {timeout_seconds} seconds",
+                "command": "katana + gau + arjun",
+                "timed_out": True,
+            }
+        except Exception as e:
+            logger.error(f"Enumeration failed for scan {scan_job_id}: {e}", exc_info=True)
+            return {
+                "tool_name": "enumeration",
+                "output": "",
+                "exit_code": -1,
+                "error": f"Enumeration failed: {str(e)}",
+                "command": "katana + gau + arjun",
+                "success": False,
+                "timed_out": False,
+            }
 

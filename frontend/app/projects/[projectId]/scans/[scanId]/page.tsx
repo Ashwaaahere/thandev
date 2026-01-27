@@ -6,7 +6,7 @@
  * Displays detailed scan report with executive summary, findings, metadata, and stack info.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import Link from 'next/link';
@@ -20,6 +20,9 @@ import TechDependenciesPanel from '@/components/Scans/TechDependenciesPanel';
 import RepoDependenciesPanel from '@/components/Scans/RepoDependenciesPanel';
 import CWEDrawer from '@/components/Dashboard/CWEDrawer';
 import AISummaryPanel from '@/components/Scans/AISummaryPanel';
+import PhaseTimeline from '@/components/Scans/PhaseTimeline';
+import SeverityBadge from '@/components/Scans/SeverityBadge';
+import { useScanEvents } from '@/hooks/useScanEvents';
 
 // Types
 type FindingStatus = "open" | "acknowledged" | "resolved" | "suppressed";
@@ -189,14 +192,41 @@ export default function ScanReportPage() {
   const [findingsPage, setFindingsPage] = useState(0);  // Current page (0-indexed)
   const [findingsLimit] = useState(100);  // Findings per page (can be 100-200)
   const [allFindings, setAllFindings] = useState<Finding[]>([]);  // All findings for executive summary
-  const [activeTab, setActiveTab] = useState<'overview' | 'findings' | 'tech-deps' | 'repo-deps' | 'ai-summary'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'findings' | 'enumeration' | 'tech-deps' | 'repo-deps' | 'ai-summary'>('overview');
   const [artifacts, setArtifacts] = useState<any>(null);
   const [artifactsLoading, setArtifactsLoading] = useState(false);
   const [techStack, setTechStack] = useState<any>(null);  // Tech stack from /tech-stack endpoint
   const [techStackLoading, setTechStackLoading] = useState(true);
+  const [inventory, setInventory] = useState<any>(null);  // Enumeration inventory
+  const [inventoryLoading, setInventoryLoading] = useState(false);
   const [currentTime, setCurrentTime] = useState(Date.now()); // For real-time timer updates
   const [cweDrawerOpen, setCweDrawerOpen] = useState(false);
   const [selectedCweId, setSelectedCweId] = useState<string | null>(null);
+
+  // Connect to real-time scan events via WebSocket
+  const { events, toolStates: wsToolStates, isConnected } = useScanEvents(scanId);
+  
+  // Convert HTTP tools data to tool states format as fallback
+  const toolStates = useMemo(() => {
+    // If WebSocket provided tool states, use them
+    if (wsToolStates && wsToolStates.length > 0) {
+      return wsToolStates;
+    }
+    
+    // Otherwise, convert tools data from HTTP API
+    if (tools && tools.length > 0) {
+      return tools.map(tool => ({
+        tool: tool.tool_name?.toLowerCase() || 'unknown',
+        phase: 'scan', // Tools from HTTP API are always in scan phase
+        stage: tool.exit_code === 0 ? 'completed' : tool.exit_code === null ? 'running' : 'completed',
+        progress: tool.exit_code !== null ? 1 : 0,
+        last_message: tool.exit_code === 0 ? 'Completed' : tool.exit_code === null ? 'Running' : `Exit code: ${tool.exit_code}`,
+        updated_at: tool.completed_at || tool.started_at || new Date().toISOString(),
+      }));
+    }
+    
+    return [];
+  }, [wsToolStates, tools]);
 
   // Poll for scan status updates when scan is running/queued
   useEffect(() => {
@@ -318,16 +348,23 @@ export default function ScanReportPage() {
     }
   }, [scan?.status, scan?.started_at]);
 
-  // Load tools data
+  // Track if tools have been loaded at least once
+  const toolsLoadedRef = useRef(false);
+  
+  // Load tools data (with polling when scan is running)
   useEffect(() => {
     async function loadTools() {
       if (!session || !scanId) return;
 
       try {
+        // Only show loading on first load
+        if (!toolsLoadedRef.current) {
         setToolsLoading(true);
+        }
         setToolsError(null);
         const data = await thandevFetchJSON<ToolsResponse>(`/api/scans/${scanId}/tools`, session);
         setTools(data.items || []);
+        toolsLoadedRef.current = true;
       } catch (err) {
         console.error('Error loading tools:', err);
         setToolsError(err instanceof Error ? err.message : 'Failed to load tools');
@@ -335,8 +372,21 @@ export default function ScanReportPage() {
         setToolsLoading(false);
       }
     }
+    
     loadTools();
-  }, [scanId, session]);
+    
+    // Poll for tools updates while scan is running
+    const isRunning = scan?.status === 'running' || scan?.status === 'queued';
+    let pollInterval: NodeJS.Timeout | null = null;
+    
+    if (isRunning) {
+      pollInterval = setInterval(loadTools, 3000); // Poll every 3 seconds
+    }
+    
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [scanId, session, scan?.status]);
 
   // Load all available tools for the scan (for filter dropdown)
   useEffect(() => {
@@ -390,13 +440,21 @@ export default function ScanReportPage() {
     loadTopFindings();
   }, [scanId, session, scan?.status, scan?.id]);
 
+  // Track if findings have been loaded at least once
+  const findingsLoadedRef = useRef(false);
+
   // Load findings data from paginated endpoint
   useEffect(() => {
+    let isPolling = false;
+    
     async function loadFindings() {
       if (!session || !scanId) return;
 
       try {
+        // Only show loading on initial load, not during polling
+        if (!findingsLoadedRef.current) {
         setFindingsLoading(true);
+        }
         setFindingsError(null);
         // Fetch findings with pagination and tool filter
         const skip = findingsPage * findingsLimit;
@@ -424,6 +482,7 @@ export default function ScanReportPage() {
         }
         setFindings(data.items || []);
         setFindingsTotal(data.total || 0);
+        findingsLoadedRef.current = true;
 
         // Collect unique CVE IDs from findings
         const uniqueCves = new Set<string>();
@@ -443,7 +502,22 @@ export default function ScanReportPage() {
       }
     }
     loadFindings();
-  }, [scanId, session, findingsPage, findingsLimit, selectedToolFilter]);
+    
+    // Poll for findings updates while scan is running (only on first page to avoid disrupting user)
+    const isRunning = scan?.status === 'running' || scan?.status === 'queued';
+    let pollInterval: NodeJS.Timeout | null = null;
+    
+    if (isRunning && findingsPage === 0) {
+      pollInterval = setInterval(() => {
+        isPolling = true;
+        loadFindings();
+      }, 5000); // Poll every 5 seconds
+    }
+    
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [scanId, session, findingsPage, findingsLimit, selectedToolFilter, scan?.status]);
 
   // Load artifacts
   const loadArtifacts = async () => {
@@ -469,8 +543,16 @@ export default function ScanReportPage() {
   }, [activeTab, session, scan?.status]); // Reload when tab changes, session changes, or scan status changes
 
   // Load tech stack (aggregated from url_sca artifact + ToolResult.meta fallback)
+  // Only for Pro/Advanced scans
   useEffect(() => {
     if (!session || !scanId || !scan) return;
+    
+    // Skip tech stack for basic scans
+    if (scan.scan_level === 'basic') {
+      setTechStackLoading(false);
+      setTechStack(null);
+      return;
+    }
 
     const fetchTechStack = async () => {
       setTechStackLoading(true);
@@ -492,12 +574,40 @@ export default function ScanReportPage() {
 
     // Poll if scan is running (tech stack can update as tools complete)
     const isRunning = scan.status === 'running' || scan.status === 'queued';
-    const interval = isRunning ? setInterval(fetchTechStack, 5000) : null;
+    const interval = isRunning ? setInterval(fetchTechStack, 10000) : null; // Reduced frequency to 10s
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [scanId, scan?.status, session]);
+  }, [scanId, scan?.status, scan?.scan_level, session]);
+
+  // Load enumeration inventory when tab is activated
+  // Only for Pro/Advanced scans
+  useEffect(() => {
+    if (activeTab !== 'enumeration' || !session || !scanId || !scan) return;
+    
+    // Skip for basic scans
+    if (scan.scan_level === 'basic') {
+      setInventoryLoading(false);
+      setInventory(null);
+      return;
+    }
+
+    const fetchInventory = async () => {
+      setInventoryLoading(true);
+      try {
+        const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/inventory`, session);
+        setInventory(data?.inventory || null);
+      } catch (error) {
+        console.error('Failed to fetch enumeration inventory:', error);
+        setInventory(null);
+      } finally {
+        setInventoryLoading(false);
+      }
+    };
+
+    fetchInventory();
+  }, [activeTab, session, scanId, scan]);
 
   // Helper functions
   const formatDate = (dateString: string | null | undefined) => {
@@ -1067,7 +1177,8 @@ export default function ScanReportPage() {
                 {[
                   { id: 'overview', label: 'Overview' },
                   { id: 'findings', label: 'Findings' },
-                  { id: 'tech-deps', label: 'Tech & Dependencies' },
+                  ...(scan?.scan_level !== 'basic' ? [{ id: 'enumeration', label: 'Enumeration' }] : []),
+                  ...(scan?.scan_level !== 'basic' ? [{ id: 'tech-deps', label: 'Tech & Dependencies' }] : []),
                   { id: 'repo-deps', label: 'Repo Dependencies' },
                   { id: 'ai-summary', label: 'AI Summary' },
                 ].map((tab) => (
@@ -1166,8 +1277,8 @@ export default function ScanReportPage() {
 
                                 return (
                                   <li key={objectKey} className="text-sm" style={{ color: 'var(--fg)' }}>
-                                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium border ${severityColor} mr-2`}>
-                                      [{severity}]
+                                <span className="mr-2">
+                                  <SeverityBadge severity={riskObj.severity || 'info'} />
                                     </span>
                                     <span className="font-semibold">{riskObj.title || 'Untitled finding'}</span>
                                     {riskObj.cvss_score != null && typeof riskObj.cvss_score === 'number' && (
@@ -1327,9 +1438,7 @@ export default function ScanReportPage() {
                               <div className="flex items-start justify-between gap-2 mb-3">
                                 <div className="flex-1">
                                   <div className="flex items-center gap-2 flex-wrap mb-2">
-                                    <span className={`px-2 py-1 text-xs font-medium rounded-full border ${severityClasses(finding.severity)}`}>
-                                      {finding.severity?.toUpperCase() || 'INFO'}
-                                    </span>
+                                    <SeverityBadge severity={finding.severity || 'info'} />
                                     {finding.status && <StatusBadge status={finding.status} />}
                                     {finding.not_seen_in_latest_scan !== null && (
                                       finding.not_seen_in_latest_scan ? (
@@ -1657,8 +1766,19 @@ export default function ScanReportPage() {
                     </div>
                   </div>
 
-                  {/* Progress Indicator - Show when scan is running */}
-                  {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
+                  {/* Phase Timeline - Show when scan is running */}
+                  {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (
+                    <PhaseTimeline
+                      events={events}
+                      toolStates={toolStates}
+                      scanStatus={scan.status}
+                      scanLevel={scan.scan_level}
+                      isConnected={isConnected}
+                    />
+                  )}
+
+                  {/* Legacy progress fallback - Show only if WebSocket not connected */}
+                  {!isConnected && (scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
                     // Calculate timeout remaining (max timeout - elapsed time)
                     const getTimeoutRemaining = () => {
                       if (!scan.started_at) {
@@ -2319,9 +2439,7 @@ export default function ScanReportPage() {
                             <div className="flex items-start justify-between gap-2 mb-3">
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 flex-wrap mb-2">
-                                  <span className={`px-2 py-1 text-xs font-medium rounded-full border ${severityClasses(finding.severity)}`}>
-                                    {finding.severity?.toUpperCase() || 'INFO'}
-                                  </span>
+                                  <SeverityBadge severity={finding.severity || 'info'} />
                                   {finding.status && <StatusBadge status={finding.status} />}
                                 </div>
                                 <h4 className="font-semibold text-sm" style={{ color: 'var(--fg)' }}>{finding.title}</h4>
@@ -2339,6 +2457,180 @@ export default function ScanReportPage() {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'enumeration' && (
+              <div className="space-y-6">
+                <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                  <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>
+                    Asset Enumeration Results
+                  </h2>
+                  
+                  {inventoryLoading ? (
+                    <div className="flex items-center justify-center py-12">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
+                    </div>
+                  ) : !inventory ? (
+                    <div className="text-center py-12" style={{ color: 'var(--muted)' }}>
+                      <p>No enumeration data available yet.</p>
+                      <p className="text-sm mt-2">Enumeration data will appear here once the scan completes the discovery phase.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-6">
+                      {/* Discovery Summary */}
+                      {inventory.discovery?.merged && (
+                        <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                          <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>Discovery Summary</h3>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div>
+                              <div className="text-2xl font-bold text-indigo-400">{inventory.discovery.merged.all_urls_count || 0}</div>
+                              <div className="text-sm" style={{ color: 'var(--muted)' }}>Total URLs</div>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-bold text-green-400">{inventory.discovery.merged.unique_urls_count || 0}</div>
+                              <div className="text-sm" style={{ color: 'var(--muted)' }}>Unique URLs</div>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-bold text-yellow-400">{inventory.discovery.merged.param_urls_count || 0}</div>
+                              <div className="text-sm" style={{ color: 'var(--muted)' }}>Parameterized URLs</div>
+                            </div>
+                            <div>
+                              <div className="text-2xl font-bold text-purple-400">
+                                {(() => {
+                                  // Count total parameters discovered by Arjun
+                                  const arjunParams = inventory.discovery?.arjun?.params_by_url || {};
+                                  let totalParams = 0;
+                                  Object.values(arjunParams).forEach((params: any) => {
+                                    if (Array.isArray(params)) {
+                                      totalParams += params.length;
+                                    } else if (typeof params === 'object' && params !== null) {
+                                      totalParams += Object.keys(params).length;
+                                    }
+                                  });
+                                  return totalParams;
+                                })()}
+                              </div>
+                              <div className="text-sm" style={{ color: 'var(--muted)' }}>Parameters Discovered</div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Technologies Detected */}
+                      {inventory.technologies && inventory.technologies.length > 0 && (
+                        <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                          <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>Technologies Detected</h3>
+                          <div className="flex flex-wrap gap-2">
+                            {inventory.technologies.map((tech: string, idx: number) => (
+                              <span
+                                key={idx}
+                                className="px-3 py-1 rounded-full text-sm font-medium"
+                                style={{ background: 'var(--surface)', color: 'var(--brand)', borderWidth: '1px', borderColor: 'var(--border)' }}
+                              >
+                                {tech}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Tool Breakdown */}
+                      <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                        <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>Tool Breakdown</h3>
+                        <div className="space-y-3">
+                          {inventory.discovery?.httpx && (
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <span className="font-medium">HTTPX (Tech Detection)</span>
+                                {inventory.discovery.httpx.final_url && (
+                                  <span className="ml-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                    → {inventory.discovery.httpx.final_url}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface)', color: 'var(--muted)' }}>
+                                {inventory.discovery.httpx.tech?.length || 0} technologies
+                              </span>
+                            </div>
+                          )}
+                          {inventory.discovery?.katana && (
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">Katana (Live Crawl)</span>
+                              <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface)', color: inventory.discovery.katana.urls_count > 0 ? 'var(--success)' : 'var(--muted)' }}>
+                                {inventory.discovery.katana.urls_count || inventory.discovery.katana.urls?.length || 0} URLs
+                              </span>
+                            </div>
+                          )}
+                          {inventory.discovery?.gau && (
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">GAU (Historical URLs)</span>
+                              <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface)', color: inventory.discovery.gau.urls_count > 0 ? 'var(--success)' : 'var(--muted)' }}>
+                                {inventory.discovery.gau.urls_count || inventory.discovery.gau.urls?.length || 0} URLs
+                              </span>
+                            </div>
+                          )}
+                          {inventory.discovery?.arjun && (
+                            <div className="flex justify-between items-center">
+                              <span className="font-medium">Arjun (Parameter Discovery)</span>
+                              <span className="text-sm px-3 py-1 rounded-full" style={{ background: 'var(--surface)', color: 'var(--muted)' }}>
+                                {Object.keys(inventory.discovery.arjun.params_by_url || {}).length || 0} URLs with params
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Parameterized URLs */}
+                      {inventory.discovery?.merged?.param_urls && inventory.discovery.merged.param_urls.length > 0 && (
+                        <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                          <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>
+                            Parameterized URLs (for XSS/SQLi testing) - showing first 15
+                          </h3>
+                          <div className="space-y-2 max-h-64 overflow-y-auto">
+                            {inventory.discovery.merged.param_urls.slice(0, 15).map((url: string, idx: number) => (
+                              <div
+                                key={idx}
+                                className="text-sm font-mono p-2 rounded break-all"
+                                style={{ background: 'var(--surface)', color: 'var(--warning)' }}
+                              >
+                                {url}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* All URLs Preview */}
+                      {(() => {
+                        const urls = inventory.discovery?.merged?.unique_urls || inventory.discovery?.merged?.all_urls || [];
+                        return urls.length > 0 ? (
+                          <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+                            <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>
+                              All Discovered URLs (showing first 30)
+                            </h3>
+                            <div className="space-y-2 max-h-96 overflow-y-auto">
+                              {urls.slice(0, 30).map((url: string, idx: number) => (
+                                <div
+                                  key={idx}
+                                  className="text-sm font-mono p-2 rounded break-all"
+                                  style={{ background: 'var(--surface)', color: 'var(--muted)' }}
+                                >
+                                  {url}
+                                </div>
+                              ))}
+                              {urls.length > 30 && (
+                                <div className="text-center text-sm py-2" style={{ color: 'var(--muted)' }}>
+                                  ... and {urls.length - 30} more URLs
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null;
+                      })()}
                     </div>
                   )}
                 </div>

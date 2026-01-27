@@ -141,7 +141,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https: blob:",
-              "connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 http://127.0.0.1:7242 https://thandev-backend.fly.dev https://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io https://api.github.com https://github.com https://github.com/login https://github.com/login/oauth https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
+              "connect-src 'self' http://localhost:8000 ws://localhost:8000 http://127.0.0.1:8000 ws://127.0.0.1:8000 http://127.0.0.1:7242 https://thandev-backend.fly.dev wss://thandev-backend.fly.dev https://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io wss://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io https://api.github.com https://github.com https://github.com/login https://github.com/login/oauth https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
               "frame-src 'none'",
               "object-src 'none'",
               "base-uri 'self'",

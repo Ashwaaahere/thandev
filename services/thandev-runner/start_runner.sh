@@ -47,7 +47,7 @@ DEPENDENCY_WORKER_PID=$!
 
 # Run main worker loop in foreground
 echo "Starting main security scan worker..."
-python -m app.tasks
+python -m app.main
 
 # If main worker exits, kill dependency worker
 kill $DEPENDENCY_WORKER_PID 2>/dev/null || true

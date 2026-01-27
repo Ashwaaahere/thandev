@@ -9,10 +9,17 @@ import asyncio
 import random
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from collections import deque
 
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Event batching configuration
+EVENT_BATCH_SIZE = 10  # Send events in batches of 10
+EVENT_BATCH_INTERVAL = 3.0  # Or every 3 seconds
+_event_queue: deque = deque()
+_event_batch_task: Optional[asyncio.Task] = None
 
 # Retry configuration
 MAX_RETRIES = 5
@@ -315,4 +322,266 @@ async def post_tool_result(
         f"Last error: {last_exception}"
     )
     return False
+
+
+async def _flush_event_batch():
+    """Background task to flush event batch periodically"""
+    global _event_queue
+    
+    while True:
+        try:
+            await asyncio.sleep(EVENT_BATCH_INTERVAL)
+            
+            if _event_queue:
+                await _send_event_batch()
+        except asyncio.CancelledError:
+            # Flush remaining events before exiting
+            if _event_queue:
+                await _send_event_batch()
+            break
+        except Exception as e:
+            logger.error(f"Error in event batch flusher: {e}", exc_info=True)
+
+
+async def _send_event_batch():
+    """Send batched events to backend"""
+    global _event_queue
+    
+    if not _event_queue:
+        return
+    
+    # Extract events from queue
+    events_to_send = []
+    while _event_queue and len(events_to_send) < EVENT_BATCH_SIZE:
+        events_to_send.append(_event_queue.popleft())
+    
+    if not events_to_send:
+        return
+    
+    # Group events by scan_id
+    events_by_scan = {}
+    for event in events_to_send:
+        scan_id = event.pop("scan_id")
+        if scan_id not in events_by_scan:
+            events_by_scan[scan_id] = []
+        events_by_scan[scan_id].append(event)
+    
+    # Send batches
+    for scan_id, events in events_by_scan.items():
+        try:
+            await post_scan_events(scan_id, events)
+        except Exception as e:
+            logger.error(f"Failed to send event batch for scan {scan_id}: {e}")
+
+
+async def emit_scan_event(
+    scan_id: str,
+    phase: str,
+    tool: Optional[str],
+    stage: str,
+    message: str,
+    progress: Optional[float] = None,
+    meta: Optional[Dict[str, Any]] = None,
+):
+    """
+    Emit a scan event (batched for efficiency)
+    
+    Events are queued and sent in batches to minimize HTTP overhead.
+    
+    Args:
+        scan_id: Scan job ID
+        phase: Scan phase (prepare, enumerate, scan, correlate, finalize)
+        tool: Tool name (httpx, nuclei, zap, katana, etc.)
+        stage: Stage (queued, starting, running, parsing, uploading, completed, failed)
+        message: Human-readable status message
+        progress: Optional progress percentage (0.0 to 1.0)
+        meta: Optional metadata dict
+    """
+    global _event_queue, _event_batch_task
+    
+    # Add event to queue
+    _event_queue.append({
+        "scan_id": scan_id,
+        "phase": phase,
+        "tool": tool,
+        "stage": stage,
+        "message": message,
+        "progress": progress,
+        "meta": meta,
+    })
+    
+    # Start batch flusher if not running
+    if _event_batch_task is None or _event_batch_task.done():
+        _event_batch_task = asyncio.create_task(_flush_event_batch())
+    
+    # Flush immediately if batch is full
+    if len(_event_queue) >= EVENT_BATCH_SIZE:
+        await _send_event_batch()
+
+
+async def post_scan_events(scan_id: str, events: List[Dict[str, Any]]) -> bool:
+    """
+    Post batch of scan events to backend
+    
+    Args:
+        scan_id: Scan job ID
+        events: List of event dicts
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not settings.BACKEND_URL or not events:
+        return False
+    
+    endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_id}/events"
+    headers = {"Content-Type": "application/json"}
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+    
+    payload = {"events": events}
+    
+    try:
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(endpoint, headers=headers, json=payload)
+            resp.raise_for_status()
+            logger.debug(f"Posted {len(events)} events for scan {scan_id}")
+            return True
+    except Exception as e:
+        logger.warning(f"Failed to post scan events for {scan_id}: {e}")
+        return False
+
+
+async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
+    """
+    Post scan asset inventory to backend
+    
+    Args:
+        scan_id: Scan job ID
+        inventory: Asset inventory dict
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    if not settings.BACKEND_URL:
+        return False
+    
+    endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_id}/inventory"
+    headers = {"Content-Type": "application/json"}
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+    
+    payload = {"inventory": inventory}
+    
+    try:
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(endpoint, headers=headers, json=payload)
+            resp.raise_for_status()
+            logger.info(f"Posted asset inventory for scan {scan_id}")
+            return True
+    except Exception as e:
+        logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
+        return False
+
+
+async def get_scan_artifact(scan_id: str, artifact_name: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a scan artifact from the backend
+    
+    Args:
+        scan_id: Scan job ID
+        artifact_name: Name of the artifact (e.g., "asset_inventory.json")
+        
+    Returns:
+        Artifact data as dict if found, None otherwise
+    """
+    if not settings.BACKEND_URL:
+        return None
+    
+    endpoint = f"{settings.BACKEND_URL}/api/scans/{scan_id}/artifacts"
+    headers = {"Content-Type": "application/json"}
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+    
+    try:
+        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(endpoint, headers=headers)
+            resp.raise_for_status()
+            artifacts = resp.json()
+            
+            # Find the requested artifact
+            for artifact in artifacts:
+                if artifact.get("artifact_type") == artifact_name:
+                    # Get the artifact data
+                    artifact_data = artifact.get("data")
+                    if artifact_data:
+                        logger.debug(f"Retrieved artifact {artifact_name} for scan {scan_id}")
+                        return artifact_data
+            
+            logger.debug(f"Artifact {artifact_name} not found for scan {scan_id}")
+            return None
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            logger.debug(f"No artifacts found for scan {scan_id}")
+        else:
+            logger.warning(f"Failed to get scan artifact for {scan_id}: {e}")
+        return None
+    except Exception as e:
+        logger.warning(f"Failed to get scan artifact for {scan_id}: {e}")
+        return None
+
+
+async def get_scan_inventory_with_retry(scan_id: str, max_retries: int = 10, retry_delay: float = 3.0) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve scan inventory from backend with retry logic.
+    Waits for enumeration to complete and inventory to be available.
+    
+    Args:
+        scan_id: Scan job ID
+        max_retries: Maximum number of retries (default 10 = 30 seconds)
+        retry_delay: Delay between retries in seconds (default 3)
+        
+    Returns:
+        Inventory dict if found, None otherwise
+    """
+    import asyncio
+    
+    if not settings.BACKEND_URL:
+        return None
+    
+    # Use the runner inventory endpoint
+    endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_id}/inventory"
+    headers = {"Content-Type": "application/json"}
+    if settings.RUNNER_API_TOKEN:
+        headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
+    
+    for attempt in range(max_retries):
+        try:
+            timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(endpoint, headers=headers)
+                
+                if resp.status_code == 200:
+                    data = resp.json()
+                    inventory = data.get("inventory")
+                    if inventory:
+                        logger.info(f"[INVENTORY-RETRY] Found inventory for scan {scan_id} on attempt {attempt + 1}")
+                        return inventory
+                    else:
+                        logger.debug(f"[INVENTORY-RETRY] Inventory empty for scan {scan_id} on attempt {attempt + 1}")
+                elif resp.status_code == 404:
+                    logger.debug(f"[INVENTORY-RETRY] Inventory not found for scan {scan_id} on attempt {attempt + 1}")
+                else:
+                    logger.warning(f"[INVENTORY-RETRY] Unexpected status {resp.status_code} for scan {scan_id}")
+                    
+        except Exception as e:
+            logger.debug(f"[INVENTORY-RETRY] Error fetching inventory for scan {scan_id} on attempt {attempt + 1}: {e}")
+        
+        if attempt < max_retries - 1:
+            await asyncio.sleep(retry_delay)
+    
+    logger.warning(f"[INVENTORY-RETRY] Failed to get inventory for scan {scan_id} after {max_retries} attempts")
+    return None
 

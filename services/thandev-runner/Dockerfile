@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y \
     dnsutils \
     ca-certificates \
     jq \
+    chromium \
+    chromium-driver \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js and npm (required for wappalyzer, retire.js)
@@ -38,7 +40,12 @@ ENV PATH="/usr/local/go/bin:${PATH}"
 RUN go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@v3.1.0 \
     && go install -v github.com/ffuf/ffuf/v2@v2.1.0 \
     && go install -v github.com/hahwul/dalfox/v2@v2.9.2 \
-    && go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7
+    && go install -v github.com/projectdiscovery/httpx/cmd/httpx@v1.3.7 \
+    && go install -v github.com/projectdiscovery/katana/cmd/katana@latest \
+    && go install -v github.com/lc/gau/v2/cmd/gau@latest
+
+# Install arjun (Python-based parameter discovery tool)
+RUN pip install --no-cache-dir arjun
 
 # Copy command moved to after pip install to avoid being overwritten by python scripts
 
@@ -87,10 +94,13 @@ ENV DATA_DIR=/app/data
 ENV JOBS_DIR=/app/data/jobs
 ENV WORDLISTS_DIR=/opt/thandev/wordlists
 ENV PATH="/home/app/go/bin:/usr/local/go/bin:${PATH}"
+# Chromium path for Katana headless JS crawling
+ENV CHROME_PATH=/usr/bin/chromium
+ENV CHROMIUM_PATH=/usr/bin/chromium
 
 # Runner is a worker, not an HTTP service
 # No port exposed, no healthcheck (monitored via process health)
 
 # Start the worker (run tool checks first, then start worker)
-CMD ["/bin/bash", "-c", "/app/check_tools.sh && python -m app.tasks"]
+CMD ["/bin/bash", "-c", "/app/check_tools.sh && python -m app.main"]
 

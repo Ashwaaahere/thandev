@@ -12,6 +12,7 @@ from redis.exceptions import RedisError
 
 from app.core.config import settings
 from app.core.tool_matrix import get_tools_for_level
+from app.core.scan_timeouts import get_tool_timeout
 from app.models.scan import ScanLevel
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,117 @@ def get_redis_client() -> Redis:
     if _redis_client is None:
         _redis_client = Redis.from_url(settings.REDIS_URL, decode_responses=True)
     return _redis_client
+
+
+async def _publish_tools_after_enumeration(
+    scan_job_id: str,
+    target_url: str,
+    scan_level: "ScanLevel",
+    tools: List[Dict[str, Any]],
+    org_id: Optional[str],
+    project_id: Optional[str],
+    enumeration_step_id: str,
+):
+    # Convert scan_level to string for use in timeout lookup
+    scan_level_str = scan_level.value if hasattr(scan_level, 'value') else str(scan_level)
+    """
+    Background task that waits for enumeration to complete, then publishes other tools.
+    This ensures scanners can use the enumeration inventory.
+    """
+    import asyncio
+    from app.models.scan_tool_state import ScanToolState
+    from app.core.database import SessionLocal
+    
+    # Convert scan_level to string for use in timeout lookup
+    scan_level_str = scan_level.value if hasattr(scan_level, 'value') else str(scan_level)
+    
+    logger.info(f"[ENUM-WAIT] Starting wait for enumeration completion for scan {scan_job_id}")
+    
+    max_wait = 180  # 3 minutes max wait
+    check_interval = 3  # Check every 3 seconds
+    waited = 0
+    enumeration_completed = False
+    
+    while waited < max_wait:
+        await asyncio.sleep(check_interval)
+        waited += check_interval
+        
+        db = SessionLocal()
+        try:
+            tool_state = db.query(ScanToolState).filter(
+                ScanToolState.scan_id == scan_job_id,
+                ScanToolState.tool == "enumeration"
+            ).order_by(ScanToolState.updated_at.desc()).first()
+            
+            if tool_state and tool_state.stage in ["completed", "failed"]:
+                logger.info(f"[ENUM-WAIT] Enumeration {tool_state.stage} for scan {scan_job_id} after {waited}s")
+                enumeration_completed = True
+                break
+        finally:
+            db.close()
+        
+        if waited % 15 == 0:
+            logger.info(f"[ENUM-WAIT] Still waiting for enumeration for scan {scan_job_id} ({waited}s elapsed)")
+    
+    if not enumeration_completed:
+        logger.warning(f"[ENUM-WAIT] Enumeration did not complete within {max_wait}s for scan {scan_job_id}, publishing tools anyway")
+    
+    # Now publish all other tools
+    logger.info(f"[ENUM-WAIT] Publishing {len(tools)} tools for scan {scan_job_id} after enumeration")
+    
+    published_count = 0
+    for tool_config in tools:
+        if not tool_config.get("enabled", True):
+            continue
+        
+        tool_id = tool_config.get("key") or tool_config.get("name")
+        
+        # Extract mode_id
+        mode_id = None
+        if "mode" in tool_config:
+            mode_id = tool_config["mode"]
+        elif "profile" in tool_config:
+            mode_id = tool_config["profile"]
+        elif "intensity" in tool_config:
+            mode_id = tool_config["intensity"]
+        else:
+            default_modes = {
+                "sslscan": "standard",
+                "sqlmap": "sqli_light",
+                "dalfox": "standard",
+                "nmap": "top_ports",
+                "nuclei": "basic_web",
+                "httpx": "low",
+            }
+            mode_id = default_modes.get(tool_id, "standard")
+        
+        params = tool_config.get("params", {})
+        # CRITICAL: Add scan_level to params so tools can use it (especially for inventory waiting)
+        params["scan_level"] = scan_level_str
+        # CRITICAL: Add timeout_seconds from scan_timeouts configuration
+        timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+        params["timeout_seconds"] = timeout_seconds
+        logger.info(f"[ENUM-WAIT] Added timeout_seconds={timeout_seconds}s for {tool_id} in {scan_level_str} scan")
+        reason = f"Scan level {scan_level.value} requires {tool_id}"
+        
+        tool_step_id = await publish_step_request(
+            session_id=scan_job_id,
+            tool_id=tool_id,
+            mode_id=mode_id,
+            params=params,
+            target_ref=target_url,
+            depends_on=[enumeration_step_id],
+            reason=reason,
+            org_id=org_id,
+            project_id=project_id,
+            scan_job_id=scan_job_id,
+        )
+        
+        if tool_step_id:
+            published_count += 1
+            logger.info(f"[ENUM-WAIT] Published {tool_id} for scan {scan_job_id}")
+    
+    logger.info(f"[ENUM-WAIT] Published {published_count} tools for scan {scan_job_id} after enumeration completed")
 
 
 async def publish_step_request(
@@ -59,7 +171,7 @@ async def publish_step_request(
         scan_job_id: Scan job ID (optional)
         
     Returns:
-        True if published successfully, False otherwise
+        step_id if published successfully, None otherwise
     """
     redis_client = get_redis_client()
     
@@ -110,6 +222,8 @@ async def publish_step_request(
             f"(tool: {tool_id}, message_id: {message_id})"
         )
         
+        return step_id  # Return step_id for dependency tracking
+        
         # #region agent log
         log_data = {
             "location": "runner_client.py:87",
@@ -132,8 +246,6 @@ async def publish_step_request(
         except Exception:
             pass
         # #endregion
-        
-        return True
     except RedisError as e:
         logger.error(f"Failed to publish step request: {e}", exc_info=True)
         
@@ -160,7 +272,7 @@ async def publish_step_request(
             pass
         # #endregion
         
-        return False
+        return None
 
 
 async def publish_scan_steps_to_runner(
@@ -232,7 +344,46 @@ async def publish_scan_steps_to_runner(
             # #endregion
             return False
         
-        # Publish step request for each enabled tool
+        # Add enumeration step for Pro/Advanced scans (before other tools)
+        # Note: enumeration_step_id is used for dependency tracking but runner doesn't
+        # check dependencies yet, so we keep this for future use
+        enumeration_step_id = None
+        scan_level_str = scan_level.value if hasattr(scan_level, 'value') else str(scan_level)
+        logger.info(f"[ENUM-CHECK] scan_job_id={scan_job_id}, scan_level={scan_level}, scan_level_str={scan_level_str}, type={type(scan_level)}")
+        
+        if scan_level_str in ['pro', 'advanced']:
+            logger.info(f"Publishing enumeration step for {scan_level_str} scan {scan_job_id}")
+            enumeration_step_id = await publish_step_request(
+                session_id=scan_job_id,
+                tool_id="enumeration",
+                mode_id="full",
+                params={"scan_level": scan_level_str, "block_other_tools": True},
+                target_ref=target_url,
+                depends_on=[],  # First step, no dependencies
+                reason=f"Asset discovery for {scan_level_str} scan (Katana + GAU + Arjun)",
+                org_id=org_id,
+                project_id=project_id,
+                scan_job_id=scan_job_id,
+            )
+            if enumeration_step_id:
+                logger.info(f"Published enumeration step {enumeration_step_id} for scan {scan_job_id}")
+                # Schedule background task to publish other tools after enumeration completes
+                import asyncio
+                asyncio.create_task(_publish_tools_after_enumeration(
+                    scan_job_id=scan_job_id,
+                    target_url=target_url,
+                    scan_level=scan_level,
+                    tools=tools,
+                    org_id=org_id,
+                    project_id=project_id,
+                    enumeration_step_id=enumeration_step_id,
+                ))
+                logger.info(f"Scheduled background task to publish tools after enumeration for scan {scan_job_id}")
+                return True  # Return early - tools will be published by background task
+            else:
+                logger.warning(f"Failed to publish enumeration step for scan {scan_job_id}, continuing with regular tools")
+        
+        # Publish step request for each enabled tool (only for basic scans or if enumeration failed)
         published_count = 0
         for tool_config in tools:
             if not tool_config.get("enabled", True):
@@ -270,23 +421,34 @@ async def publish_scan_steps_to_runner(
                 mode_id = default_modes.get(tool_id, "standard")
             
             params = tool_config.get("params", {})
+            # CRITICAL: Add scan_level to params so tools can use it (especially for inventory waiting)
+            params["scan_level"] = scan_level_str
+            # CRITICAL: Add timeout_seconds from scan_timeouts configuration
+            timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+            params["timeout_seconds"] = timeout_seconds
+            logger.info(f"Added timeout_seconds={timeout_seconds}s for {tool_id} in {scan_level_str} scan")
             reason = f"Scan level {scan_level.value} requires {tool_id}"
             
-            success = await publish_step_request(
+            # For Pro/Advanced scans, tools depend on enumeration completing first
+            depends_on = [enumeration_step_id] if enumeration_step_id else []
+            
+            tool_step_id = await publish_step_request(
                 session_id=scan_job_id,
                 tool_id=tool_id,
                 mode_id=mode_id,
                 params=params,
                 target_ref=target_url,
-                depends_on=[],  # No dependencies for simple tool matrix
+                depends_on=depends_on,
                 reason=reason,
                 org_id=org_id,
                 project_id=project_id,
                 scan_job_id=scan_job_id,
             )
             
-            if success:
+            if tool_step_id:
                 published_count += 1
+                if enumeration_step_id:
+                    logger.info(f"Published {tool_id} step {tool_step_id} with dependency on enumeration {enumeration_step_id}")
         
         logger.info(
             f"Published {published_count} step requests to Runner for scan {scan_job_id}"

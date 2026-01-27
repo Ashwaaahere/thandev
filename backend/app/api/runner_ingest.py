@@ -21,13 +21,15 @@ from app.core.dependencies import require_runner_service_auth
 from app.models.scan import ScanJob, ScanStatus
 from app.models.finding import ToolResult, ToolExecutionStatus
 from app.schemas.scan import ToolResultCreate, ToolResultResponse
+from app.schemas.scan_event import ScanEventCreate, ScanEventBatchCreate, ScanEventResponse, ScanToolStateResponse, ScanInventoryCreate, ScanInventoryResponse
 from app.services.findings_ingestor import create_or_update_finding
 from app.core.severity import normalize_severity, zap_to_severity, nuclei_to_severity, retire_to_severity, sslscan_to_severity, portfinding_to_severity, httpx_wappalyzer_to_severity, header_finding_to_severity
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
 from app.models.finding import Severity
+from app.models.scan_event import ScanEvent
+from app.models.scan_tool_state import ScanToolState
 
 router = APIRouter(
-    prefix="/scans",
     tags=["runner-internal"],
     dependencies=[Depends(require_runner_service_auth)],
 )
@@ -109,7 +111,148 @@ async def handle_callback(
 logger = logging.getLogger(__name__)
 
 
-@router.post("/{scan_id}/tool-results", response_model=ToolResultResponse, status_code=status.HTTP_201_CREATED)
+
+@router.post("/scans/{scan_id}/started")
+async def mark_scan_started_endpoint(
+    scan_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Mark scan as started (transition from QUEUED -> RUNNING).
+    Called by runner when it picks up the job.
+    """
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    
+    if scan_job.status in (ScanStatus.QUEUED, ScanStatus.PENDING):
+        scan_job.status = ScanStatus.RUNNING
+        scan_job.started_at = datetime.now(timezone.utc)
+        db.commit()
+    
+    return {"status": "ok", "scan_id": scan_id}
+
+
+@router.post("/scans/{scan_id}/tool-started")
+async def log_tool_started(
+    scan_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Log that a specific tool has started execution.
+    Creates or updates ScanToolState.
+    """
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    
+    tool_name = payload.get("tool_name")
+    tool_run_id = payload.get("tool_run_id")
+    
+    if not tool_name:
+        raise HTTPException(status_code=422, detail="tool_name required")
+
+    # Create/Update ScanToolState
+    state = db.query(ScanToolState).filter(
+        ScanToolState.scan_id == scan_id,
+        ScanToolState.tool == tool_name
+    ).first()
+    
+    if not state:
+        state = ScanToolState(
+            id=str(uuid.uuid4()),
+            scan_id=scan_id,
+            tool=tool_name,
+            phase="running",
+            stage="started",
+            message=f"Starting {tool_name}...",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+        db.add(state)
+    else:
+        state.phase = "running"
+        state.stage = "started"
+        state.updated_at = datetime.now(timezone.utc)
+    
+    db.commit()
+    return {"status": "ok", "tool_name": tool_name}
+
+
+@router.post("/progress")
+async def update_scan_progress(
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """
+    Update progress for a specific tool/activity.
+    """
+    scan_id = payload.get("scan_id")
+    tool = payload.get("tool")
+    progress = payload.get("progress")
+    message = payload.get("message")
+    
+    if not scan_id:
+        return {"status": "ignored", "reason": "no_scan_id"}
+        
+    state = db.query(ScanToolState).filter(
+        ScanToolState.scan_id == scan_id,
+        ScanToolState.tool == tool
+    ).first()
+    
+    if state:
+        state.progress = progress
+        if message:
+            state.message = message
+        state.updated_at = datetime.now(timezone.utc)
+        db.commit()
+    
+    return {"status": "ok"}
+
+
+@router.post("/scans/{scan_id}/completed")
+async def mark_scan_completed(
+    scan_id: str,
+    db: Session = Depends(get_db),
+):
+    """Mark scan as completed successfully."""
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    
+    if scan_job.status != ScanStatus.COMPLETED:
+        scan_job.status = ScanStatus.COMPLETED
+        scan_job.completed_at = datetime.now(timezone.utc)
+        scan_job.finished_at = datetime.now(timezone.utc)
+        db.commit()
+    
+    return {"status": "ok"}
+
+
+@router.post("/scans/{scan_id}/failed")
+async def mark_scan_failed(
+    scan_id: str,
+    payload: dict,
+    db: Session = Depends(get_db),
+):
+    """Mark scan as failed with error message."""
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    
+    error = payload.get("error", "Unknown error")
+    
+    scan_job.status = ScanStatus.FAILED
+    scan_job.error_message = error
+    scan_job.completed_at = datetime.now(timezone.utc)
+    scan_job.finished_at = datetime.now(timezone.utc)
+    db.commit()
+    
+    return {"status": "ok"}
+
+
+@router.post("/scans/{scan_id}/tool-results", response_model=ToolResultResponse, status_code=status.HTTP_201_CREATED)
 async def create_tool_result(
     scan_id: str,
     request: Request,
@@ -745,4 +888,336 @@ def _check_and_update_scan_completion(scan_job: ScanJob, db: Session) -> None:
             scan_job.completed_at = datetime.now(timezone.utc)
         db.commit()
         logger.info(f"Scan {scan_job.id} status updated to COMPLETED")
+
+
+@router.post("/scans/{scan_id}/events", status_code=status.HTTP_201_CREATED)
+async def create_scan_events(
+    scan_id: str,
+    event_batch: ScanEventBatchCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Create scan events for real-time progress tracking.
+    
+    This endpoint accepts batch events from runner service to minimize HTTP overhead.
+    Events are persisted and broadcast to WebSocket subscribers.
+    
+    Requires service authentication via RUNNER_API_TOKEN (Bearer token).
+    
+    Args:
+        scan_id: Scan job ID
+        event_batch: Batch of events to create
+        
+    Returns:
+        Success message with event count
+    """
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    created_events = []
+    # Track tool states we've already processed in this batch to avoid duplicates
+    processed_tool_states = {}  # key: (scan_id, tool, phase)
+    
+    try:
+        for event_data in event_batch.events:
+            # Create event
+            event = ScanEvent(
+                scan_id=scan_id,
+                phase=event_data.phase,
+                tool=event_data.tool,
+                stage=event_data.stage,
+                message=event_data.message,
+                progress=event_data.progress,
+                meta=event_data.meta,
+            )
+            db.add(event)
+            created_events.append(event)
+            
+            # Update or create tool state snapshot
+            if event_data.tool:
+                tool_key = (scan_id, event_data.tool, event_data.phase)
+                
+                # Check if we've already processed this tool state in this batch
+                if tool_key in processed_tool_states:
+                    # Update the in-memory object
+                    tool_state = processed_tool_states[tool_key]
+                    tool_state.stage = event_data.stage
+                    tool_state.message = event_data.message
+                    tool_state.progress = event_data.progress
+                    tool_state.meta = event_data.meta
+                else:
+                    # Query database for existing state
+                    tool_state = db.query(ScanToolState).filter(
+                        and_(
+                            ScanToolState.scan_id == scan_id,
+                            ScanToolState.tool == event_data.tool,
+                            ScanToolState.phase == event_data.phase,
+                        )
+                    ).first()
+                    
+                    if tool_state:
+                        # Update existing state
+                        tool_state.stage = event_data.stage
+                        tool_state.message = event_data.message
+                        tool_state.progress = event_data.progress
+                        tool_state.meta = event_data.meta
+                    else:
+                        # Create new state
+                        tool_state = ScanToolState(
+                            scan_id=scan_id,
+                            tool=event_data.tool,
+                            phase=event_data.phase,
+                            stage=event_data.stage,
+                            message=event_data.message,
+                            progress=event_data.progress,
+                            meta=event_data.meta,
+                        )
+                        db.add(tool_state)
+                    
+                    # Track this tool state for future events in this batch
+                    processed_tool_states[tool_key] = tool_state
+        
+        db.commit()
+        
+        logger.info(
+            f"Created {len(created_events)} events for scan {scan_id}"
+        )
+        
+        # Broadcast events to WebSocket subscribers
+        try:
+            from app.api.websocket import broadcast_event_to_scan, broadcast_tool_state_to_scan
+            import asyncio
+            
+            for event in created_events:
+                event_data = {
+                    "id": str(event.id),
+                    "scan_id": event.scan_id,
+                    "timestamp": event.created_at.isoformat() if event.created_at else None,
+                    "phase": event.phase,
+                    "tool": event.tool,
+                    "stage": event.stage,
+                    "message": event.message,
+                    "progress": event.progress,
+                    "meta": event.meta,
+                }
+                # Use asyncio.create_task to broadcast without blocking
+                asyncio.create_task(broadcast_event_to_scan(scan_id, event_data))
+            
+            # Also broadcast tool state updates
+            for tool_key, tool_state in processed_tool_states.items():
+                tool_state_data = {
+                    "tool": tool_state.tool,
+                    "phase": tool_state.phase,
+                    "stage": tool_state.stage,
+                    "progress": tool_state.progress,
+                    "last_message": tool_state.message,
+                    "meta": tool_state.meta,
+                    "updated_at": tool_state.updated_at.isoformat() if tool_state.updated_at else None,
+                }
+                asyncio.create_task(broadcast_tool_state_to_scan(scan_id, tool_state_data))
+            
+            logger.debug(f"Broadcasted {len(created_events)} events and {len(processed_tool_states)} tool states for scan {scan_id}")
+        except Exception as broadcast_error:
+            # Log but don't fail - WebSocket broadcast is best-effort
+            logger.warning(f"Failed to broadcast events for scan {scan_id}: {broadcast_error}")
+        
+        return {
+            "status": "success",
+            "scan_id": scan_id,
+            "events_created": len(created_events),
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to create scan events: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create scan events: {str(e)}"
+        )
+
+
+@router.get("/{scan_id}/events", response_model=list[ScanEventResponse])
+async def get_scan_events(
+    scan_id: str,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """
+    Get scan events for a scan (for debugging/history).
+    
+    Args:
+        scan_id: Scan job ID
+        limit: Maximum number of events to return
+        offset: Offset for pagination
+        
+    Returns:
+        List of scan events
+    """
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    events = db.query(ScanEvent).filter(
+        ScanEvent.scan_id == scan_id
+    ).order_by(
+        ScanEvent.created_at.desc()
+    ).limit(limit).offset(offset).all()
+    
+    return events
+
+
+@router.get("/{scan_id}/tool-states", response_model=list[ScanToolStateResponse])
+async def get_scan_tool_states(
+    scan_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Get latest tool states for a scan.
+    
+    Args:
+        scan_id: Scan job ID
+        
+    Returns:
+        List of tool states
+    """
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    tool_states = db.query(ScanToolState).filter(
+        ScanToolState.scan_id == scan_id
+    ).order_by(
+        ScanToolState.updated_at.desc()
+    ).all()
+    
+    return tool_states
+
+
+@router.post("/scans/{scan_id}/inventory", response_model=ScanInventoryResponse, status_code=status.HTTP_201_CREATED)
+async def create_scan_inventory(
+    scan_id: str,
+    inventory_data: ScanInventoryCreate,
+    db: Session = Depends(get_db),
+):
+    """
+    Create or update scan asset inventory.
+    
+    This endpoint stores the enumeration results (katana, gau, arjun) as a scan artifact.
+    
+    Requires service authentication via RUNNER_API_TOKEN (Bearer token).
+    
+    Args:
+        scan_id: Scan job ID
+        inventory_data: Asset inventory JSON
+        
+    Returns:
+        Inventory response with scan_id and created_at
+    """
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    try:
+        from app.models.scan_artifact import ScanArtifact
+        
+        # Check if inventory already exists
+        existing_artifact = db.query(ScanArtifact).filter(
+            and_(
+                ScanArtifact.scan_id == scan_id,
+                ScanArtifact.type == "asset_inventory"
+            )
+        ).first()
+        
+        if existing_artifact:
+            # Update existing inventory
+            existing_artifact.payload = inventory_data.inventory
+            logger.info(f"Updated asset inventory for scan {scan_id}")
+            artifact = existing_artifact
+        else:
+            # Create new inventory
+            artifact = ScanArtifact(
+                scan_id=scan_id,
+                type="asset_inventory",
+                payload=inventory_data.inventory
+            )
+            db.add(artifact)
+            logger.info(f"Created asset inventory for scan {scan_id}")
+        
+        db.commit()
+        
+        return ScanInventoryResponse(
+            scan_id=scan_id,
+            inventory=inventory_data.inventory,
+            created_at=artifact.created_at
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to create scan inventory: {e}", exc_info=True)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create scan inventory: {str(e)}"
+        )
+
+
+@router.get("/scans/{scan_id}/inventory", response_model=ScanInventoryResponse)
+async def get_scan_inventory(
+    scan_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Get scan asset inventory.
+    
+    Args:
+        scan_id: Scan job ID
+        
+    Returns:
+        Inventory response with scan_id and inventory data
+    """
+    # Verify scan exists
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    from app.models.scan_artifact import ScanArtifact
+    
+    artifact = db.query(ScanArtifact).filter(
+        and_(
+            ScanArtifact.scan_id == scan_id,
+            ScanArtifact.type == "asset_inventory"
+        )
+    ).first()
+    
+    if not artifact:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Inventory not found for scan {scan_id}"
+        )
+    
+    return ScanInventoryResponse(
+        scan_id=scan_id,
+        inventory=artifact.payload,
+        created_at=artifact.created_at
+    )
 

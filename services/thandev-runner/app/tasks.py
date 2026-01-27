@@ -16,7 +16,8 @@ from app.execution.selector import get_backend_for_tool
 from app.queue import consume_step_requests, ack_step_request, publish_step_result, StepResult
 from app.queue.streams import discover_brain_sessions, consume_brain_session_steps
 import uuid
-from app.backend_client import post_tool_result, get_scan_status, mark_scan_started, post_tool_started
+from app.backend_client import post_tool_result, get_scan_status, mark_scan_started, post_tool_started, emit_scan_event, post_scan_inventory
+from app.enumeration import run_enumeration
 from app.findings.parsers import parse_nuclei_output, parse_httpx_output, parse_sslscan_output, parse_dalfox_output, parse_nmap_output, parse_zap_output, parse_sqlmap_output
 from app.concurrency import (
     acquire_session_slot,
@@ -217,6 +218,18 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             # Best-effort: failures here should not block tool execution.
             await mark_scan_started(scan_job_id)
 
+            # Emit queued event
+            try:
+                await emit_scan_event(
+                    scan_id=scan_job_id,
+                    phase="scan",
+                    tool=tool_id,
+                    stage="queued",
+                    message=f"{tool_id.upper()} queued for execution"
+                )
+            except Exception as e:
+                logger.warning(f"Failed to emit queued event: {e}")
+
             # Generate a stable tool_run_id for this step and reuse it for both
             # the "started" signal and the final tool-results POST.
             tool_run_id = str(uuid.uuid4())
@@ -227,6 +240,52 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 tool_name=tool_id,
                 tool_id=tool_id,
             )
+            
+            # Emit starting event
+            try:
+                await emit_scan_event(
+                    scan_id=scan_job_id,
+                    phase="scan",
+                    tool=tool_id,
+                    stage="starting",
+                    message=f"Starting {tool_id.upper()} scan..."
+                )
+            except Exception as e:
+                logger.warning(f"Failed to emit starting event: {e}")
+
+        # Handle enumeration tool specially (Pro/Advanced scans only)
+        if tool_id == "enumeration":
+            logger.info(f"[ENUM] Starting enumeration for scan {scan_job_id}")
+            try:
+                scan_level = params.get("scan_level", "pro")
+                
+                # Emit running event
+                if scan_job_id:
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="running", message=f"Running asset discovery for {scan_level} scan", progress=0.1)
+                
+                # Run enumeration - callback receives phase, tool, stage, message, progress, meta
+                async def enum_cb(phase: str, tool: str, stage: str, message: str, progress: float = None, meta: dict = None):
+                    if scan_job_id:
+                        await emit_scan_event(scan_id=scan_job_id, phase=phase, tool=tool, stage=stage, message=message, progress=progress, meta=meta)
+                
+                inventory = await run_enumeration(target_url=target_ref, scan_level=scan_level, emit_event_callback=enum_cb)
+                
+                # Upload inventory
+                if scan_job_id:
+                    await post_scan_inventory(scan_job_id, inventory)
+                    urls_found = inventory.get("discovery", {}).get("merged", {}).get("all_urls_count", 0)
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="completed", message=f"Discovered {urls_found} URLs", progress=1.0, meta={"urls_found": urls_found})
+                
+                # Don't call publish_step_result for enumeration - it's not a NATS-based tool
+                logger.info(f"[ENUM] Enumeration completed successfully for scan {scan_job_id}")
+                return
+            except Exception as e:
+                logger.error(f"[ENUM] Failed: {e}", exc_info=True)
+                if scan_job_id:
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="failed", message=f"Enumeration failed: {str(e)[:100]}", progress=0.0)
+                result = {"success": False, "error": str(e), "findings": []}
+                await publish_step_result(step_id, StepResult(success=False, result=result))
+                return
 
         # Preflight connectivity check for HTTP/TLS tools.
         # NOTE: We log warnings but don't fail tools based on TCP preflight,
@@ -253,6 +312,21 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             
             # Execute step using new backend
             start_time = time.time()
+            
+            # Emit running event (before actual execution)
+            if scan_job_id:
+                try:
+                    await emit_scan_event(
+                        scan_id=scan_job_id,
+                        phase="scan",
+                        tool=tool_id,
+                        stage="running",
+                        message=f"Running {tool_id.upper()} against target...",
+                        progress=0.3,
+                        meta={"target": target_ref}
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to emit running event: {e}")
             
             try:
                 execution_result = await backend.execute(
@@ -415,6 +489,20 @@ async def process_step_request(message: Dict[str, Any]) -> None:
         # Using ERROR level to ensure it always appears in logs
         logger.error(f"[CRITICAL-PARSING-ENTRY] Step {step_id} (tool={tool_id}): ABOUT TO ENTER PARSING SECTION - scan_job_id={scan_job_id}, output_file={output_file}")
         print(f"[STDOUT-PARSING-ENTRY] Step {step_id} (tool={tool_id}): PARSING SECTION ENTRY POINT", flush=True)
+        
+        # Emit parsing event
+        if scan_job_id:
+            try:
+                await emit_scan_event(
+                    scan_id=scan_job_id,
+                    phase="scan",
+                    tool=tool_id,
+                    stage="parsing",
+                    message=f"Parsing {tool_id.upper()} results...",
+                    progress=0.7
+                )
+            except Exception as e:
+                logger.warning(f"Failed to emit parsing event: {e}")
         
         # CRITICAL DEBUG: Log before parsing section to trace execution
         logger.info(f"[DEBUG-BEFORE-PARSE] Step {step_id} (tool={tool_id}): Reached parsing section, scan_job_id={scan_job_id}, output_file={output_file}")
@@ -742,6 +830,20 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 
                 # POST tool result and findings to backend API
                 if settings.BACKEND_URL:
+                    # Emit uploading event
+                    try:
+                        await emit_scan_event(
+                            scan_id=scan_job_id,
+                            phase="scan",
+                            tool=tool_id,
+                            stage="uploading",
+                            message=f"Uploading {len(findings)} findings to backend...",
+                            progress=0.9,
+                            meta={"findings_count": len(findings)}
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to emit uploading event: {e}")
+                    
                     # #region agent log
                     try:
                         with open("/app/data/debug.log", "a") as f:
@@ -816,10 +918,38 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             f"Posted tool result to backend (status code 201): "
                             f"scan={scan_job_id}, step={step_id}, tool={tool_name}, findings={findings_count}"
                         )
+                        
+                        # Emit completed event
+                        try:
+                            await emit_scan_event(
+                                scan_id=scan_job_id,
+                                phase="scan",
+                                tool=tool_id,
+                                stage="completed",
+                                message=f"{tool_id.upper()} scan completed - found {len(findings)} findings",
+                                progress=1.0,
+                                meta={"findings_count": len(findings), "execution_time": execution_time}
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to emit completed event: {e}")
                     else:
                         logger.warning(
                             f"Failed to POST tool result to backend for scan={scan_job_id}, step={step_id}, tool={tool_name}"
                         )
+                        
+                        # Emit failed event
+                        try:
+                            error_msg = result.get("error") or result.get("error_message") or "Unknown error"
+                            await emit_scan_event(
+                                scan_id=scan_job_id,
+                                phase="scan",
+                                tool=tool_id,
+                                stage="failed",
+                                message=f"{tool_id.upper()} scan failed: {str(error_msg)[:100]}",
+                                meta={"error": str(error_msg)[:500]}
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to emit failed event: {e}")
                 else:
                     logger.warning("BACKEND_URL not configured, skipping tool result POST")
             except Exception as e:
@@ -864,6 +994,20 @@ async def process_step_request(message: Dict[str, Any]) -> None:
     except Exception as e:
         logger.error(f"Step {step_id} execution failed: {e}", exc_info=True)
         execution_time = time.time() - start_time if 'start_time' in locals() else 0.0
+        
+        # Emit failed event for catastrophic failures
+        if scan_job_id:
+            try:
+                await emit_scan_event(
+                    scan_id=scan_job_id,
+                    phase="scan",
+                    tool=tool_id,
+                    stage="failed",
+                    message=f"{tool_id.upper()} execution failed: {str(e)[:100]}",
+                    meta={"error": str(e)[:500], "error_type": type(e).__name__}
+                )
+            except Exception as emit_err:
+                logger.warning(f"Failed to emit failed event: {emit_err}")
         
         # Publish error result
         await publish_step_result(StepResult(

@@ -1307,6 +1307,63 @@ async def get_scan_artifacts(
     )
 
 
+
+@router.get("/{scan_id}/inventory")
+async def get_scan_inventory(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get enumeration inventory for a scan.
+    Returns the asset inventory collected during the enumeration phase.
+    """
+    # Verify scan exists and user has access
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    # Check user access (user owns the scan or scan's project belongs to user's tenant)
+    has_access = False
+    if scan_job.user_id == current_user.id:
+        has_access = True
+    elif scan_job.project_id:
+        project = db.query(Project).filter(Project.id == scan_job.project_id).first()
+        # Safer check for tenant_id
+        user_tenant_id = getattr(current_user, "tenant_id", None)
+        if project and user_tenant_id and project.tenant_id == user_tenant_id:
+            has_access = True
+    
+    if not has_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+    
+    # Get inventory from scan_artifacts
+    from app.models.scan_artifact import ScanArtifact
+    from sqlalchemy import and_
+    
+    artifact = db.query(ScanArtifact).filter(
+        and_(
+            ScanArtifact.scan_id == scan_id,
+            ScanArtifact.type == "asset_inventory"
+        )
+    ).first()
+    
+    if not artifact:
+        return {"scan_id": scan_id, "inventory": None}
+    
+    return {
+        "scan_id": scan_id,
+        "inventory": artifact.payload,
+        "created_at": artifact.created_at
+    }
+
+
 @router.get("/{scan_id}/tech-stack")
 async def get_scan_tech_stack(
     scan_id: str,
@@ -3289,4 +3346,5 @@ async def create_advanced_scan(
         findings=[],
         tool_statuses=[],
     )
+
 

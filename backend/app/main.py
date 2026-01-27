@@ -26,6 +26,7 @@ from app.api.runner_ingest import callback_router
 from app.api import integrations
 from app.api import cve
 from app.api import reference
+from app.api import websocket
 
 # Load environment variables
 load_dotenv()
@@ -511,6 +512,9 @@ app.include_router(cve.router, prefix=settings.API_V1_PREFIX)
 # Still requires Bearer token authentication via require_runner_service_auth
 app.include_router(runner_ingest.router, prefix="/api/runner")
 app.include_router(callback_router, prefix="/api/runner")
+
+# WebSocket endpoints for real-time updates
+app.include_router(websocket.router)
 
 
 # Custom OpenAPI schema
