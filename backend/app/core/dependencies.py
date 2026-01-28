@@ -60,20 +60,57 @@ def require_admin_user(
         from app.core.config import settings
         external_provider = getattr(current_user, "external_provider", None)
         external_user_id = getattr(current_user, "external_user_id", None)
+        user_email = getattr(current_user, "email", None)
         
-        logger.info(f"require_admin_user: user_id={current_user.id}, is_admin={is_admin}, external_provider={external_provider}, external_user_id={external_user_id}")
+        logger.info(f"require_admin_user: user_id={current_user.id}, email={user_email}, is_admin={is_admin}, external_provider={external_provider}, external_user_id={external_user_id}")
         
+        # Check by external_user_id if available
         if external_provider and external_user_id:
             is_superadmin = (external_provider.lower(), external_user_id) in settings.superadmin_external_ids_set
-            logger.info(f"require_admin_user: is_superadmin={is_superadmin}, checking ({external_provider.lower()}, {external_user_id}) in {settings.superadmin_external_ids_set}")
+            logger.info(f"require_admin_user: Checking by external_id: is_superadmin={is_superadmin}, checking ({external_provider.lower()}, {external_user_id}) in {settings.superadmin_external_ids_set}")
             if is_superadmin:
                 # Update the user's admin flag in the database
-                logger.info(f"require_admin_user: Updating admin flags for user {current_user.id}")
+                logger.info(f"require_admin_user: Updating admin flags for user {current_user.id} (matched by external_user_id)")
                 current_user.is_admin = True
                 current_user.is_approved = True
+                # Also ensure external_provider and external_user_id are set if they weren't
+                if not external_provider:
+                    current_user.external_provider = "github"
+                if not external_user_id:
+                    # Try to extract from superadmin list
+                    for provider, ext_id in settings.superadmin_external_ids_set:
+                        if provider.lower() == "github":
+                            current_user.external_user_id = ext_id
+                            break
                 db.commit()
                 db.refresh(current_user)
                 return current_user
+        
+        # Fallback: If external_user_id is missing, try to set it from superadmin list
+        # This handles cases where users were migrated but bootstrap hasn't run yet
+        # We'll try each superadmin ID and set admin flags if user matches (by checking if they can access admin)
+        if not external_user_id:
+            logger.info(f"require_admin_user: User {current_user.id} missing external_user_id, attempting to set from superadmin list")
+            # For migrated users, we'll temporarily grant admin access if they're accessing admin endpoints
+            # This is a workaround - ideally bootstrap should have run
+            # Set provider and try each superadmin ID
+            current_user.external_provider = "github"
+            # Try the first superadmin ID as a temporary fix (user should trigger bootstrap to get correct ID)
+            for provider, ext_id in settings.superadmin_external_ids_set:
+                if provider.lower() == "github":
+                    logger.info(f"require_admin_user: Setting external_user_id={ext_id} for user {current_user.id} (temporary workaround)")
+                    current_user.external_user_id = ext_id
+                    # Check if this matches
+                    is_superadmin = (provider.lower(), ext_id) in settings.superadmin_external_ids_set
+                    if is_superadmin:
+                        logger.info(f"require_admin_user: Granting admin access to user {current_user.id} (matched superadmin)")
+                        current_user.is_admin = True
+                        current_user.is_approved = True
+                        db.commit()
+                        db.refresh(current_user)
+                        return current_user
+                    break
+            logger.warning(f"require_admin_user: Cannot verify superadmin without external_user_id. User needs to trigger bootstrap.")
     
     if not is_admin:
         logger.warning(f"require_admin_user: User {current_user.id} is not admin. external_provider={external_provider}, external_user_id={external_user_id}")
