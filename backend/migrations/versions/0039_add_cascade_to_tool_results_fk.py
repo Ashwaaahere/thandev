@@ -1,7 +1,7 @@
 """add cascade delete to tool_results foreign key
 
 Revision ID: 0039_add_cascade_to_tool_results_fk
-Revises: 0038_add_scan_events_and_inventory
+Revises: 0038_add_scan_events
 Create Date: 2025-01-13
 
 This migration adds CASCADE delete to the tool_results.scan_job_id foreign key
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '0039_add_cascade_to_tool_results_fk'
-down_revision = '0038_add_scan_events_and_inventory'
+down_revision = '0038_add_scan_events'
 branch_labels = None
 depends_on = None
 
