@@ -86,31 +86,12 @@ def require_admin_user(
                 db.refresh(current_user)
                 return current_user
         
-        # Fallback: If external_user_id is missing, try to set it from superadmin list
-        # This handles cases where users were migrated but bootstrap hasn't run yet
-        # We'll try each superadmin ID and set admin flags if user matches (by checking if they can access admin)
+        # Fallback: If external_user_id is missing, this is a migrated user that needs bootstrap
+        # We cannot safely verify superadmin status without external_user_id, so we require bootstrap to run
+        # The user should sign out and sign back in to trigger bootstrap
         if not external_user_id:
-            logger.info(f"require_admin_user: User {current_user.id} missing external_user_id, attempting to set from superadmin list")
-            # For migrated users, we'll temporarily grant admin access if they're accessing admin endpoints
-            # This is a workaround - ideally bootstrap should have run
-            # Set provider and try each superadmin ID
-            current_user.external_provider = "github"
-            # Try the first superadmin ID as a temporary fix (user should trigger bootstrap to get correct ID)
-            for provider, ext_id in settings.superadmin_external_ids_set:
-                if provider.lower() == "github":
-                    logger.info(f"require_admin_user: Setting external_user_id={ext_id} for user {current_user.id} (temporary workaround)")
-                    current_user.external_user_id = ext_id
-                    # Check if this matches
-                    is_superadmin = (provider.lower(), ext_id) in settings.superadmin_external_ids_set
-                    if is_superadmin:
-                        logger.info(f"require_admin_user: Granting admin access to user {current_user.id} (matched superadmin)")
-                        current_user.is_admin = True
-                        current_user.is_approved = True
-                        db.commit()
-                        db.refresh(current_user)
-                        return current_user
-                    break
-            logger.warning(f"require_admin_user: Cannot verify superadmin without external_user_id. User needs to trigger bootstrap.")
+            logger.warning(f"require_admin_user: User {current_user.id} missing external_user_id. User needs to sign out and sign back in to trigger bootstrap.")
+            # Don't grant access - user must trigger bootstrap first
     
     if not is_admin:
         logger.warning(f"require_admin_user: User {current_user.id} is not admin. external_provider={external_provider}, external_user_id={external_user_id}")
