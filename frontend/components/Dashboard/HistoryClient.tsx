@@ -5,7 +5,6 @@ import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import type { Session } from 'next-auth';
 import ScanHistoryContent from './ScanHistoryContent';
-import PerformanceHistoryContent from './PerformanceHistoryContent';
 import DashboardHeader from './DashboardHeader';
 import DashboardSidebar from './DashboardSidebar';
 
@@ -13,7 +12,6 @@ export default function HistoryClient() {
   const { data: session, status: sessionStatus } = useSession();
   const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'security' | 'performance'>('security');
 
   if (sessionStatus === 'loading') {
     return (
@@ -80,47 +78,9 @@ export default function HistoryClient() {
               </p>
             </div>
 
-            {/* Tabs */}
-            <div className="mb-6">
-              <div className="flex gap-2 border-b" style={{ borderColor: 'var(--border)' }}>
-                <button
-                  onClick={() => setActiveTab('security')}
-                  className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    activeTab === 'security'
-                      ? 'border-b-2 text-white'
-                      : 'text-gray-400 hover:text-gray-300'
-                  }`}
-                  style={{
-                    borderColor: activeTab === 'security' ? 'var(--brand)' : 'transparent',
-                    color: activeTab === 'security' ? 'white' : 'var(--muted)'
-                  }}
-                >
-                  Security Scan History
-                </button>
-                <button
-                  onClick={() => setActiveTab('performance')}
-                  className={`px-4 py-2 text-sm font-medium transition-colors ${
-                    activeTab === 'performance'
-                      ? 'border-b-2 text-white'
-                      : 'text-gray-400 hover:text-gray-300'
-                  }`}
-                  style={{
-                    borderColor: activeTab === 'performance' ? 'var(--brand)' : 'transparent',
-                    color: activeTab === 'performance' ? 'white' : 'var(--muted)'
-                  }}
-                >
-                  Performance Scan History
-                </button>
-              </div>
-            </div>
-
             {/* Tab Content */}
             <div>
-              {activeTab === 'security' ? (
-                <ScanHistoryContent user={session.user} session={session} />
-              ) : (
-                <PerformanceHistoryContent />
-              )}
+              <ScanHistoryContent user={session.user} session={session} />
             </div>
           </div>
         </main>
