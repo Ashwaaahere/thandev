@@ -234,33 +234,51 @@ export default function ScanReportPage() {
   useEffect(() => {
     if (!session) return;
 
-    // Skip initial load if we've already loaded this scan (prevents reload when tab becomes visible)
+    // If we've already loaded this scan, do a silent refresh (no loading state) and set up polling
     if (initialLoadDoneRef.current === scanId) {
-      // Only set up polling if scan is running/queued (check current scan state)
-      const currentScanStatus = scan?.status;
-      const isRunning = currentScanStatus === 'running' || currentScanStatus === 'queued' || currentScanStatus === 'pending';
-      if (isRunning) {
-        // Set up polling without reloading
-        const pollInterval = setInterval(async () => {
-          try {
-            const data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
-            // Only update if data actually changed
-            setScan((prevScan) => {
-              if (!prevScan || JSON.stringify(prevScan) !== JSON.stringify(data)) {
-                return data;
-              }
-              return prevScan;
-            });
-            // Stop polling if scan completed
-            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
-              clearInterval(pollInterval);
+      // Silent refresh - fetch without showing loading state
+      const silentRefresh = async () => {
+        try {
+          const data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
+          // Update scan data silently
+          setScan((prevScan) => {
+            if (!prevScan || JSON.stringify(prevScan) !== JSON.stringify(data)) {
+              return data;
             }
-          } catch (err) {
-            console.error('Error polling scan:', err);
+            return prevScan;
+          });
+          
+          // Set up polling if scan is running/queued
+          const isRunning = data.status === 'running' || data.status === 'queued' || data.status === 'pending';
+          if (isRunning) {
+            const pollInterval = setInterval(async () => {
+              try {
+                const pollData = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
+                // Only update if data actually changed
+                setScan((prevScan) => {
+                  if (!prevScan || JSON.stringify(prevScan) !== JSON.stringify(pollData)) {
+                    return pollData;
+                  }
+                  return prevScan;
+                });
+                // Stop polling if scan completed
+                if (pollData.status === 'completed' || pollData.status === 'failed' || pollData.status === 'cancelled') {
+                  clearInterval(pollInterval);
+                }
+              } catch (err) {
+                console.error('Error polling scan:', err);
+              }
+            }, 15000);
+            return () => clearInterval(pollInterval);
           }
-        }, 15000);
-        return () => clearInterval(pollInterval);
-      }
+        } catch (err) {
+          console.error('Error silently refreshing scan:', err);
+          // If silent refresh fails, fall through to normal load
+          initialLoadDoneRef.current = null;
+        }
+      };
+      
+      silentRefresh();
       return;
     }
 
