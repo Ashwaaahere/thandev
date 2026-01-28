@@ -45,9 +45,29 @@ def require_approved_user(current_user: User = Depends(get_current_user)) -> Use
     return current_user
 
 
-def require_admin_user(current_user: User = Depends(require_authenticated_user)) -> User:
+def require_admin_user(
+    current_user: User = Depends(require_authenticated_user),
+    db: Session = Depends(get_db)
+) -> User:
     """Ensure the current user is an admin."""
-    if not getattr(current_user, "is_admin", False):
+    is_admin = getattr(current_user, "is_admin", False)
+    
+    # Fallback: Check if user is a superadmin by external_user_id (to handle cases where admin flag hasn't been set yet)
+    if not is_admin:
+        from app.core.config import settings
+        external_provider = getattr(current_user, "external_provider", None)
+        external_user_id = getattr(current_user, "external_user_id", None)
+        if external_provider and external_user_id:
+            is_superadmin = (external_provider.lower(), external_user_id) in settings.superadmin_external_ids_set
+            if is_superadmin:
+                # Update the user's admin flag in the database
+                current_user.is_admin = True
+                current_user.is_approved = True
+                db.commit()
+                db.refresh(current_user)
+                return current_user
+    
+    if not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
