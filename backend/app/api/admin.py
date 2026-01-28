@@ -58,6 +58,7 @@ def list_users(
     current_user: User = Depends(require_admin_user),
 ):
     users = db.query(User).all()
+    # Filter out placeholder users (those with @example.com emails)
     return [
         UserSummary(
             id=u.id,
@@ -68,6 +69,7 @@ def list_users(
             tenant_id=u.tenant_id,
         )
         for u in users
+        if not u.email.endswith('@example.com')
     ]
 
 

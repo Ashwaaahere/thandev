@@ -63,8 +63,8 @@ export async function middleware(req: NextRequest) {
     const effectiveIsAdmin = isAdmin || isSuperadmin
 
     if (isAdminRoute && !effectiveIsAdmin) {
-      const betaUrl = new URL('/private-beta', req.url)
-      return NextResponse.redirect(betaUrl)
+      const dashboardUrl = new URL('/dashboard', req.url)
+      return NextResponse.redirect(dashboardUrl)
     }
 
     if (!effectiveIsAdmin && !isApproved) {

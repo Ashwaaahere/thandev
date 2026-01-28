@@ -18,7 +18,7 @@ export default async function AdminPage() {
   const effectiveIsAdmin = isAdmin || isSuperadmin;
 
   if (!session || !effectiveIsAdmin) {
-    redirect('/auth');
+    redirect('/dashboard');
   }
 
   return <AdminDashboard session={session} />;
