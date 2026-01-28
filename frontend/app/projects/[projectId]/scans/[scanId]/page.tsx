@@ -271,7 +271,13 @@ export default function ScanReportPage() {
         consecutiveErrors = 0;
         setError(null);
 
-        setScan(data);
+        // Only update scan if data actually changed (avoid unnecessary re-renders)
+        setScan((prevScan) => {
+          if (!prevScan || JSON.stringify(prevScan) !== JSON.stringify(data)) {
+            return data;
+          }
+          return prevScan;
+        });
 
         // Stop polling if scan is completed or failed
         if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
@@ -321,8 +327,8 @@ export default function ScanReportPage() {
       const currentScan = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session).catch(() => null);
 
       if (currentScan && (currentScan.status === 'running' || currentScan.status === 'queued' || currentScan.status === 'pending')) {
-        // Start polling every 3-5 seconds
-        pollInterval = setInterval(loadScan, 4000); // 4 seconds
+        // Start polling every 15 seconds (reduced frequency to avoid disrupting user reading)
+        pollInterval = setInterval(loadScan, 15000); // 15 seconds
       }
     };
 
@@ -362,7 +368,14 @@ export default function ScanReportPage() {
         }
         setToolsError(null);
         const data = await thandevFetchJSON<ToolsResponse>(`/api/scans/${scanId}/tools`, session);
-        setTools(data.items || []);
+        const newTools = data.items || [];
+        // Only update if data actually changed (avoid unnecessary re-renders)
+        setTools((prevTools) => {
+          if (JSON.stringify(prevTools) !== JSON.stringify(newTools)) {
+            return newTools;
+          }
+          return prevTools;
+        });
         toolsLoadedRef.current = true;
       } catch (err) {
         console.error('Error loading tools:', err);
@@ -379,7 +392,8 @@ export default function ScanReportPage() {
     let pollInterval: NodeJS.Timeout | null = null;
     
     if (isRunning) {
-      pollInterval = setInterval(loadTools, 3000); // Poll every 3 seconds
+      // Poll every 15 seconds (reduced frequency to avoid disrupting user reading)
+      pollInterval = setInterval(loadTools, 15000); // 15 seconds
     }
     
     return () => {
@@ -465,6 +479,20 @@ export default function ScanReportPage() {
           url,
           session
         );
+        // Only update if data actually changed (avoid unnecessary re-renders during polling)
+        const newFindings = data.items || [];
+        const newTotal = data.total || 0;
+        setFindings((prevFindings) => {
+          if (!isPolling && JSON.stringify(prevFindings) !== JSON.stringify(newFindings)) {
+            return newFindings;
+          }
+          // During polling, only update if findings count changed or new findings appeared
+          if (isPolling && (prevFindings.length !== newFindings.length || JSON.stringify(prevFindings) !== JSON.stringify(newFindings))) {
+            return newFindings;
+          }
+          return prevFindings;
+        });
+        setFindingsTotal(newTotal);
         // Debug: Log first finding to verify API response
         if (data.items && data.items.length > 0) {
           const firstFinding = data.items[0];
@@ -507,10 +535,11 @@ export default function ScanReportPage() {
     let pollInterval: NodeJS.Timeout | null = null;
     
     if (isRunning && findingsPage === 0) {
+      // Poll every 15 seconds (reduced frequency to avoid disrupting user reading)
       pollInterval = setInterval(() => {
         isPolling = true;
         loadFindings();
-      }, 5000); // Poll every 5 seconds
+      }, 15000); // 15 seconds
     }
     
     return () => {
@@ -554,13 +583,22 @@ export default function ScanReportPage() {
     }
 
     const fetchTechStack = async () => {
-      setTechStackLoading(true);
+      // Only show loading on initial load, not during polling
+      if (!techStack) {
+        setTechStackLoading(true);
+      }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/tech-stack`, session);
         console.log('[TECH-STACK] Received data from API:', data);
         console.log('[TECH-STACK] Fingerprint:', data?.fingerprint);
         console.log('[TECH-STACK] Technologies count:', data?.fingerprint?.technologies?.length || 0);
-        setTechStack(data);
+        // Only update if data actually changed (avoid unnecessary re-renders)
+        setTechStack((prevTechStack) => {
+          if (JSON.stringify(prevTechStack) !== JSON.stringify(data)) {
+            return data;
+          }
+          return prevTechStack;
+        });
       } catch (error) {
         console.error('Failed to fetch tech stack:', error);
         setTechStack(null);
@@ -573,7 +611,7 @@ export default function ScanReportPage() {
 
     // Poll if scan is running (tech stack can update as tools complete)
     const isRunning = scan.status === 'running' || scan.status === 'queued';
-    const interval = isRunning ? setInterval(fetchTechStack, 10000) : null; // Reduced frequency to 10s
+    const interval = isRunning ? setInterval(fetchTechStack, 20000) : null; // Poll every 20 seconds (reduced frequency to avoid disrupting user reading)
 
     return () => {
       if (interval) clearInterval(interval);
@@ -593,20 +631,43 @@ export default function ScanReportPage() {
     }
 
     const fetchInventory = async () => {
-      setInventoryLoading(true);
+      // Only show loading on initial load, not during polling
+      if (!inventory) {
+        setInventoryLoading(true);
+      }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/inventory`, session);
-        setInventory(data?.inventory || null);
+        // Only update if data actually changed (avoid unnecessary re-renders)
+        const newInventory = data?.inventory || null;
+        if (JSON.stringify(newInventory) !== JSON.stringify(inventory)) {
+          setInventory(newInventory);
+        }
       } catch (error) {
         console.error('Failed to fetch enumeration inventory:', error);
-        setInventory(null);
+        // Don't clear inventory on error during polling
+        if (!inventory) {
+          setInventory(null);
+        }
       } finally {
         setInventoryLoading(false);
       }
     };
 
     fetchInventory();
-  }, [activeTab, session, scanId, scan]);
+    
+    // Poll for enumeration updates while scan is running
+    const isRunning = scan.status === 'running' || scan.status === 'queued';
+    let pollInterval: NodeJS.Timeout | null = null;
+    
+    if (isRunning) {
+      // Poll every 20 seconds (reduced frequency to avoid disrupting user reading)
+      pollInterval = setInterval(fetchInventory, 20000);
+    }
+    
+    return () => {
+      if (pollInterval) clearInterval(pollInterval);
+    };
+  }, [activeTab, session, scanId, scan?.status, scan?.scan_level]);
 
   // Helper functions
   const formatDate = (dateString: string | null | undefined) => {
