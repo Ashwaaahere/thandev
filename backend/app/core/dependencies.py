@@ -50,6 +50,9 @@ def require_admin_user(
     db: Session = Depends(get_db)
 ) -> User:
     """Ensure the current user is an admin."""
+    import logging
+    logger = logging.getLogger(__name__)
+    
     is_admin = getattr(current_user, "is_admin", False)
     
     # Fallback: Check if user is a superadmin by external_user_id (to handle cases where admin flag hasn't been set yet)
@@ -57,10 +60,15 @@ def require_admin_user(
         from app.core.config import settings
         external_provider = getattr(current_user, "external_provider", None)
         external_user_id = getattr(current_user, "external_user_id", None)
+        
+        logger.info(f"require_admin_user: user_id={current_user.id}, is_admin={is_admin}, external_provider={external_provider}, external_user_id={external_user_id}")
+        
         if external_provider and external_user_id:
             is_superadmin = (external_provider.lower(), external_user_id) in settings.superadmin_external_ids_set
+            logger.info(f"require_admin_user: is_superadmin={is_superadmin}, checking ({external_provider.lower()}, {external_user_id}) in {settings.superadmin_external_ids_set}")
             if is_superadmin:
                 # Update the user's admin flag in the database
+                logger.info(f"require_admin_user: Updating admin flags for user {current_user.id}")
                 current_user.is_admin = True
                 current_user.is_approved = True
                 db.commit()
@@ -68,6 +76,7 @@ def require_admin_user(
                 return current_user
     
     if not is_admin:
+        logger.warning(f"require_admin_user: User {current_user.id} is not admin. external_provider={external_provider}, external_user_id={external_user_id}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required",
