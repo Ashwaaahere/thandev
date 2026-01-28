@@ -1522,6 +1522,307 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
     return story
 
 
+def _build_enumeration_section(inventory: dict, styles: dict) -> List:
+    """Build Asset Enumeration section from inventory data."""
+    story = []
+    
+    if not inventory or not isinstance(inventory, dict):
+        return story
+    
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("● Asset Enumeration", styles["section_title"]))
+    
+    discovery = inventory.get("discovery", {})
+    merged = discovery.get("merged", {})
+    
+    # Discovery Summary
+    if merged:
+        story.append(Paragraph("Discovery Summary", styles["subsection_title"]))
+        
+        summary_data = []
+        summary_data.append(["Metric", "Count"])
+        
+        all_urls_count = merged.get("all_urls_count", 0)
+        unique_urls_count = merged.get("unique_urls_count", 0)
+        param_urls_count = merged.get("param_urls_count", 0)
+        
+        summary_data.append(["Total URLs", str(all_urls_count)])
+        summary_data.append(["Unique URLs", str(unique_urls_count)])
+        summary_data.append(["Parameterized URLs", str(param_urls_count)])
+        
+        # Count total parameters from Arjun
+        arjun_params = discovery.get("arjun", {}).get("params_by_url", {})
+        total_params = 0
+        if isinstance(arjun_params, dict):
+            for params in arjun_params.values():
+                if isinstance(params, list):
+                    total_params += len(params)
+                elif isinstance(params, dict):
+                    total_params += len(params)
+        
+        summary_data.append(["Parameters Discovered", str(total_params)])
+        
+        summary_table = Table(
+            summary_data,
+            colWidths=[100 * mm, 50 * mm],
+            hAlign="LEFT",
+        )
+        summary_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ])
+        )
+        story.append(summary_table)
+        story.append(Spacer(1, 8))
+    
+    # Technologies Detected
+    technologies = inventory.get("technologies", [])
+    if technologies and isinstance(technologies, list):
+        story.append(Paragraph("Technologies Detected", styles["subsection_title"]))
+        tech_text = ", ".join(technologies[:20])  # Limit to 20 for PDF
+        if len(technologies) > 20:
+            tech_text += f" ... and {len(technologies) - 20} more"
+        story.append(Paragraph(tech_text, styles["body"]))
+        story.append(Spacer(1, 8))
+    
+    # Tool Breakdown
+    tool_breakdown = []
+    if discovery.get("httpx"):
+        httpx_data = discovery["httpx"]
+        tech_count = len(httpx_data.get("tech", [])) if isinstance(httpx_data.get("tech"), list) else 0
+        tool_breakdown.append(["HTTPX (Tech Detection)", f"{tech_count} technologies"])
+    
+    if discovery.get("katana"):
+        katana_data = discovery["katana"]
+        urls_count = katana_data.get("urls_count", len(katana_data.get("urls", [])))
+        tool_breakdown.append(["Katana (Live Crawl)", f"{urls_count} URLs"])
+    
+    if discovery.get("gau"):
+        gau_data = discovery["gau"]
+        urls_count = gau_data.get("urls_count", len(gau_data.get("urls", [])))
+        tool_breakdown.append(["GAU (Historical URLs)", f"{urls_count} URLs"])
+    
+    if discovery.get("arjun"):
+        arjun_data = discovery["arjun"]
+        params_by_url = arjun_data.get("params_by_url", {})
+        urls_with_params = len(params_by_url) if isinstance(params_by_url, dict) else 0
+        tool_breakdown.append(["Arjun (Parameter Discovery)", f"{urls_with_params} URLs with params"])
+    
+    if tool_breakdown:
+        story.append(Paragraph("Tool Breakdown", styles["subsection_title"]))
+        tool_data = [["Tool", "Results"]]
+        tool_data.extend(tool_breakdown)
+        
+        tool_table = Table(
+            tool_data,
+            colWidths=[100 * mm, 50 * mm],
+            hAlign="LEFT",
+        )
+        tool_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ])
+        )
+        story.append(tool_table)
+        story.append(Spacer(1, 8))
+    
+    # Parameterized URLs (sample)
+    param_urls = merged.get("param_urls", [])
+    if param_urls and isinstance(param_urls, list):
+        story.append(Paragraph("Parameterized URLs (Sample)", styles["subsection_title"]))
+        story.append(
+            Paragraph(
+                f"Found {len(param_urls)} parameterized URLs. Showing first 10:",
+                styles["body"]
+            )
+        )
+        for url in param_urls[:10]:
+            story.append(Paragraph(f"• {url}", styles["bullet"]))
+        if len(param_urls) > 10:
+            story.append(Paragraph(f"... and {len(param_urls) - 10} more URLs", styles["body"]))
+        story.append(Spacer(1, 8))
+    
+    return story
+
+
+def _build_tech_dependencies_section(tech_stack: dict, styles: dict) -> List:
+    """Build Tech & Dependencies section from tech stack data."""
+    story = []
+    
+    if not tech_stack or not isinstance(tech_stack, dict):
+        return story
+    
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("● Technology & Dependencies", styles["section_title"]))
+    
+    fingerprint = tech_stack.get("fingerprint", {})
+    client_dependencies = tech_stack.get("client_dependencies", [])
+    findings = tech_stack.get("findings", [])
+    
+    # Target Fingerprint
+    if fingerprint:
+        story.append(Paragraph("Target Fingerprint", styles["subsection_title"]))
+        
+        fp_data = []
+        if fingerprint.get("status"):
+            fp_data.append(["Status", str(fingerprint["status"])])
+        if fingerprint.get("title"):
+            fp_data.append(["Title", str(fingerprint["title"])])
+        if fingerprint.get("server"):
+            fp_data.append(["Server", str(fingerprint["server"])])
+        if fingerprint.get("cdn"):
+            fp_data.append(["CDN", str(fingerprint["cdn"])])
+        
+        if fp_data:
+            fp_table = Table(
+                fp_data,
+                colWidths=[50 * mm, 100 * mm],
+                hAlign="LEFT",
+            )
+            fp_table.setStyle(
+                TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ])
+            )
+            story.append(fp_table)
+            story.append(Spacer(1, 8))
+    
+    # Technologies Detected
+    technologies = fingerprint.get("technologies", [])
+    if technologies and isinstance(technologies, list):
+        story.append(Paragraph("Technologies Detected", styles["subsection_title"]))
+        
+        tech_data = [["Technology", "Version", "Confidence"]]
+        for tech in technologies[:20]:  # Limit to 20
+            name = tech.get("name", "Unknown")
+            version = tech.get("version") or "N/A"
+            confidence = tech.get("confidence", 0)
+            confidence_pct = f"{int(confidence * 100)}%" if isinstance(confidence, (int, float)) else "N/A"
+            tech_data.append([name, version, confidence_pct])
+        
+        if len(technologies) > 20:
+            tech_data.append(["...", "...", f"{len(technologies) - 20} more"])
+        
+        tech_table = Table(
+            tech_data,
+            colWidths=[60 * mm, 40 * mm, 50 * mm],
+            hAlign="LEFT",
+        )
+        tech_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ])
+        )
+        story.append(tech_table)
+        story.append(Spacer(1, 8))
+    
+    # Client-Side Dependencies
+    if client_dependencies and isinstance(client_dependencies, list):
+        story.append(Paragraph("Client-Side Dependencies", styles["subsection_title"]))
+        
+        deps_data = [["Package", "Version", "Evidence"]]
+        for dep in client_dependencies[:20]:  # Limit to 20
+            name = dep.get("name", "Unknown")
+            version = dep.get("version", "N/A")
+            evidence = dep.get("evidence", "N/A")
+            # Truncate evidence if too long
+            if len(evidence) > 50:
+                evidence = evidence[:47] + "..."
+            deps_data.append([name, version, evidence])
+        
+        if len(client_dependencies) > 20:
+            deps_data.append(["...", "...", f"{len(client_dependencies) - 20} more"])
+        
+        deps_table = Table(
+            deps_data,
+            colWidths=[50 * mm, 30 * mm, 70 * mm],
+            hAlign="LEFT",
+        )
+        deps_table.setStyle(
+            TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, 0), 9),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ])
+        )
+        story.append(deps_table)
+        story.append(Spacer(1, 8))
+    
+    # Vulnerabilities in Dependencies
+    if findings and isinstance(findings, list):
+        vuln_findings = [f for f in findings if f.get("type") == "vulnerability"]
+        if vuln_findings:
+            story.append(Paragraph("Vulnerabilities in Dependencies", styles["subsection_title"]))
+            
+            vuln_data = [["Package", "Version", "Severity", "Evidence"]]
+            for finding in vuln_findings[:15]:  # Limit to 15
+                pkg = finding.get("package", "Unknown")
+                version = finding.get("version", "N/A")
+                severity = finding.get("severity", "unknown").upper()
+                evidence = finding.get("evidence", "N/A")
+                if len(evidence) > 40:
+                    evidence = evidence[:37] + "..."
+                vuln_data.append([pkg, version, severity, evidence])
+            
+            if len(vuln_findings) > 15:
+                vuln_data.append(["...", "...", "...", f"{len(vuln_findings) - 15} more"])
+            
+            vuln_table = Table(
+                vuln_data,
+                colWidths=[40 * mm, 30 * mm, 30 * mm, 80 * mm],
+                hAlign="LEFT",
+            )
+            vuln_table.setStyle(
+                TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 9),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, COLOR_ROW_ALT]),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+                    ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ])
+            )
+            story.append(vuln_table)
+            story.append(Spacer(1, 8))
+    
+    return story
+
+
 def generate_scan_report_pdf(
     db: Session,
     scan_id: str,
@@ -1582,6 +1883,39 @@ def generate_scan_report_pdf(
     stack_fp = _build_stack_fingerprint(scan, styles)
     if stack_fp:
         story.extend(stack_fp)
+
+    # Full mode only: Enumeration and Tech & Dependencies sections
+    if mode == "full":
+        # Fetch inventory data
+        from app.models.scan_artifact import ScanArtifact
+        from sqlalchemy import and_
+        
+        inventory_artifact = db.query(ScanArtifact).filter(
+            and_(
+                ScanArtifact.scan_id == scan_id,
+                ScanArtifact.type == "asset_inventory"
+            )
+        ).first()
+        
+        if inventory_artifact and inventory_artifact.payload:
+            enumeration_section = _build_enumeration_section(inventory_artifact.payload, styles)
+            if enumeration_section:
+                story.append(PageBreak())
+                story.extend(enumeration_section)
+        
+        # Fetch tech stack data
+        tech_stack_artifact = db.query(ScanArtifact).filter(
+            and_(
+                ScanArtifact.scan_id == scan_id,
+                ScanArtifact.type == "url_sca"
+            )
+        ).first()
+        
+        if tech_stack_artifact and tech_stack_artifact.payload:
+            tech_deps_section = _build_tech_dependencies_section(tech_stack_artifact.payload, styles)
+            if tech_deps_section:
+                story.append(PageBreak())
+                story.extend(tech_deps_section)
 
     # Findings overview (executive mode shows top findings)
     if mode == "executive":
