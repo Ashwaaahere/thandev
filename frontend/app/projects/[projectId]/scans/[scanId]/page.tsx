@@ -507,8 +507,7 @@ export default function ScanReportPage() {
             vuln_type: firstFinding.vuln_type
           });
         }
-        setFindings(data.items || []);
-        setFindingsTotal(data.total || 0);
+        // Note: Findings are already set above with change detection
         findingsLoadedRef.current = true;
 
         // Collect unique CVE IDs from findings
