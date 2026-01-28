@@ -15,6 +15,7 @@ declare module 'next-auth' {
     user: User
     uuidValid?: boolean
     bootstrapError?: string
+    externalUserId?: string
   }
 }
 
@@ -158,6 +159,7 @@ export const authOptions: NextAuthOptions = {
         // Only accept UUIDs; never fall back to numeric/sub IDs
         session.uuidValid = isUuid(token.userId) && isUuid(token.tenantId)
         session.bootstrapError = token.bootstrapError
+        session.externalUserId = token.externalUserId
 
         session.user.id = isUuid(token.userId) ? String(token.userId) : ''
         session.user.tenantId = isUuid(token.tenantId) ? String(token.tenantId) : undefined
