@@ -151,6 +151,7 @@ def bootstrap_identity(payload: BootstrapRequest, db: Session = Depends(get_db))
         # Bootstrap admin / approval based on immutable external id
         is_superadmin = (payload.provider.lower(), payload.external_user_id) in settings.superadmin_external_ids_set
         if is_superadmin:
+            # Always set admin flags for superadmins, even if user already exists
             user.is_admin = True
             user.is_approved = True
         else:
