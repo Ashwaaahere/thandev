@@ -843,9 +843,11 @@ export default function SecurityScannerClient() {
         }
       } else {
         // New target mode - prefer existing verified project_id; admins can auto-create
+        // Also auto-prepare for allowlisted domains (non-admin users)
         let projectId = preparedProjectId;
 
-        if (isAdmin && !projectId) {
+        // Auto-prepare project if domain is allowlisted or user is admin
+        if ((isAdmin || allowedForTargetUrl) && !projectId) {
           try {
             const resp = await thandevFetchJSON<DomainVerificationStartResponse>(
               '/api/domain-verifications/start',
@@ -872,16 +874,21 @@ export default function SecurityScannerClient() {
                     }
                   );
                 } catch (e) {
-                  console.warn('Admin auto-add target failed (continuing):', e);
+                  console.warn('Auto-add target failed (continuing):', e);
                 }
               }
             }
           } catch (e: any) {
-            console.warn('Admin auto-prepare project failed:', e?.message || e);
+            console.warn('Auto-prepare project failed:', e?.message || e);
+            // If allowlisted domain, still allow scan to proceed (backend will handle it)
+            if (!allowedForTargetUrl) {
+              setError('Please verify domain ownership first');
+              return;
+            }
           }
         }
 
-        if (!projectId) {
+        if (!projectId && !allowedForTargetUrl) {
           setError('Please verify domain ownership first');
           return;
         }
@@ -1547,7 +1554,9 @@ export default function SecurityScannerClient() {
                         ? (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
                         : (
                             // Allow admins to bypass preparedProjectId for new target
+                            // For non-admins: require preparedProjectId OR allowlisted domain
                             (!session.user?.isAdmin &&
+                              !allowedForTargetUrl &&
                               (!preparedProjectId ||
                                 (verificationData && !['VERIFIED', 'ALLOWLISTED'].includes(verificationData.status))))
                           ))
