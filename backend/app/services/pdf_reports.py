@@ -1522,7 +1522,7 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
     return story
 
 
-def _build_enumeration_section(inventory: dict, styles: dict) -> List:
+def _build_enumeration_section(inventory: dict, styles: dict) -> List[Any]:
     """Build Asset Enumeration section from inventory data."""
     story = []
     
@@ -1659,7 +1659,7 @@ def _build_enumeration_section(inventory: dict, styles: dict) -> List:
     return story
 
 
-def _build_tech_dependencies_section(tech_stack: dict, styles: dict) -> List:
+def _build_tech_dependencies_section(tech_stack: dict, styles: dict) -> List[Any]:
     """Build Tech & Dependencies section from tech stack data."""
     story = []
     
@@ -1688,6 +1688,8 @@ def _build_tech_dependencies_section(tech_stack: dict, styles: dict) -> List:
             fp_data.append(["CDN", str(fingerprint["cdn"])])
         
         if fp_data:
+            # Add header row
+            fp_data.insert(0, ["Field", "Value"])
             fp_table = Table(
                 fp_data,
                 colWidths=[50 * mm, 100 * mm],
@@ -1802,7 +1804,7 @@ def _build_tech_dependencies_section(tech_stack: dict, styles: dict) -> List:
             
             vuln_table = Table(
                 vuln_data,
-                colWidths=[40 * mm, 30 * mm, 30 * mm, 80 * mm],
+                colWidths=[35 * mm, 25 * mm, 25 * mm, 75 * mm],
                 hAlign="LEFT",
             )
             vuln_table.setStyle(
