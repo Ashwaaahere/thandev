@@ -227,9 +227,42 @@ export default function ScanReportPage() {
     return [];
   }, [wsToolStates, tools]);
 
+  // Track if initial load has been done to prevent reloading when tab becomes visible
+  const initialLoadDoneRef = useRef<string | null>(null);
+
   // Poll for scan status updates when scan is running/queued
   useEffect(() => {
     if (!session) return;
+
+    // Skip initial load if we've already loaded this scan (prevents reload when tab becomes visible)
+    if (initialLoadDoneRef.current === scanId) {
+      // Only set up polling if scan is running/queued (check current scan state)
+      const currentScanStatus = scan?.status;
+      const isRunning = currentScanStatus === 'running' || currentScanStatus === 'queued' || currentScanStatus === 'pending';
+      if (isRunning) {
+        // Set up polling without reloading
+        const pollInterval = setInterval(async () => {
+          try {
+            const data = await thandevFetchJSON<ScanDetail>(`/api/scans/${scanId}`, session);
+            // Only update if data actually changed
+            setScan((prevScan) => {
+              if (!prevScan || JSON.stringify(prevScan) !== JSON.stringify(data)) {
+                return data;
+              }
+              return prevScan;
+            });
+            // Stop polling if scan completed
+            if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
+              clearInterval(pollInterval);
+            }
+          } catch (err) {
+            console.error('Error polling scan:', err);
+          }
+        }, 15000);
+        return () => clearInterval(pollInterval);
+      }
+      return;
+    }
 
     let pollInterval: NodeJS.Timeout | null = null;
     let consecutiveErrors = 0;
@@ -279,6 +312,9 @@ export default function ScanReportPage() {
           return prevScan;
         });
 
+        // Mark initial load as done for this scanId
+        initialLoadDoneRef.current = scanId;
+
         // Stop polling if scan is completed or failed
         if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
           if (pollInterval) {
@@ -308,14 +344,16 @@ export default function ScanReportPage() {
       }
     };
 
-    // Initial load
-    setLoading(true);
-    setInitialLoadFailed(false);
-    loadScan().catch((err) => {
-      // Mark initial load as failed so we show full-page error
-      setInitialLoadFailed(true);
-      setError(err instanceof Error ? err.message : 'Failed to load scan');
-    }).finally(() => setLoading(false));
+    // Initial load (only if we haven't loaded this scanId yet)
+    if (initialLoadDoneRef.current !== scanId) {
+      setLoading(true);
+      setInitialLoadFailed(false);
+      loadScan().catch((err) => {
+        // Mark initial load as failed so we show full-page error
+        setInitialLoadFailed(true);
+        setError(err instanceof Error ? err.message : 'Failed to load scan');
+      }).finally(() => setLoading(false));
+    }
 
     // Set up polling if scan is running/queued
     const checkAndPoll = async () => {
