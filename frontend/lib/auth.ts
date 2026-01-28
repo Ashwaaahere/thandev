@@ -189,11 +189,17 @@ export const authOptions: NextAuthOptions = {
       }
       
       // Bootstrap if UUIDs missing OR admin/approval flags missing (to pick up new admin grants)
+      // Also bootstrap if user is a superadmin but token shows isAdmin=false (to handle admin grants after migration)
+      const isSuperadmin = token.externalUserId && (
+        token.externalUserId === '97579623' || 
+        token.externalUserId === '4708392'
+      )
       const needsBootstrap =
         !isUuid(token.userId) ||
         !isUuid(token.tenantId) ||
         typeof token.isAdmin !== 'boolean' ||
-        typeof token.isApproved !== 'boolean'
+        typeof token.isApproved !== 'boolean' ||
+        (isSuperadmin && token.isAdmin === false)
       
       if (needsBootstrap && token.sub) {
         try {
