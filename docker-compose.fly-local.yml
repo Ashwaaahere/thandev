@@ -47,6 +47,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./services/thandev-brain:/app/services/thandev-brain
     ports:
       - "8000:8000"
     command: [ "./entrypoint.sh" ]
@@ -116,6 +119,7 @@ services:
       - ./wordlists:/opt/thandev/wordlists:ro
       # Mount app code for live development (allows code changes without rebuild)
       - ./services/thandev-runner/app:/app/app
+      - ./services/thandev-brain:/app/services/thandev-brain
     depends_on:
       postgres:
         condition: service_healthy

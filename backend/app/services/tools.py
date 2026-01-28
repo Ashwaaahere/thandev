@@ -28,7 +28,20 @@ if _go_bin not in _current_path or _local_tools not in _current_path or _backend
 
 # Base directory: project root (backend/app/services/tools.py -> project root)
 # parents[0] = backend/app/services, parents[1] = backend/app, parents[2] = backend, parents[3] = project root
-BASE_DIR = Path(__file__).resolve().parents[3]
+# Base directory detection
+# Logic: Find the root that contains "services" directory
+# Local: .../thandev/backend/app/services/tools.py -> .../thandev (parents[3]) contains services/
+# Docker (with proper mount): /app/app/services/tools.py -> /app (parents[2]) contains services/
+_current_file = Path(__file__).resolve()
+if (_current_file.parents[3] / "services").exists():
+    BASE_DIR = _current_file.parents[3]
+elif (_current_file.parents[2] / "services").exists():
+    BASE_DIR = _current_file.parents[2]
+else:
+    # Fallback to standard local assumption if detection fails
+    BASE_DIR = _current_file.parents[3]
+    logger.warning(f"Could not automatically detect BASE_DIR with 'services' folder. Defaulting to: {BASE_DIR}")
+
 
 if TYPE_CHECKING:
     from app.models.scan import ScanJob

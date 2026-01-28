@@ -19,29 +19,28 @@ from app.utils.crawler import SmartCrawler
 _home_dir = os.path.expanduser("~")
 _go_bin = os.path.join(_home_dir, "go", "bin")
 _local_tools = os.path.join(_home_dir, ".local", "thandev-tools", "bin")
-# Base directory: project root (services/thandev-runner/app/services/tools.py -> project root)
-# parents[0] = services/thandev-runner/app/services, parents[1] = services/thandev-runner/app, 
-# parents[2] = services/thandev-runner, parents[3] = services, parents[4] = project root
-# Try to get project root, fallback if path structure is different
-try:
-    _BASE_DIR = Path(__file__).resolve().parents[4]
-except IndexError:
-    # Fallback: try fewer parents if structure is different
-    try:
-        _BASE_DIR = Path(__file__).resolve().parents[3]
-    except IndexError:
-        _BASE_DIR = Path(__file__).resolve().parents[2]
-_current_path = os.environ.get("PATH", "")
-if _go_bin not in _current_path or _local_tools not in _current_path:
-    _new_path = f"{_local_tools}:{_go_bin}:{_current_path}"
-    os.environ["PATH"] = _new_path
-    logger = logging.getLogger(__name__)
-    logger.debug(f"Updated PATH to include tool directories: {_go_bin}, {_local_tools}")
+# Base directory detection
+# Logic: Find the root that contains "services" directory
+_current_file = Path(__file__).resolve()
+_BASE_DIR = None
 
-# Base directory: project root (services/thandev-runner/app/services/tools.py -> project root)
-# parents[0] = services/thandev-runner/app/services, parents[1] = services/thandev-runner/app,
-# parents[2] = services/thandev-runner, parents[3] = services, parents[4] = project root
-# Use the same _BASE_DIR calculated above
+# Try parents[4] (Local Runner structure)
+if len(_current_file.parents) > 4 and (_current_file.parents[4] / "services").exists():
+    _BASE_DIR = _current_file.parents[4]
+# Try parents[3] (Backend Local / Alternative Runner)
+elif len(_current_file.parents) > 3 and (_current_file.parents[3] / "services").exists():
+    _BASE_DIR = _current_file.parents[3]
+# Try parents[2] (Docker Runner / Backend Docker)
+elif len(_current_file.parents) > 2 and (_current_file.parents[2] / "services").exists():
+    _BASE_DIR = _current_file.parents[2]
+else:
+    # Fallback to standard local assumption
+    try:
+        _BASE_DIR = _current_file.parents[4]
+    except IndexError:
+        _BASE_DIR = _current_file.parents[3] if len(_current_file.parents) > 3 else _current_file.parents[2]
+    logger.warning(f"Could not automatically detect BASE_DIR with 'services' folder. Defaulting to: {_BASE_DIR}")
+
 BASE_DIR = _BASE_DIR
 
 # Initialize logger after PATH setup
@@ -1422,8 +1421,9 @@ class ToolExecutor:
             }
     
     async def _run_sslscan(self, target_url: str, scan_level: str, **kwargs) -> Dict:
-        """Run SSL/TLS scanner"""
+        """Run SSL/TLS scanner with DNS multi-IP retry and SNI."""
         from urllib.parse import urlparse
+        import socket
         
         parsed = urlparse(target_url)
         hostname = parsed.hostname
@@ -1432,37 +1432,85 @@ class ToolExecutor:
         if not hostname:
             raise ValueError(f"Invalid URL: {target_url}")
         
-        target = f"{hostname}:{port}"
-        
-        # Note: sslscan doesn't support --json flag, it outputs text with ANSI colors
-        cmd = ["sslscan", target]
-        
-        # Get timeout from kwargs (set by scan_orchestrator based on scan level)
-        timeout_seconds = kwargs.get("timeout_seconds", 300)
-        
+        # Resolve all IPs (v4 first), dedupe
         try:
-            result = await asyncio.to_thread(subprocess.run,
+            addrinfos = socket.getaddrinfo(hostname, port, proto=socket.IPPROTO_TCP)
+            ips = []
+            seen = set()
+            for family, _, _, _, sockaddr in addrinfos:
+                ip = sockaddr[0]
+                if ip in seen:
+                    continue
+                seen.add(ip)
+                ips.append((family, ip))
+            # Prefer IPv4 first
+            ips.sort(key=lambda x: 0 if x[0] == socket.AF_INET else 1)
+        except Exception as e:
+            logger.warning(f"[SSLSCAN] DNS resolution failed for {hostname}: {e}, falling back to hostname")
+            ips = []
+        
+        timeout_seconds = kwargs.get("timeout_seconds", 300)
+        per_ip_timeout = max(5, min(15, timeout_seconds // max(1, len(ips) or 1)))
+        
+        last_error = None
+        
+        async def run_once(ip: str) -> Dict:
+            cmd = ["sslscan", "--no-colour", "--no-failed", "--sni", hostname, f"{ip}:{port}"]
+            result = await asyncio.to_thread(
+                subprocess.run,
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=timeout_seconds,
+                timeout=per_ip_timeout,
             )
-            
             return {
                 "tool_name": "sslscan",
                 "output": result.stdout,
                 "exit_code": result.returncode,
                 "command": " ".join(cmd),
+                "stderr": result.stderr,
             }
-        except subprocess.TimeoutExpired:
-            return {
+        
+        try:
+            # Try each resolved IP; if none, fall back to hostname
+            targets = [ip for _, ip in ips] if ips else [hostname]
+            for ip in targets:
+                try:
+                    res = await run_once(ip)
+                    if res["exit_code"] == 0 and res["output"]:
+                        return res
+                    last_error = res
+                except subprocess.TimeoutExpired:
+                    last_error = {
+                        "tool_name": "sslscan",
+                        "output": "",
+                        "exit_code": -1,
+                        "error": f"sslscan timeout after {per_ip_timeout}s for {ip}",
+                        "command": f"sslscan --sni {hostname} {ip}:{port}",
+                    }
+                    continue
+                except FileNotFoundError:
+                    logger.warning("sslscan not found, using openssl fallback")
+                    return await self._run_openssl_fallback(hostname, port)
+                except Exception as e:
+                    last_error = {
+                        "tool_name": "sslscan",
+                        "output": "",
+                        "exit_code": -1,
+                        "error": str(e),
+                        "command": f"sslscan --sni {hostname} {ip}:{port}",
+                    }
+                    continue
+            
+            # If all attempts failed, return last error or generic
+            return last_error or {
                 "tool_name": "sslscan",
                 "output": "",
                 "exit_code": -1,
-                "error": "Tool execution timed out",
+                "error": "sslscan failed for all resolved IPs",
             }
+        
         except FileNotFoundError:
-            # Fallback to openssl if sslscan not available
             logger.warning("sslscan not found, using openssl fallback")
             return await self._run_openssl_fallback(hostname, port)
     
@@ -5995,11 +6043,12 @@ class ToolExecutor:
         try:
             # Run enumeration and get asset inventory
             start_time = time.time()
-            inventory = await run_enumeration(
-                target_url=target_url,
-                scan_job_id=scan_job_id,
-                scan_level=scan_level,
-                timeout_seconds=timeout_seconds
+            inventory = await asyncio.wait_for(
+                run_enumeration(
+                    target_url=target_url,
+                    scan_level=scan_level,
+                ),
+                timeout=timeout_seconds,
             )
             execution_time = time.time() - start_time
             
@@ -6063,4 +6112,3 @@ class ToolExecutor:
                 "success": False,
                 "timed_out": False,
             }
-

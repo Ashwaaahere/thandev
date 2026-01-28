@@ -15,7 +15,7 @@ import logging
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, List, Set, Optional
+from typing import Dict, Any, List, Set, Optional, Tuple
 from urllib.parse import urlparse, urljoin
 from datetime import datetime, timezone
 import re
@@ -129,7 +129,7 @@ async def run_httpx(target_url: str) -> Dict[str, Any]:
         return {"status": 0, "error": str(e)}
 
 
-async def run_katana(target_url: str, depth: int = 3, max_urls: int = 500) -> List[str]:
+async def run_katana(target_url: str, depth: int = 3, max_urls: int = 500) -> Tuple[List[str], Optional[str]]:
     """
     Run Katana web crawler to discover URLs
     
@@ -148,54 +148,76 @@ async def run_katana(target_url: str, depth: int = 3, max_urls: int = 500) -> Li
         parsed = urlparse(target_url)
         hostname = parsed.hostname or parsed.netloc
         
-        # Run katana with headless mode for JavaScript SPAs
-        # -hl: enable headless crawling (required for JS rendering)
-        # -nos: no-sandbox mode (required for Docker containers)
-        # -scp: system chrome path (use our installed Chromium)
-        # -jc: JavaScript crawling
-        cmd = [
+        # Prefer plain mode first (more reliable in containerized envs)
+        base_cmd = [
             "katana",
             "-u", target_url,
             "-d", str(depth),
-            "-hl",  # Enable headless mode for JavaScript rendering
-            "-nos",  # No sandbox (required for Docker containers)
-            "-scp", "/usr/bin/chromium",  # Use system Chromium
-            "-jc",  # JavaScript crawling
-            "-kf", "all",  # Known files
+            "-kf", "all",            # Known files
             "-silent",
             "-no-color",
-            "-fs", f"rdn:{hostname}",  # Filter scope to same domain
         ]
         
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=120,  # 2 minutes max
-        )
+        # Try plain mode; if it yields zero URLs, fallback to headless/system-chrome
+        def run_cmd(cmd):
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,  # 2 minutes max
+            )
         
-        if result.returncode != 0:
-            logger.warning(f"[KATANA] Failed with exit code {result.returncode}")
-            return []
+        logger.debug(f"[KATANA] CMD(primary): {' '.join(base_cmd)}")
+        result = run_cmd(base_cmd)
         
-        # Parse URLs from output
+        if result.returncode != 0 and not urls:
+            stdout_preview = (result.stdout or "").strip()[:400]
+            stderr_preview = (result.stderr or "").strip()[:400]
+            msg = f"exit={result.returncode}; stdout='{stdout_preview}' stderr='{stderr_preview}'"
+            logger.warning(f"[KATANA] Failed: {msg}")
+            return [], msg
+        
         urls = []
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if line and line.startswith('http'):
-                urls.append(line)
-                if len(urls) >= max_urls:
-                    break
+        def parse_urls(text):
+            out = []
+            for line in text.strip().split('\n'):
+                line = line.strip()
+                if line and line.startswith('http'):
+                    out.append(line)
+                    if len(out) >= max_urls:
+                        break
+            return out
         
-        logger.info(f"[KATANA] Found {len(urls)} URLs")
-        return urls
+        urls = parse_urls(result.stdout or "")
+        
+        # Fallback to headless if no URLs found
+        if result.returncode == 0 and urls:
+            logger.info(f"[KATANA] Found {len(urls)} URLs (plain mode)")
+            return urls, None
+        
+        logger.info(f"[KATANA] Plain mode yielded {len(urls)} URLs (exit={result.returncode}); trying headless fallback")
+        headless_cmd = base_cmd + ["-headless", "-system-chrome", "-no-sandbox"]
+        logger.debug(f"[KATANA] CMD(fallback): {' '.join(headless_cmd)}")
+        result_fallback = run_cmd(headless_cmd)
+        urls = parse_urls(result_fallback.stdout or "")
+        
+        if result_fallback.returncode != 0:
+            stdout_preview = (result_fallback.stdout or "").strip()[:400]
+            stderr_preview = (result_fallback.stderr or "").strip()[:400]
+            msg = f"exit={result_fallback.returncode}; stdout='{stdout_preview}' stderr='{stderr_preview}'"
+            logger.warning(f"[KATANA] Fallback failed: {msg}")
+            return urls, msg if not urls else None
+        
+        logger.info(f"[KATANA] Found {len(urls)} URLs (headless fallback)")
+        return urls, None
         
     except subprocess.TimeoutExpired:
-        logger.warning(f"[KATANA] Timeout after 120s")
-        return []
+        msg = "[KATANA] Timeout after 120s"
+        logger.warning(msg)
+        return [], msg
     except Exception as e:
         logger.error(f"[KATANA] Error: {e}", exc_info=True)
-        return []
+        return [], str(e)
 
 
 async def run_gau(hostname: str, max_urls: int = 500) -> List[str]:
@@ -371,47 +393,28 @@ def normalize_and_merge_urls(
     }
 
 
-async def run_arjun(urls: List[str], max_targets: int = 30) -> Dict[str, Any]:
+async def run_arjun_single_url(url: str, timeout_seconds: int = 15) -> Optional[Dict[str, Any]]:
     """
-    Run Arjun parameter discovery on curated URLs
+    Run Arjun on a single URL with timeout
     
     Args:
-        urls: List of URLs to test
-        max_targets: Maximum URLs to test (Pro=30, Advanced=60)
+        url: URL to test
+        timeout_seconds: Per-URL timeout
         
     Returns:
-        Dict with tested URLs and discovered parameters
+        Dict with url and params if found, None otherwise
     """
-    logger.info(f"[ARJUN] Testing {min(len(urls), max_targets)} URLs for parameters")
-    
-    if not urls:
-        return {"tested_urls": [], "params_by_url": {}}
-    
-    # Limit targets
-    target_urls = urls[:max_targets]
-    
     try:
-        # Create temp file with URLs
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
-            for url in target_urls:
-                f.write(f"{url}\n")
-            urls_file = f.name
-        
         # Create temp file for JSON output
         output_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         output_file.close()
         output_path = output_file.name
         
-        # Run arjun with correct arguments
-        # -i: import URLs from file
-        # -o: output JSON to file (NOT -oJ which doesn't exist)
-        # -t: threads
-        # --stable: stable mode for reliability
         cmd = [
             "arjun",
-            "-i", urls_file,
+            "-u", url,
             "-o", output_path,
-            "-t", "10",
+            "-t", "5",  # Lower threads per URL
             "--stable",
         ]
         
@@ -419,53 +422,91 @@ async def run_arjun(urls: List[str], max_targets: int = 30) -> Dict[str, Any]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=180,  # 3 minutes max
+            timeout=timeout_seconds,
         )
         
-        # Clean up input file
-        Path(urls_file).unlink(missing_ok=True)
-        
-        # Log stderr for debugging
-        if result.stderr:
-            logger.debug(f"[ARJUN] stderr: {result.stderr[:500]}")
-        
         if result.returncode != 0:
-            logger.warning(f"[ARJUN] Failed with exit code {result.returncode}: {result.stderr[:200] if result.stderr else 'no stderr'}")
             Path(output_path).unlink(missing_ok=True)
-            return {"tested_urls": target_urls, "params_by_url": {}}
+            return None
         
-        # Parse JSON output from file
-        params_by_url = {}
+        # Parse JSON output
+        params = []
         try:
             if Path(output_path).exists():
                 with open(output_path, 'r') as f:
                     output = f.read().strip()
                 if output:
                     data = json.loads(output)
-                    if isinstance(data, dict):
-                        params_by_url = data
+                    if isinstance(data, dict) and url in data:
+                        params = data[url]
                     elif isinstance(data, list):
-                        # Convert list format to dict
                         for item in data:
-                            if isinstance(item, dict) and 'url' in item and 'params' in item:
-                                params_by_url[item['url']] = item['params']
-        except json.JSONDecodeError as e:
-            logger.warning(f"[ARJUN] Failed to parse JSON output: {e}")
+                            if isinstance(item, dict) and item.get('url') == url:
+                                params = item.get('params', [])
+                                break
+        except json.JSONDecodeError:
+            pass
         finally:
             Path(output_path).unlink(missing_ok=True)
         
-        logger.info(f"[ARJUN] Found parameters on {len(params_by_url)} URLs")
-        return {
-            "tested_urls": target_urls,
-            "params_by_url": params_by_url
-        }
+        if params:
+            return {"url": url, "params": params}
+        return None
         
     except subprocess.TimeoutExpired:
-        logger.warning(f"[ARJUN] Timeout after 180s")
-        return {"tested_urls": target_urls, "params_by_url": {}}
+        logger.debug(f"[ARJUN] Per-URL timeout for {url}")
+        return None
     except Exception as e:
-        logger.error(f"[ARJUN] Error: {e}", exc_info=True)
-        return {"tested_urls": target_urls, "params_by_url": {}}
+        logger.debug(f"[ARJUN] Error for {url}: {e}")
+        return None
+
+
+async def run_arjun(urls: List[str], max_targets: int = 30, scan_level: str = "pro") -> Dict[str, Any]:
+    """
+    Run Arjun parameter discovery on curated URLs with per-URL timeout
+    
+    Args:
+        urls: List of URLs to test
+        max_targets: Maximum URLs to test (ignored, uses scan_level limits)
+        scan_level: "pro" (10 URLs, 15s each) or "advanced" (20 URLs, 20s each)
+        
+    Returns:
+        Dict with tested URLs and discovered parameters
+    """
+    # Scan level specific limits
+    if scan_level == "advanced":
+        url_limit = 20
+        per_url_timeout = 25
+    else:  # pro
+        url_limit = 10
+        per_url_timeout = 20
+    
+    target_urls = urls[:url_limit]
+    
+    if not target_urls:
+        return {"tested_urls": [], "params_by_url": {}}
+    
+    logger.info(f"[ARJUN] Testing {len(target_urls)} URLs (limit={url_limit}, timeout={per_url_timeout}s per URL)")
+    
+    # Process URLs one by one to get partial results on timeout
+    params_by_url = {}
+    tested_urls = []
+    
+    for i, url in enumerate(target_urls):
+        logger.debug(f"[ARJUN] Testing URL {i+1}/{len(target_urls)}: {url[:80]}...")
+        
+        result = await run_arjun_single_url(url, timeout_seconds=per_url_timeout)
+        tested_urls.append(url)
+        
+        if result and result.get("params"):
+            params_by_url[result["url"]] = result["params"]
+            logger.info(f"[ARJUN] Found {len(result['params'])} params for {url[:60]}...")
+    
+    logger.info(f"[ARJUN] Completed: tested {len(tested_urls)} URLs, found params on {len(params_by_url)} URLs")
+    return {
+        "tested_urls": tested_urls,
+        "params_by_url": params_by_url
+    }
 
 
 async def run_enumeration(
@@ -522,11 +563,14 @@ async def run_enumeration(
     max_urls = 300 if scan_level == "pro" else 500
     
     await emit_event("katana", "running", f"Crawling URLs (depth={depth})...")
-    katana_urls = await run_katana(final_url, depth=depth, max_urls=max_urls)
+    katana_urls, katana_error = await run_katana(final_url, depth=depth, max_urls=max_urls)
     inventory.discovery["katana"]["urls_count"] = len(katana_urls)
     inventory.discovery["katana"]["urls"] = katana_urls[:100]  # Store sample
-    
-    await emit_event("katana", "completed", f"Found {len(katana_urls)} URLs", progress=1.0, meta={"urls_found": len(katana_urls)})
+    if katana_error:
+        inventory.discovery["katana"]["error"] = katana_error
+        await emit_event("katana", "failed", f"No URLs (Katana error)", progress=1.0, meta={"error": katana_error})
+    else:
+        await emit_event("katana", "completed", f"Found {len(katana_urls)} URLs", progress=1.0, meta={"urls_found": len(katana_urls)})
     
     # Step 3: GAU - Get archived URLs
     await emit_event("gau", "running", "Fetching archived URLs...")
@@ -559,7 +603,7 @@ async def run_enumeration(
     
     if arjun_targets:
         await emit_event("arjun", "running", f"Discovering parameters on {len(arjun_targets)} URLs...")
-        arjun_result = await run_arjun(arjun_targets, max_targets=max_arjun_targets)
+        arjun_result = await run_arjun(arjun_targets, max_targets=max_arjun_targets, scan_level=scan_level)
         inventory.discovery["arjun"] = arjun_result
         
         params_found = len(arjun_result["params_by_url"])
@@ -577,4 +621,3 @@ async def run_enumeration(
     )
     
     return inventory.to_dict()
-

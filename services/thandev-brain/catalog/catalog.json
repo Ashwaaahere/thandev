@@ -8,7 +8,10 @@
       "tool_id": "nuclei",
       "name": "Nuclei Vulnerability Scanner",
       "description": "Fast vulnerability scanner using community-driven templates",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "basic_web",
@@ -19,13 +22,33 @@
             "properties": {
               "tags": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": ["cves", "misconfig", "exposed-panels", "exposures"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "cves",
+                  "misconfig",
+                  "exposed-panels",
+                  "exposures"
+                ]
               },
               "severity": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
-                "default": ["critical", "high", "medium"]
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "info"
+                  ]
+                },
+                "default": [
+                  "critical",
+                  "high",
+                  "medium"
+                ]
               }
             },
             "additionalProperties": false
@@ -44,13 +67,47 @@
             "properties": {
               "tags": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": ["cves", "misconfig", "exposed-panels", "exposures", "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal", "cmdi", "idor", "csrf", "cors", "cors-misconfig"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "cves",
+                  "misconfig",
+                  "exposed-panels",
+                  "exposures",
+                  "xss",
+                  "sqli",
+                  "ssrf",
+                  "ssti",
+                  "xxe",
+                  "lfi",
+                  "rfi",
+                  "path-traversal",
+                  "cmdi",
+                  "idor",
+                  "csrf",
+                  "cors",
+                  "cors-misconfig"
+                ]
               },
               "severity": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
-                "default": ["critical", "high", "medium", "low"]
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "info"
+                  ]
+                },
+                "default": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low"
+                ]
               }
             },
             "additionalProperties": false
@@ -69,13 +126,48 @@
             "properties": {
               "tags": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": ["cves", "misconfig", "exposed-panels", "exposures", "xss", "sqli", "ssrf", "ssti", "xxe", "lfi", "rfi", "path-traversal", "cmdi", "idor", "csrf", "cors", "cors-misconfig"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "cves",
+                  "misconfig",
+                  "exposed-panels",
+                  "exposures",
+                  "xss",
+                  "sqli",
+                  "ssrf",
+                  "ssti",
+                  "xxe",
+                  "lfi",
+                  "rfi",
+                  "path-traversal",
+                  "cmdi",
+                  "idor",
+                  "csrf",
+                  "cors",
+                  "cors-misconfig"
+                ]
               },
               "severity": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
-                "default": ["critical", "high", "medium", "low", "info"]
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high",
+                    "medium",
+                    "low",
+                    "info"
+                  ]
+                },
+                "default": [
+                  "critical",
+                  "high",
+                  "medium",
+                  "low",
+                  "info"
+                ]
               }
             },
             "additionalProperties": false
@@ -94,13 +186,26 @@
             "properties": {
               "tags": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": ["cves"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  "cves"
+                ]
               },
               "severity": {
                 "type": "array",
-                "items": {"type": "string", "enum": ["critical", "high"]},
-                "default": ["critical", "high"]
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "critical",
+                    "high"
+                  ]
+                },
+                "default": [
+                  "critical",
+                  "high"
+                ]
               }
             },
             "additionalProperties": false
@@ -116,7 +221,11 @@
       "tool_id": "nmap",
       "name": "Nmap Network Scanner",
       "description": "Network port scanner and service detector",
-      "allowed_target_types": ["tcp", "http", "https"],
+      "allowed_target_types": [
+        "tcp",
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "top_ports",
@@ -172,7 +281,10 @@
       "tool_id": "sslscan",
       "name": "SSL/TLS Scanner",
       "description": "SSL/TLS configuration and vulnerability scanner",
-      "allowed_target_types": ["https", "tcp"],
+      "allowed_target_types": [
+        "https",
+        "tcp"
+      ],
       "modes": [
         {
           "mode_id": "standard",
@@ -193,7 +305,10 @@
       "tool_id": "httpx",
       "name": "HTTP Probe",
       "description": "HTTP probe and technology detection",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "low",
@@ -287,7 +402,10 @@
       "tool_id": "ffuf",
       "name": "FFuF Directory Brute Forcer",
       "description": "Fast web fuzzer for directory and file discovery",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "pro",
@@ -302,8 +420,15 @@
               },
               "extensions": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": [".php", ".html", ".js", ".json"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  ".php",
+                  ".html",
+                  ".js",
+                  ".json"
+                ]
               }
             },
             "additionalProperties": false
@@ -325,8 +450,18 @@
               },
               "extensions": {
                 "type": "array",
-                "items": {"type": "string"},
-                "default": [".php", ".html", ".js", ".json", ".txt", ".xml", ".yaml"]
+                "items": {
+                  "type": "string"
+                },
+                "default": [
+                  ".php",
+                  ".html",
+                  ".js",
+                  ".json",
+                  ".txt",
+                  ".xml",
+                  ".yaml"
+                ]
               }
             },
             "additionalProperties": false
@@ -341,7 +476,10 @@
       "tool_id": "dalfox",
       "name": "DalFox XSS Scanner",
       "description": "Parameter analysis and XSS vulnerability scanner",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "standard",
@@ -393,7 +531,10 @@
       "tool_id": "sqlmap",
       "name": "SQLMap SQL Injection Scanner",
       "description": "Automated SQL injection and database takeover tool",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "sqli_get_basic",
@@ -422,7 +563,9 @@
               },
               "param_names": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                  "type": "string"
+                },
                 "description": "Specific parameter names to test (optional, tests all if not provided)"
               }
             },
@@ -445,7 +588,9 @@
               },
               "param_names": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {
+                  "type": "string"
+                },
                 "description": "Parameter names to test (optional, tests all if not provided)"
               },
               "cookie": {
@@ -471,7 +616,9 @@
                 "default": 60
               }
             },
-            "required": ["data"],
+            "required": [
+              "data"
+            ],
             "additionalProperties": false
           },
           "constraints": {
@@ -545,7 +692,9 @@
                 "default": 60
               }
             },
-            "required": ["raw_request_ref"],
+            "required": [
+              "raw_request_ref"
+            ],
             "additionalProperties": false
           },
           "constraints": {
@@ -584,7 +733,10 @@
       "tool_id": "zap",
       "name": "OWASP ZAP",
       "description": "OWASP Zed Attack Proxy - Web application security scanner",
-      "allowed_target_types": ["http", "https"],
+      "allowed_target_types": [
+        "http",
+        "https"
+      ],
       "modes": [
         {
           "mode_id": "passive_spider",
@@ -623,7 +775,11 @@
             "properties": {
               "policy": {
                 "type": "string",
-                "enum": ["low", "medium", "high"],
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "default": "medium",
                 "description": "Scan policy intensity"
               }
@@ -650,7 +806,11 @@
               },
               "policy": {
                 "type": "string",
-                "enum": ["low", "medium", "high"],
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "default": "high",
                 "description": "Scan policy intensity"
               }
@@ -665,7 +825,3 @@
     }
   ]
 }
-
-
-
-
