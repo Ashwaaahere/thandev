@@ -143,9 +143,14 @@ def verify_dns_token(db, dv: DomainVerification, timeout: int = 5, tries: int = 
         dv.verified_at = dv.last_checked_at
         dv.last_error = None
     else:
-        # Keep status as PENDING if not matched (don't set to FAILED immediately)
-        # User can retry by checking again
-        dv.last_error = last_error or "TXT record not found or token mismatch"
+        # If previously verified but DNS record is now missing, mark as EXPIRED
+        if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
+            dv.status = DomainVerificationStatus.EXPIRED.value
+            dv.last_error = last_error or "TXT record not found or token mismatch"
+        else:
+            # Keep status as PENDING if not matched (don't set to FAILED immediately)
+            # User can retry by checking again
+            dv.last_error = last_error or "TXT record not found or token mismatch"
 
     db.commit()
     db.refresh(dv)
