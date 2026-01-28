@@ -236,6 +236,10 @@ export default function ScanReportPage() {
 
     // If we've already loaded this scan, do a silent refresh (no loading state) and set up polling
     if (initialLoadDoneRef.current === scanId) {
+      // Immediately set loading to false to prevent loading spinner when returning to tab
+      setLoading(false);
+      setInitialLoadFailed(false);
+      
       let pollInterval: NodeJS.Timeout | null = null;
       
       // Silent refresh - fetch without showing loading state
