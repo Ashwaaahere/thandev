@@ -804,11 +804,12 @@ export default function SecurityScannerClient() {
         return;
       }
       if (!isAdmin) {
-        if (!preparedProjectId || preparedProjectId !== selectedProjectId) {
-          setError('Domain verification required. Please verify domain ownership before scanning.');
-          return;
-        }
+        // Skip verification checks for allowlisted domains
         if (!allowedForTargetUrl) {
+          if (!preparedProjectId || preparedProjectId !== selectedProjectId) {
+            setError('Domain verification required. Please verify domain ownership before scanning.');
+            return;
+          }
           if (!verificationData) {
             setError('Domain verification required. Please verify domain ownership before scanning.');
             return;
@@ -822,6 +823,7 @@ export default function SecurityScannerClient() {
             return;
           }
         }
+        // For allowlisted domains, verification is not required - allow scan to proceed
       }
     }
 
