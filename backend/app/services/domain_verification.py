@@ -264,9 +264,9 @@ def enforce_domain_verification_for_scan(
                 "code": "DOMAIN_VERIFICATION_EXPIRED",
                 "root_domain": registrable,
                 "message": "Domain verification expired. DNS TXT record not found. Please re-verify domain ownership before scanning.",
-            }
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=error_detail,
-            )
+        }
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=error_detail,
+        )
 
