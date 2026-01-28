@@ -15,7 +15,6 @@ import { formatDateTime } from '@/lib/formatDate';
 import { formatCategory } from '@/lib/vulnCategories';
 import DashboardHeader from '@/components/Dashboard/DashboardHeader';
 import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
-import AIAttackPlan from '@/components/Scans/AIAttackPlan';
 import TechDependenciesPanel from '@/components/Scans/TechDependenciesPanel';
 import RepoDependenciesPanel from '@/components/Scans/RepoDependenciesPanel';
 import CWEDrawer from '@/components/Dashboard/CWEDrawer';
@@ -2235,8 +2234,6 @@ export default function ScanReportPage() {
                     )}
                   </div>
 
-                  {/* AI Attack Plan card */}
-                  <AIAttackPlan aiStatus={scan.ai_status} aiPlan={scan.ai_plan} />
 
                   {/* Network & TLS Surface card */}
                   <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
