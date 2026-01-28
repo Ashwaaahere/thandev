@@ -244,4 +244,24 @@ def enforce_domain_verification_for_scan(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=error_detail,
         )
+    
+    # For non-admin users, re-verify DNS TXT record to ensure it still exists
+    # This prevents scans from continuing after DNS TXT record is removed
+    if dv.status == DomainVerificationStatus.VERIFIED.value or dv.status == DomainVerificationStatus.VERIFIED:
+        # Re-verify the DNS record to ensure it still exists
+        dv = verify_dns_token(db, dv, timeout=5, tries=2)
+        db.refresh(dv)
+        
+        # Check if verification still passes after re-checking DNS
+        if dv.status != DomainVerificationStatus.VERIFIED.value and dv.status != DomainVerificationStatus.VERIFIED:
+            # DNS TXT record was removed or doesn't match
+            error_detail = {
+                "code": "DOMAIN_VERIFICATION_EXPIRED",
+                "root_domain": registrable,
+                "message": "Domain verification expired. DNS TXT record not found. Please re-verify domain ownership before scanning.",
+            }
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_detail,
+            )
 
