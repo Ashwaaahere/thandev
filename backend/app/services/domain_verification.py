@@ -211,17 +211,28 @@ def enforce_domain_verification_for_scan(
     if registrable in allowlist or (project.root_domain and project.root_domain.lower() in allowlist):
         return
     # DB allowlist (enabled, global or tenant-scoped)
+    # Use case-insensitive comparison for domain matching
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    registrable_lower = registrable.lower() if registrable else None
+    logger.info(f"enforce_domain_verification_for_scan: Checking allowed domains for registrable='{registrable}' (lower='{registrable_lower}'), tenant_id={project.tenant_id}, is_admin={is_admin}")
+    
     allowed = (
         db.query(AllowedDomain)
         .filter(
             AllowedDomain.enabled == True,  # noqa: E712
-            AllowedDomain.domain == registrable,
+            sa.func.lower(AllowedDomain.domain) == registrable_lower,
             sa.or_(AllowedDomain.scope == "global", AllowedDomain.tenant_id == project.tenant_id),
         )
         .first()
     )
+    
     if allowed:
+        logger.info(f"enforce_domain_verification_for_scan: Found allowed domain match: domain='{allowed.domain}', scope='{allowed.scope}', tenant_id={allowed.tenant_id}")
         return
+    else:
+        logger.info(f"enforce_domain_verification_for_scan: No allowed domain match found for '{registrable}'")
 
     # Domain lock check (after allowlist bypass)
     if project.root_domain and project.root_domain != registrable and not is_admin:
