@@ -36,12 +36,28 @@ function useLiveStats(): LiveStats {
 
     const fetchStats = async () => {
       try {
-        const statsRes = await fetch(`${API}/api/stats`).then((r) => {
+        // Add timeout and abort controller for better error handling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        
+        const statsRes = await fetch(`${API}/api/stats`, {
+          signal: controller.signal,
+          headers: {
+            'Accept': 'application/json',
+          },
+        }).then((r) => {
+          clearTimeout(timeoutId);
           if (!r.ok) {
             console.warn(`Stats API returned ${r.status}: ${r.statusText}`);
             return null;
           }
           return r.json();
+        }).catch((err) => {
+          clearTimeout(timeoutId);
+          if (err.name !== 'AbortError') {
+            console.warn('Stats API fetch failed:', err.message);
+          }
+          return null;
         });
 
         if (statsRes) {
@@ -145,7 +161,7 @@ function PlatformStatCard({
           {icon}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="mb-1 text-xs uppercase tracking-wider text-slate-400">
+          <div className="mb-1 text-xs uppercase tracking-wider text-slate-300 dark:text-slate-300">
             {label}
           </div>
           <div className={`text-xl font-bold tabular-nums ${textColor}`}>
@@ -229,7 +245,7 @@ export default function ThandevLanding() {
                 </svg>
               }
               gradient="from-blue-500/20 to-cyan-500/20"
-              textColor="text-blue-400"
+              textColor="text-blue-300 dark:text-blue-300"
             />
             <PlatformStatCard
               label="Active Projects"

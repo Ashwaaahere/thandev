@@ -98,7 +98,7 @@ export default function Hero() {
                   <div className="h-2.5 w-2.5 rounded-full bg-amber-500/60" />
                   <div className="h-2.5 w-2.5 rounded-full bg-emerald-500/60" />
                 </div>
-                <div className="text-[10px] font-mono tracking-wider text-slate-400/80">
+                <div className="text-[10px] font-mono tracking-wider text-slate-300/90">
                   SESSION: US-EAST-1 // SECURE_NODE_01
                 </div>
               </div>
@@ -106,7 +106,7 @@ export default function Hero() {
               {/* Metrics grid */}
               <div className="mb-3 grid grid-cols-3 gap-2">
                 <div className="rounded-lg border border-slate-700/30 bg-slate-700/30 p-2.5 backdrop-blur-sm">
-                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-400/70">
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-300/90">
                     SCAN HEALTH
                   </div>
                   <div className="text-xl font-bold leading-tight text-green-400/90">
@@ -114,13 +114,13 @@ export default function Hero() {
                   </div>
                 </div>
                 <div className="rounded-lg border border-slate-700/30 bg-slate-700/30 p-2.5 backdrop-blur-sm">
-                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-400/70">
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-300/90">
                     ALERTS
                   </div>
                   <div className="text-xl font-bold leading-tight text-white">04</div>
                 </div>
                 <div className="rounded-lg border border-slate-700/30 bg-slate-700/30 p-2.5 backdrop-blur-sm">
-                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-400/70">
+                  <div className="mb-1 text-[10px] uppercase tracking-wider text-slate-300/90">
                     NODES
                   </div>
                   <div className="text-xl font-bold leading-tight text-purple-400/90">

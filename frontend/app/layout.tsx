@@ -210,9 +210,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Structured Data - Using @graph format for multiple schema types */}
         <SeoJsonLd schema={structuredData} />
         
-        {/* Preconnect to improve performance */}
+        {/* Preconnect to improve performance - Critical for API calls */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://thandev-backend.fly.dev" crossOrigin="anonymous" />
+        <link rel="preconnect" href="https://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io" crossOrigin="anonymous" />
         
         {/* DNS Prefetch for external resources */}
         <link rel="dns-prefetch" href="https://api.github.com" />

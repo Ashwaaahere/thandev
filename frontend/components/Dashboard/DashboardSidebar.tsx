@@ -75,7 +75,7 @@ export default function DashboardSidebar({
                 style={{ objectFit: 'contain' }}
               />
               <span className="text-base font-bold" style={{ color: 'var(--fg)' }}>Thandev</span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 uppercase tracking-wide">Beta</span>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-blue-500/30 text-blue-200 border border-blue-400/50 uppercase tracking-wide">Beta</span>
             </Link>
           )}
 

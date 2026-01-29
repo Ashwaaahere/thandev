@@ -87,6 +87,14 @@ const nextConfig = {
   compress: true,
   poweredByHeader: false,
   
+  // Optimize JavaScript bundles
+  experimental: {
+    optimizePackageImports: ['@radix-ui/react-icons', 'lucide-react'],
+  },
+  
+  // Reduce JavaScript bundle size
+  swcMinify: true,
+  
   // Image optimization
   images: {
     formats: ['image/webp', 'image/avif'],
