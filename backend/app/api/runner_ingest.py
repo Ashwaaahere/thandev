@@ -1178,6 +1178,45 @@ async def create_scan_inventory(
         )
 
 
+@router.get("/scans/{scan_id}")
+async def get_scan_details(
+    scan_id: str,
+    db: Session = Depends(get_db),
+):
+    """
+    Get scan details for runner service.
+    
+    Returns basic scan information needed by runner to process the scan.
+    This endpoint is called by runner to fetch scan configuration and status.
+    
+    Args:
+        scan_id: Scan job ID
+        db: Database session
+        
+    Returns:
+        Dict with scan details (id, status, scan_level, url, project_id, etc.)
+    """
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Scan not found: {scan_id}"
+        )
+    
+    # Return essential scan details for runner
+    return {
+        "id": scan_job.id,
+        "status": scan_job.status.value if hasattr(scan_job.status, 'value') else str(scan_job.status),
+        "scan_level": scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else str(scan_job.scan_level),
+        "url": scan_job.url,
+        "project_id": scan_job.project_id,
+        "created_at": scan_job.created_at.isoformat() if scan_job.created_at else None,
+        "started_at": scan_job.started_at.isoformat() if scan_job.started_at else None,
+        "completed_at": scan_job.completed_at.isoformat() if scan_job.completed_at else None,
+        "error_message": scan_job.error_message,
+    }
+
+
 @router.get("/scans/{scan_id}/inventory", response_model=ScanInventoryResponse)
 async def get_scan_inventory(
     scan_id: str,
