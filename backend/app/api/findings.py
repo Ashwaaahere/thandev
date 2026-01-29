@@ -11,7 +11,7 @@ from sqlalchemy import or_, and_, case
 from app.core.database import get_db
 from app.core.tenant_utils import require_tenant
 from app.core.dependencies import get_current_user
-from app.models.finding import Finding, Severity
+from app.models.finding import Finding, Severity, FindingStatus
 from app.models.scan import ScanJob
 from app.models.project import Project
 from app.models.user import User
@@ -85,7 +85,6 @@ async def list_findings(
     
     if status:
         try:
-            from app.models.finding import FindingStatus
             status_enum = FindingStatus(status.lower())
             query = query.filter(Finding.status == status_enum)
         except ValueError:
