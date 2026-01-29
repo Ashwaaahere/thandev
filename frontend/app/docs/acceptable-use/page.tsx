@@ -2,9 +2,14 @@ import { Metadata } from 'next';
 import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Acceptable Use | Documentation | Thandev',
   description: 'No unauthorized scanning and abuse handling',
+  alternates: {
+    canonical: `${SITE_URL}/docs/acceptable-use`,
+  },
 };
 
 const mdxContent = `# Acceptable Use Policy

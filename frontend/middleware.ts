@@ -53,7 +53,7 @@ export async function middleware(req: NextRequest) {
 
     const isAdmin = Boolean((token as any).isAdmin)
     const isApproved = Boolean((token as any).isApproved)
-    
+
     // Check if user is a superadmin by external_user_id (to handle cases where token hasn't been refreshed yet)
     const externalUserId = (token as any).externalUserId || (token as any).sub
     const isSuperadmin = externalUserId && (

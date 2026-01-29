@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Domain Verification | Documentation | Thandev',
   description: 'DNS TXT verification and rules for domain ownership',
+  alternates: {
+    canonical: `${SITE_URL}/docs/domain-verification`,
+  },
 };
 
 const mdxContent = `# Domain Verification

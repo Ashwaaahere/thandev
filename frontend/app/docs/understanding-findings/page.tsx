@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Understanding Findings | Documentation | Thandev',
   description: 'Severities, false positives, and what to do with findings',
+  alternates: {
+    canonical: `${SITE_URL}/docs/understanding-findings`,
+  },
 };
 
 const mdxContent = `# Understanding Findings

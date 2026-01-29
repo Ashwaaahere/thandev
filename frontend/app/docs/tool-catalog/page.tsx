@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Tool Catalog | Documentation | Thandev',
   description: 'All security tools covered and their limits',
+  alternates: {
+    canonical: `${SITE_URL}/docs/tool-catalog`,
+  },
 };
 
 const mdxContent = `# Tool Catalog

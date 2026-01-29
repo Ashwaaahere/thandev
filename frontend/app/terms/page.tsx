@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     description: 'Terms of Service for Thandev - Your comprehensive security testing platform',
   },
   alternates: {
-    canonical: '/terms',
+    canonical: 'https://thandev.io/terms',
   },
 }
 

@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Plans & Limits | Documentation | Thandev',
   description: 'Plans, quotas, concurrency, and fair use policy',
+  alternates: {
+    canonical: `${SITE_URL}/docs/plans-limits`,
+  },
 };
 
 const mdxContent = `# Plans & Limits

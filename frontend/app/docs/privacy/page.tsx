@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Privacy | Documentation | Thandev',
   description: 'Data collected, storage, retention, and third parties',
+  alternates: {
+    canonical: `${SITE_URL}/docs/privacy`,
+  },
 };
 
 const mdxContent = `# Privacy Policy

@@ -15,7 +15,7 @@ export const metadata: Metadata = {
     description: 'Privacy Policy for Thandev - How we collect, use, and protect your data',
   },
   alternates: {
-    canonical: '/privacy',
+    canonical: 'https://thandev.io/privacy',
   },
 }
 

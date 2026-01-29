@@ -260,21 +260,21 @@ export default function VulnerabilitiesClient({
       setHasFetchedOnce(true);
       // Continue to fetch below
     } else {
-      // Check if we should use initial server data (only on first mount with no filters)
-      const hasActiveFilters = 
-        selectedSeverities.size > 0 || 
-        severity || 
-        selectedStatus !== 'all' || 
-        selectedTool !== 'all' || 
-        selectedCategory !== 'all' || 
-        projectId !== initialProjectId || 
-        search.trim() !== initialSearch ||
-        page !== initialPage;
-      
-      // If we have initial data and no filters changed, skip fetch on first mount
+    // Check if we should use initial server data (only on first mount with no filters)
+    const hasActiveFilters = 
+      selectedSeverities.size > 0 || 
+      severity || 
+      selectedStatus !== 'all' || 
+      selectedTool !== 'all' || 
+      selectedCategory !== 'all' || 
+      projectId !== initialProjectId || 
+      search.trim() !== initialSearch ||
+      page !== initialPage;
+    
+    // If we have initial data and no filters changed, skip fetch on first mount
       if (hasInitialData && !hasActiveFilters && page === initialPage && hasFetchedOnce) {
-        setHasInitialData(false); // Mark as used, so next filter change will fetch
-        return;
+      setHasInitialData(false); // Mark as used, so next filter change will fetch
+      return;
       }
     }
     
@@ -911,30 +911,30 @@ export default function VulnerabilitiesClient({
                             <td className="px-6 py-4 max-w-0">
                               <div className="flex flex-col gap-2" style={{ maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
                                 {/* Status */}
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <StatusBadge status={finding.status} />
-                                  {finding.not_seen_in_latest_scan !== null && (
-                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                      finding.not_seen_in_latest_scan 
-                                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                    }`}>
-                                      {finding.not_seen_in_latest_scan ? 'Not seen in latest scan' : 'Present in latest scan'}
-                                    </span>
-                                  )}
-                                </div>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <StatusBadge status={finding.status} />
+                                    {finding.not_seen_in_latest_scan !== null && (
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                        finding.not_seen_in_latest_scan 
+                                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                          : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                      }`}>
+                                        {finding.not_seen_in_latest_scan ? 'Not seen in latest scan' : 'Present in latest scan'}
+                                      </span>
+                                    )}
+                                  </div>
                                 
                                 {/* CVE */}
                                 {finding.cve_id && (
                                   <div>
                                     <span className="px-2 py-0.5 text-xs font-medium rounded border" style={{ 
-                                      background: 'var(--surface-2)', 
+                                          background: 'var(--surface-2)', 
                                       color: 'var(--fg)', 
-                                      borderColor: 'var(--border)' 
-                                    }}>
+                                          borderColor: 'var(--border)' 
+                                        }}>
                                       {finding.cve_id}
-                                    </span>
-                                  </div>
+                                        </span>
+                                    </div>
                                 )}
                                 
                                 {/* Where it was found */}

@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Running Scans | Documentation | Thandev',
   description: 'Basic/Pro/Advanced scans and scan lifecycle guide',
+  alternates: {
+    canonical: `${SITE_URL}/docs/running-scans`,
+  },
 };
 
 const mdxContent = `# Running Scans

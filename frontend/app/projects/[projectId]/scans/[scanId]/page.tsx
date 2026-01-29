@@ -378,13 +378,13 @@ export default function ScanReportPage() {
 
     // Initial load (only if we haven't loaded this scanId yet)
     if (initialLoadDoneRef.current !== scanId) {
-      setLoading(true);
-      setInitialLoadFailed(false);
-      loadScan().catch((err) => {
-        // Mark initial load as failed so we show full-page error
-        setInitialLoadFailed(true);
-        setError(err instanceof Error ? err.message : 'Failed to load scan');
-      }).finally(() => setLoading(false));
+    setLoading(true);
+    setInitialLoadFailed(false);
+    loadScan().catch((err) => {
+      // Mark initial load as failed so we show full-page error
+      setInitialLoadFailed(true);
+      setError(err instanceof Error ? err.message : 'Failed to load scan');
+    }).finally(() => setLoading(false));
     }
 
     // Set up polling if scan is running/queued
@@ -654,7 +654,7 @@ export default function ScanReportPage() {
     const fetchTechStack = async () => {
       // Only show loading on initial load, not during polling
       if (!techStack) {
-        setTechStackLoading(true);
+      setTechStackLoading(true);
       }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/tech-stack`, session);
@@ -702,7 +702,7 @@ export default function ScanReportPage() {
     const fetchInventory = async () => {
       // Only show loading on initial load, not during polling
       if (!inventory) {
-        setInventoryLoading(true);
+      setInventoryLoading(true);
       }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/inventory`, session);
@@ -715,7 +715,7 @@ export default function ScanReportPage() {
         console.error('Failed to fetch enumeration inventory:', error);
         // Don't clear inventory on error during polling
         if (!inventory) {
-          setInventory(null);
+        setInventory(null);
         }
       } finally {
         setInventoryLoading(false);

@@ -1,8 +1,10 @@
 // app/news/page.tsx
 import NewsPageClient from "@/components/News/NewsPageClient";
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata = {
-  title: "Cybersecurity News Feed - Real-time Threat Intelligence",
+  title: "Cybersecurity News Feed | Thandev",
   description: "Stay updated with the latest cybersecurity news, vulnerabilities, and security insights from trusted sources including The Hacker News, BleepingComputer, Dark Reading, and SANS ISC Diary.",
   keywords: [
     "cybersecurity news",
@@ -15,11 +17,14 @@ export const metadata = {
     "exploit news",
     "security advisories"
   ],
+  alternates: {
+    canonical: `${SITE_URL}/news`,
+  },
   openGraph: {
-    title: "Cybersecurity News Feed - Real-time Threat Intelligence",
+    title: "Cybersecurity News Feed | Thandev",
     description: "Stay updated with the latest cybersecurity news, vulnerabilities, and security insights from trusted sources.",
     type: "website",
-    url: "https://thandev.io/news",
+    url: `${SITE_URL}/news`,
     images: [
       {
         url: "/og-news.png",
@@ -31,12 +36,9 @@ export const metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "Cybersecurity News Feed - Real-time Threat Intelligence",
+    title: "Cybersecurity News Feed | Thandev",
     description: "Stay updated with the latest cybersecurity news, vulnerabilities, and security insights from trusted sources.",
     images: ["/og-news.png"],
-  },
-  alternates: {
-    canonical: "/news",
   },
 };
 

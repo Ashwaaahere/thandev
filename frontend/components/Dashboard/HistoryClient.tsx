@@ -80,7 +80,7 @@ export default function HistoryClient() {
 
             {/* Tab Content */}
             <div>
-              <ScanHistoryContent user={session.user} session={session} />
+                <ScanHistoryContent user={session.user} session={session} />
             </div>
           </div>
         </main>

@@ -2,9 +2,14 @@ import { Metadata } from 'next';
 import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Overview | Documentation | Thandev',
   description: 'Learn what Thandev is and what it does for security testing',
+  alternates: {
+    canonical: `${SITE_URL}/docs/overview`,
+  },
 };
 
 const mdxContent = `# Overview

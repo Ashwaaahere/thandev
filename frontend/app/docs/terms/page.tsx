@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Terms of Service | Documentation | Thandev',
   description: 'Terms of service - simple but protective',
+  alternates: {
+    canonical: `${SITE_URL}/docs/terms`,
+  },
 };
 
 const mdxContent = `# Terms of Service

@@ -806,10 +806,10 @@ export default function SecurityScannerClient() {
       if (!isAdmin) {
         // Skip verification checks for allowlisted domains
         if (!allowedForTargetUrl) {
-          if (!preparedProjectId || preparedProjectId !== selectedProjectId) {
-            setError('Domain verification required. Please verify domain ownership before scanning.');
-            return;
-          }
+        if (!preparedProjectId || preparedProjectId !== selectedProjectId) {
+          setError('Domain verification required. Please verify domain ownership before scanning.');
+          return;
+        }
           if (!verificationData) {
             setError('Domain verification required. Please verify domain ownership before scanning.');
             return;

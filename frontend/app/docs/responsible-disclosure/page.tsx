@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Responsible Disclosure | Documentation | Thandev',
   description: 'How to report a vulnerability in Thandev',
+  alternates: {
+    canonical: `${SITE_URL}/docs/responsible-disclosure`,
+  },
 };
 
 const mdxContent = `# Responsible Disclosure

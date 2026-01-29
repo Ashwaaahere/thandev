@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Reports | Documentation | Thandev',
   description: 'Executive vs Full PDF reports and sharing safely',
+  alternates: {
+    canonical: `${SITE_URL}/docs/reports`,
+  },
 };
 
 const mdxContent = `# Reports

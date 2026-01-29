@@ -58,9 +58,7 @@ export const metadata: Metadata = {
     telephone: false,
   },
   metadataBase: new URL('https://thandev.io'),
-  alternates: {
-    canonical: '/',
-  },
+  // Canonical URLs are set per-page, not globally
   openGraph: {
     type: 'website',
     locale: 'en_US',
@@ -162,6 +160,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       "name": "Thandev",
       "description": "Cybersecurity intelligence platform providing real-time threat monitoring, vulnerability tracking, CVE database access, exploit monitoring, and professional security surface scanning for developers and security teams.",
       "category": "Cybersecurity",
+      "image": "https://thandev.io/og-image.png",
       "brand": {
         "@id": "https://thandev.io/#organization",
       },
@@ -237,8 +236,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="icon" type="image/png" href="/logo.png" />
         <link rel="shortcut icon" href="/logo.png" />
         
-        {/* Additional SEO Links */}
-        <link rel="canonical" href="https://thandev.io" />
+        {/* Canonical URLs are set per-page via metadata, not globally */}
         {/* theme init: light/dark before first paint */}
         <script
           dangerouslySetInnerHTML={{

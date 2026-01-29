@@ -2,8 +2,10 @@ import { redirect } from 'next/navigation';
 import { getSafeServerSession } from '@/lib/auth-safe';
 import AuthPage from "@/components/Auth/AuthPage";
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata = {
-  title: "Authentication - Thandev Security Platform",
+  title: "Authentication Security Platform | Thandev",
   description: "Sign in or create your Thandev account to access unlimited security scans, vulnerability assessments, and professional cybersecurity tools.",
   keywords: [
     "authentication",
@@ -15,18 +17,18 @@ export const metadata = {
     "thandev account"
   ],
   openGraph: {
-    title: "Authentication - Thandev Security Platform",
+    title: "Authentication Security Platform | Thandev",
     description: "Sign in or create your Thandev account to access unlimited security scans and vulnerability assessments.",
     type: "website",
-    url: "https://thandev.com/auth",
+    url: `${SITE_URL}/auth`,
   },
   twitter: {
     card: "summary_large_image",
-    title: "Authentication - Thandev Security Platform",
+    title: "Authentication Security Platform | Thandev",
     description: "Sign in or create your Thandev account to access unlimited security scans and vulnerability assessments.",
   },
   alternates: {
-    canonical: "/auth",
+    canonical: `${SITE_URL}/auth`,
   },
 };
 

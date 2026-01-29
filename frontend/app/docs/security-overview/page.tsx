@@ -3,9 +3,14 @@ import { serializeMdx } from '@/lib/docs/serialize-mdx';
 import DocsContent from '@/components/docs/DocsContent';
 
 
+const SITE_URL = 'https://thandev.io';
+
 export const metadata: Metadata = {
   title: 'Security Overview | Documentation | Thandev',
   description: 'High-level security posture and CIA triad summary',
+  alternates: {
+    canonical: `${SITE_URL}/docs/security-overview`,
+  },
 };
 
 const mdxContent = `# Security Overview

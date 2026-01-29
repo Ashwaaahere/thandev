@@ -359,29 +359,29 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
 
         {/* Security engines row */}
         {overview.stats.tools_used && overview.stats.tools_used.length > 0 && (
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
-            <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-400 mb-0">Security engines</p>
+            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-slate-400 mb-0">Security engines</p>
               <div className="flex items-center gap-2 flex-wrap">
                 {overview.stats.tools_used.map((toolName) => {
                   const displayName = toolName.charAt(0).toUpperCase() + toolName.slice(1);
                   
                   // Use green badge for all tools (since they're all tools used in the project)
                   const badgeClass = 'px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-opacity hover:opacity-80 bg-emerald-900/40 text-emerald-200 border-emerald-500/50';
-                  
-                  return (
-                    <Link
+                    
+                    return (
+                      <Link
                       key={toolName}
                       href={`/dashboard/vulnerabilities?projectId=${projectId}&tool=${toolName}`}
-                      className={badgeClass}
-                    >
+                        className={badgeClass}
+                      >
                       {displayName}
-                    </Link>
-                  );
-                })}
+                      </Link>
+                    );
+                  })}
+                </div>
               </div>
             </div>
-          </div>
         )}
 
         {/* Two-column main content */}
