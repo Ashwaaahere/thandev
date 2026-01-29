@@ -195,6 +195,7 @@ export default function VulnerabilitiesClient({
   const [selectedFinding, setSelectedFinding] = useState<FindingListItem | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [hasInitialData, setHasInitialData] = useState(initialFindings.length > 0);
+  const [hasFetchedOnce, setHasFetchedOnce] = useState(false);
   const limit = 20;
 
   // Sync URL params with state
@@ -253,21 +254,28 @@ export default function VulnerabilitiesClient({
   useEffect(() => {
     if (sessionStatus !== 'authenticated' || !session) return;
     
-    // Check if we should use initial server data (only on first mount with no filters)
-    const hasActiveFilters = 
-      selectedSeverities.size > 0 || 
-      severity || 
-      selectedStatus !== 'all' || 
-      selectedTool !== 'all' || 
-      selectedCategory !== 'all' || 
-      projectId !== initialProjectId || 
-      search.trim() !== initialSearch ||
-      page !== initialPage;
-    
-    // If we have initial data and no filters changed, skip fetch on first mount
-    if (hasInitialData && !hasActiveFilters && page === initialPage) {
-      setHasInitialData(false); // Mark as used, so next filter change will fetch
-      return;
+    // Always fetch on mount if we haven't fetched yet, even if we have initial data
+    // This ensures we get the latest data from the server
+    if (!hasFetchedOnce) {
+      setHasFetchedOnce(true);
+      // Continue to fetch below
+    } else {
+      // Check if we should use initial server data (only on first mount with no filters)
+      const hasActiveFilters = 
+        selectedSeverities.size > 0 || 
+        severity || 
+        selectedStatus !== 'all' || 
+        selectedTool !== 'all' || 
+        selectedCategory !== 'all' || 
+        projectId !== initialProjectId || 
+        search.trim() !== initialSearch ||
+        page !== initialPage;
+      
+      // If we have initial data and no filters changed, skip fetch on first mount
+      if (hasInitialData && !hasActiveFilters && page === initialPage && hasFetchedOnce) {
+        setHasInitialData(false); // Mark as used, so next filter change will fetch
+        return;
+      }
     }
     
     let cancelled = false;
@@ -392,7 +400,7 @@ export default function VulnerabilitiesClient({
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [selectedSeverities, severity, selectedTool, selectedStatus, selectedCategory, search, projectId, page, sessionStatus, session, hasInitialData, initialProjectId, initialSearch, initialPage, searchParams]);
+  }, [selectedSeverities, severity, selectedTool, selectedStatus, selectedCategory, search, projectId, page, sessionStatus, session, hasInitialData, initialProjectId, initialSearch, initialPage, searchParams, hasFetchedOnce]);
 
   // Handle status update from drawer
   const handleStatusUpdateFromDrawer = (findingId: string, newStatus: FindingStatus) => {
