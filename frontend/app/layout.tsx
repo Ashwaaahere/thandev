@@ -12,9 +12,14 @@ export const metadata: Metadata = {
     template: '%s | Thandev'
   },
   icons: {
-    icon: '/logo.png',
-    shortcut: '/logo.png',
-    apple: '/logo.png',
+    icon: [
+      { url: '/favicon.ico', type: 'image/x-icon' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
+    ],
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180' },
+    ],
   },
   description: 'Thandev is a comprehensive cybersecurity intelligence platform providing real-time threat monitoring, CVE tracking, vulnerability scanning, security news aggregation, and professional security surface scanning. Trusted by developers and security teams worldwide.',
   keywords: [
