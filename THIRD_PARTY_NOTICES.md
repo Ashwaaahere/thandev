@@ -18,9 +18,9 @@ This document lists all third-party open-source tools used by Thandev and their 
 | **OWASP ZAP** | Web application security scanner | Apache-2.0 | [www.zaproxy.org](https://www.zaproxy.org/) | [LICENSE](https://github.com/zaproxy/zaproxy/blob/main/LICENSE) | Used for passive and active web application security testing |
 | **SQLMap** | SQL injection vulnerability testing tool | GPL-2.0-or-later | [github.com/sqlmapproject/sqlmap](https://github.com/sqlmapproject/sqlmap) | [LICENSE](https://github.com/sqlmapproject/sqlmap/blob/master/LICENSE) | Used in Advanced scans only. Redistribution triggers GPL obligations. |
 | **Arjun** | HTTP parameter discovery and fuzzing tool | AGPL-3.0 | [github.com/s0md3v/Arjun](https://github.com/s0md3v/Arjun) | [LICENSE](https://github.com/s0md3v/Arjun/blob/master/LICENSE) | Used in Advanced scans. Modifications used over a network may trigger source-offer obligations. |
-| **Nmap** | Network port scanner and service detection | Nmap Public Source License (NPSL) | [nmap.org](https://nmap.org/) | [NPSL License](https://nmap.org/npsl/) | Used in Pro and Advanced scans. Hosted server-side use differs from redistribution. For redistribution in customer-delivered products/containers/VMs, see [Nmap OEM Licensing](https://nmap.org/oem/). |
-| **SSLScan** | SSL/TLS configuration analysis tool | GPL-3.0 | [github.com/rbsec/sslscan](https://github.com/rbsec/sslscan) | [LICENSE](https://github.com/rbsec/sslscan/blob/master/LICENSE) | Used in Pro and Advanced scans. Redistribution triggers GPL obligations. |
-| **retire.js** | JavaScript vulnerability scanner | MIT | [github.com/RetireJS/retire.js](https://github.com/RetireJS/retire.js) | [LICENSE](https://github.com/RetireJS/retire.js/blob/master/LICENSE) | Used for client-side JavaScript dependency vulnerability scanning |
+| **Nmap** | Network port scanner and service detection | Nmap Public Source License (NPSL) | [nmap.org](https://nmap.org/) | [NPSL License](https://nmap.org/npsl/) | Used in Pro and Advanced scans. Hosted server-side use differs from redistribution. Redistribution in distributed products/VMs/containers may require [Nmap OEM license](https://nmap.org/oem/). |
+| **SSLScan** | SSL/TLS configuration analysis tool | GPL-3.0 | [github.com/rbsec/sslscan](https://github.com/rbsec/sslscan) | [LICENSE](https://github.com/rbsec/sslscan/blob/master/LICENSE) | Used in Pro and Advanced scans. GPL-3.0-or-later (OpenSSL exception). Redistribution triggers GPL obligations. |
+| **retire.js** | JavaScript vulnerability scanner | Apache-2.0 | [github.com/RetireJS/retire.js](https://github.com/RetireJS/retire.js) | [LICENSE.md](https://github.com/RetireJS/retire.js/blob/master/LICENSE.md) | Used for client-side JavaScript dependency vulnerability scanning |
 | **Chromium** | Headless browser for JavaScript rendering | BSD-3-Clause | [chromium.org](https://www.chromium.org/) | [LICENSE](https://chromium.googlesource.com/chromium/src/+/main/LICENSE) | Used by Katana for headless JavaScript crawling in Advanced scans |
 
 ## License Notes
@@ -35,7 +35,7 @@ Arjun is licensed under AGPL-3.0, which requires that if you modify the tool and
 Nmap uses the Nmap Public Source License (NPSL). Hosted server-side use (as in Thandev's SaaS offering) is permitted under NPSL. However, redistribution of Nmap in customer-delivered products, containers, or VMs may require an OEM license. See [Nmap's licensing page](https://nmap.org/npsl/) for details.
 
 ### MIT and Apache-2.0 Tools
-Most tools (Nuclei, httpx, Katana, GAU, Dalfox, retire.js) are licensed under MIT, and OWASP ZAP is licensed under Apache-2.0. These are permissive licenses that allow commercial use, modification, and distribution with minimal restrictions.
+Most tools (Nuclei, httpx, Katana, GAU, Dalfox) are licensed under MIT, and OWASP ZAP and retire.js are licensed under Apache-2.0. These are permissive licenses that allow commercial use, modification, and distribution with minimal restrictions.
 
 ## Contact
 
