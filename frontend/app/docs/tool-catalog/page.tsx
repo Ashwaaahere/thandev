@@ -371,7 +371,7 @@ Thandev uses multiple open-source security testing tools. Tool names and tradema
 
 **MIT and Apache-2.0 Tools**: Most tools (Nuclei, httpx, Katana, GAU, Dalfox) are licensed under MIT, and OWASP ZAP and retire.js are licensed under Apache-2.0. These are permissive licenses that allow commercial use, modification, and distribution with minimal restrictions.
 
-For a complete list with additional details, see [THIRD_PARTY_NOTICES.md](https://github.com/Ashwaaahere/thandev/blob/main/THIRD_PARTY_NOTICES.md) in the repository.
+For a complete list with additional details, [download THIRD_PARTY_NOTICES.md](/api/third-party-notices).
 
 ---
 
