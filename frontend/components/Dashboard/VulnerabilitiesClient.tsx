@@ -909,40 +909,35 @@ export default function VulnerabilitiesClient({
                               </span>
                             </td>
                             <td className="px-6 py-4 max-w-0">
-                              <div className="flex flex-col gap-3" style={{ maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-                                {/* Header: Severity + Status + Title */}
-                                <div className="flex items-start gap-2 flex-wrap">
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <StatusBadge status={finding.status} />
-                                    {finding.not_seen_in_latest_scan !== null && (
-                                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                                        finding.not_seen_in_latest_scan 
-                                          ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
-                                          : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
-                                      }`}>
-                                        {finding.not_seen_in_latest_scan ? 'Not seen in latest scan' : 'Present in latest scan'}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="text-sm font-semibold break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                        {formatFindingTitle(finding.title)}
-                                      </span>
-                                      {finding.vuln_type && (
-                                        <span className="px-2 py-0.5 text-[10px] font-medium rounded border uppercase" style={{ 
-                                          background: 'var(--surface-2)', 
-                                          color: 'var(--muted)', 
-                                          borderColor: 'var(--border)' 
-                                        }}>
-                                          {finding.vuln_type}
-                                        </span>
-                                      )}
-                                    </div>
-                                  </div>
+                              <div className="flex flex-col gap-2" style={{ maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+                                {/* Status */}
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <StatusBadge status={finding.status} />
+                                  {finding.not_seen_in_latest_scan !== null && (
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                                      finding.not_seen_in_latest_scan 
+                                        ? 'bg-amber-500/20 text-amber-400 border border-amber-500/40'
+                                        : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                                    }`}>
+                                      {finding.not_seen_in_latest_scan ? 'Not seen in latest scan' : 'Present in latest scan'}
+                                    </span>
+                                  )}
                                 </div>
                                 
-                                {/* 1. Where it was found - ALWAYS SHOW with tolerant logic */}
+                                {/* CVE */}
+                                {finding.cve_id && (
+                                  <div>
+                                    <span className="px-2 py-0.5 text-xs font-medium rounded border" style={{ 
+                                      background: 'var(--surface-2)', 
+                                      color: 'var(--fg)', 
+                                      borderColor: 'var(--border)' 
+                                    }}>
+                                      {finding.cve_id}
+                                    </span>
+                                  </div>
+                                )}
+                                
+                                {/* Where it was found */}
                                 <div className="space-y-1">
                                   <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
                                     Where it was found
@@ -988,123 +983,6 @@ export default function VulnerabilitiesClient({
                                       </>
                                     );
                                   })()}
-                                </div>
-                                
-                                {/* 2. What we found - ALWAYS SHOW */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    What we found
-                                  </div>
-                                  {finding.description ? (
-                                    <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                      {finding.description.length > 200 ? (
-                                        <>
-                                          {finding.description.substring(0, 200)}...
-                                          <span className="text-[10px] ml-1" style={{ color: 'var(--brand)' }}>Click for more</span>
-                                        </>
-                                      ) : (
-                                        finding.description
-                                      )}
-                                    </p>
-                                  ) : (
-                                    <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
-                                      No description available
-                                    </p>
-                                  )}
-                                </div>
-                                
-                                {/* 3. Why it matters - ALWAYS SHOW with smart fallback */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    Why it matters
-                                  </div>
-                                  {(() => {
-                                    // Prefer backend impact_summary
-                                    if (finding.impact_summary) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          {finding.impact_summary}
-                                        </p>
-                                      );
-                                    }
-                                    
-                                    // Derive from vuln_type if available
-                                    const vulnType = finding.vuln_type?.toLowerCase() || '';
-                                    if (vulnType.includes('xss')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          An attacker could run JavaScript in the user's browser, steal sessions, or act as the logged-in user.
-                                        </p>
-                                      );
-                                    }
-                                    if (vulnType.includes('sqli') || vulnType.includes('sql')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          An attacker could read or modify data in your database and potentially gain full control of the application.
-                                        </p>
-                                      );
-                                    }
-                                    if (vulnType.includes('open') && vulnType.includes('port')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          Exposed services can be attacked or abused if they are misconfigured, outdated, or unnecessary.
-                                        </p>
-                                      );
-                                    }
-                                    
-                                    // Generic fallback
-                                    return (
-                                      <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                        This issue could pose a security risk to your application.
-                                      </p>
-                                    );
-                                  })()}
-                                </div>
-                                
-                                {/* 4. How to fix it - ALWAYS SHOW, prefer backend remediation */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    How to fix it
-                                  </div>
-                                  {(() => {
-                                    // Prefer backend remediation fields
-                                    const hasRemediation = finding.remediation_summary || finding.remediation_steps || (finding as any).default_remediation_steps;
-                                    
-                                    if (hasRemediation) {
-                                      return (
-                                        <>
-                                          {finding.remediation_summary && (
-                                            <p className="text-xs mb-1" style={{ color: 'var(--fg)' }}>
-                                          {finding.remediation_summary}
-                                        </p>
-                                      )}
-                                      {(finding.remediation_steps || (finding as any).default_remediation_steps) && (
-                                        <ul className="text-xs list-disc list-inside space-y-0.5 break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          {(finding.remediation_steps || (finding as any).default_remediation_steps || '')
-                                            .split('\n')
-                                            .filter(s => s.trim())
-                                            .map((step, idx) => (
-                                              <li key={idx} className="break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{step.trim()}</li>
-                                            ))}
-                                        </ul>
-                                      )}
-                                        </>
-                                      );
-                                    }
-                                    
-                                    // Only show fallback if truly no remediation available
-                                    // Common vuln types should have remediation from backend
-                                    return (
-                                      <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
-                                        Remediation guidance for this specific issue is not available yet. Review the technical details or consult your security team.
-                                      </p>
-                                    );
-                                  })()}
-                                </div>
-                                
-                                {/* Footer hint */}
-                                <div className="text-[10px] italic" style={{ color: 'var(--muted)' }}>
-                                  Click for more details
                                 </div>
                               </div>
                             </td>
