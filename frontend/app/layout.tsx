@@ -16,7 +16,7 @@ export const metadata: Metadata = {
     shortcut: '/logo.png',
     apple: '/logo.png',
   },
-  description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning. GitHub-authenticated access for developers.',
+  description: 'Thandev is a comprehensive cybersecurity intelligence platform providing real-time threat monitoring, CVE tracking, vulnerability scanning, security news aggregation, and professional security surface scanning. Trusted by developers and security teams worldwide.',
   keywords: [
     'cybersecurity',
     'threat intelligence',
@@ -31,7 +31,23 @@ export const metadata: Metadata = {
     'surface scanning',
     'vulnerability scanner',
     'github authentication',
-    'developer security tools'
+    'developer security tools',
+    'web security',
+    'application security',
+    'penetration testing',
+    'security scanning',
+    'threat monitoring',
+    'cybersecurity platform',
+    'vulnerability management',
+    'security assessment',
+    'cyber defense',
+    'security intelligence',
+    'security testing',
+    'vulnerability assessment',
+    'cyber security tools',
+    'security automation',
+    'threat hunting',
+    'security operations'
   ],
   authors: [{ name: 'Thandev Team' }],
   creator: 'Thandev',
@@ -164,21 +180,63 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
+        {/* Essential SEO Meta Tags */}
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
+        <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="format-detection" content="telephone=no, address=no, email=no" />
+        
+        {/* Language and Region */}
+        <meta httpEquiv="content-language" content="en-US" />
+        <meta name="language" content="English" />
+        <meta name="geo.region" content="US" />
+        
+        {/* Mobile Web App Capabilities */}
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+        <meta name="apple-mobile-web-app-title" content="Thandev" />
+        
+        {/* Content Rating */}
+        <meta name="rating" content="general" />
+        <meta name="content-language" content="en-US" />
+        
+        {/* Generator (optional but helpful) */}
+        <meta name="generator" content="Next.js" />
+        
+        {/* Revisit (deprecated but some crawlers still use) */}
+        <meta name="revisit-after" content="1 days" />
+        
         {/* Structured Data - Using @graph format for multiple schema types */}
         <SeoJsonLd schema={structuredData} />
+        
         {/* Preconnect to improve performance */}
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        
         {/* DNS Prefetch for external resources */}
         <link rel="dns-prefetch" href="https://api.github.com" />
         <link rel="dns-prefetch" href="https://github.com" />
+        
         {/* Manifest */}
         <link rel="manifest" href="/manifest.json" />
+        
         {/* Theme color for mobile browsers */}
-        <meta name="theme-color" content="#6366f1" />
+        <meta name="theme-color" content="#6366f1" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
         <meta name="msapplication-TileColor" content="#6366f1" />
+        <meta name="msapplication-config" content="/browserconfig.xml" />
+        
         {/* Apple touch icon */}
         <link rel="apple-touch-icon" href="/logo.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/logo.png" />
+        
+        {/* Favicon */}
+        <link rel="icon" type="image/png" href="/logo.png" />
+        <link rel="shortcut icon" href="/logo.png" />
+        
+        {/* Additional SEO Links */}
+        <link rel="canonical" href="https://thandev.io" />
         {/* theme init: light/dark before first paint */}
         <script
           dangerouslySetInnerHTML={{
