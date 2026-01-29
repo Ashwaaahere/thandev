@@ -27,11 +27,11 @@ const dashboardStructuredData = {
   "@type": "WebPage",
   "name": "Dashboard",
   "description": "Security testing dashboard for Thandev platform",
-  "url": "https://thandev.vercel.app/dashboard",
+    "url": "https://thandev.io/dashboard",
   "isPartOf": {
     "@type": "WebSite",
     "name": "Thandev",
-    "url": "https://thandev.vercel.app/"
+    "url": "https://thandev.io/"
   }
 }
 

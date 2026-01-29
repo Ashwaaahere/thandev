@@ -19,7 +19,7 @@ export const metadata = {
     title: "Cybersecurity News Feed - Real-time Threat Intelligence",
     description: "Stay updated with the latest cybersecurity news, vulnerabilities, and security insights from trusted sources.",
     type: "website",
-    url: "https://thandev.com/news",
+    url: "https://thandev.io/news",
     images: [
       {
         url: "/og-news.png",

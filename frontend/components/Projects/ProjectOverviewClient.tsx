@@ -73,8 +73,6 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [projectUrls, setProjectUrls] = useState<ProjectUrl[]>([]);
-  const [newUrl, setNewUrl] = useState('');
-  const [addingUrl, setAddingUrl] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -360,48 +358,31 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
         </div>
 
         {/* Security engines row */}
-        {overview.stats.latest_scan_tools && overview.stats.latest_scan_tools.length > 0 && (() => {
-          // Deduplicate tools by tool_name, keeping the first occurrence
-          const uniqueTools = overview.stats.latest_scan_tools.filter((tool, index, self) =>
-            index === self.findIndex((t) => t.tool_name === tool.tool_name)
-          );
-          
-          return (
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-slate-400 mb-0">Security engines</p>
-                <div className="flex items-center gap-2">
-                  {uniqueTools.map((tool) => {
-                    const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
-                    const isSuccess = tool.exit_code === 0;
-                    const hasError = tool.exit_code !== null && tool.exit_code !== 0;
-                    const isUnknown = tool.exit_code === null;
-                    
-                    // Color based on exit code: green (0), yellow (null/unknown), red (non-zero)
-                    let badgeClass = 'px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-opacity hover:opacity-80';
-                    if (isSuccess) {
-                      badgeClass += ' bg-emerald-900/40 text-emerald-200 border-emerald-500/50';
-                    } else if (hasError) {
-                      badgeClass += ' bg-red-900/40 text-red-200 border-red-500/50';
-                    } else {
-                      badgeClass += ' bg-amber-900/40 text-amber-200 border-amber-500/50';
-                    }
-                    
-                    return (
-                      <Link
-                        key={tool.tool_name}
-                        href={`/dashboard/vulnerabilities?projectId=${projectId}&tool=${tool.tool_name}`}
-                        className={badgeClass}
-                      >
-                        {toolName}
-                      </Link>
-                    );
-                  })}
-                </div>
+        {overview.stats.tools_used && overview.stats.tools_used.length > 0 && (
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4 shadow-lg shadow-black/30">
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-400 mb-0">Security engines</p>
+              <div className="flex items-center gap-2 flex-wrap">
+                {overview.stats.tools_used.map((toolName) => {
+                  const displayName = toolName.charAt(0).toUpperCase() + toolName.slice(1);
+                  
+                  // Use green badge for all tools (since they're all tools used in the project)
+                  const badgeClass = 'px-2.5 py-1 text-xs font-medium rounded-full border cursor-pointer transition-opacity hover:opacity-80 bg-emerald-900/40 text-emerald-200 border-emerald-500/50';
+                  
+                  return (
+                    <Link
+                      key={toolName}
+                      href={`/dashboard/vulnerabilities?projectId=${projectId}&tool=${toolName}`}
+                      className={badgeClass}
+                    >
+                      {displayName}
+                    </Link>
+                  );
+                })}
               </div>
             </div>
-          );
-        })()}
+          </div>
+        )}
 
         {/* Two-column main content */}
         <div className="grid gap-6 md:grid-cols-3">
@@ -518,112 +499,6 @@ export default function ProjectOverviewClient({ projectId, session }: ProjectOve
               {overview.stats.open_findings_total === 0 && (
                 <p className="mt-4 text-xs text-slate-400 text-center">No findings detected</p>
               )}
-            </div>
-
-            {/* Tools used card */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 shadow-lg shadow-black/30 p-6">
-              <h2 className="text-lg font-semibold text-slate-100 mb-4">Tools Used</h2>
-              {overview.stats.tools_used.length === 0 ? (
-                <p className="text-sm text-slate-400">No tools have been used yet</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {overview.stats.tools_used.map((tool) => (
-                    <span
-                      key={tool}
-                      className="inline-flex items-center rounded-full border border-slate-700 bg-slate-900/60 px-3 py-1 text-xs font-medium text-slate-200"
-                    >
-                      {tool.toUpperCase()}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Project URLs Management */}
-            <div className="rounded-2xl border border-slate-800 bg-slate-950/60 shadow-lg shadow-black/30 p-6">
-              <h2 className="text-lg font-semibold text-slate-100 mb-4">Project URLs</h2>
-              <div className="space-y-3">
-                {/* Primary URL */}
-                <div className="flex items-center justify-between p-2 rounded bg-slate-900/40">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-slate-500 mb-1">Primary URL</p>
-                    <p className="text-sm text-slate-300 font-mono truncate">{overview.target_url}</p>
-                  </div>
-                </div>
-                
-                {/* Additional URLs */}
-                {projectUrls.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs text-slate-500">Additional URLs</p>
-                    {projectUrls.map((url) => (
-                      <div key={url.id} className="flex items-center justify-between p-2 rounded bg-slate-900/40">
-                        <p className="text-sm text-slate-300 font-mono truncate flex-1">{url.url}</p>
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Remove "${url.url}" from this project?`)) {
-                              try {
-                                await thandevFetchJSON(
-                                  `/api/projects/${projectId}/urls/${url.id}`,
-                                  session,
-                                  { method: 'DELETE' }
-                                );
-                                setProjectUrls(projectUrls.filter(u => u.id !== url.id));
-                              } catch (err: any) {
-                                alert(`Failed to remove URL: ${err?.message || 'Unknown error'}`);
-                              }
-                            }
-                          }}
-                          className="ml-2 p-1.5 rounded hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"
-                          title="Remove URL"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                
-                {/* Add URL Form */}
-                <div className="pt-2 border-t border-slate-800">
-                  <div className="flex gap-2">
-                    <input
-                      type="url"
-                      value={newUrl}
-                      onChange={(e) => setNewUrl(e.target.value)}
-                      placeholder="https://example.com"
-                      className="flex-1 px-3 py-2 text-sm rounded-lg border border-slate-700 bg-slate-900/60 text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    />
-                    <button
-                      onClick={async () => {
-                        if (!newUrl.trim()) return;
-                        setAddingUrl(true);
-                        try {
-                          const newUrlData = await thandevFetchJSON<ProjectUrl>(
-                            `/api/projects/${projectId}/urls`,
-                            session,
-                            {
-                              method: 'POST',
-                              body: JSON.stringify({ url: newUrl.trim() }),
-                            }
-                          );
-                          setProjectUrls([...projectUrls, newUrlData]);
-                          setNewUrl('');
-                        } catch (err: any) {
-                          alert(`Failed to add URL: ${err?.message || 'Unknown error'}`);
-                        } finally {
-                          setAddingUrl(false);
-                        }
-                      }}
-                      disabled={addingUrl || !newUrl.trim()}
-                      className="px-4 py-2 text-sm font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {addingUrl ? 'Adding...' : 'Add URL'}
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
