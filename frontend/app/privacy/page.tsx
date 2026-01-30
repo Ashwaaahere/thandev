@@ -256,13 +256,6 @@ export default function PrivacyPage() {
                   </div>
                 </section>
 
-                {/* Disclaimer */}
-                <div className="mt-12 p-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                    <strong>Note:</strong> This is a demo Privacy Policy page. Please replace this content with your 
-                    actual privacy policy and consult with a legal professional before publishing.
-                  </p>
-                </div>
               </div>
             </div>
           </div>
