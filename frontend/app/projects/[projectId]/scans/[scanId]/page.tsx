@@ -536,9 +536,9 @@ export default function ScanReportPage() {
       try {
         // Only show loading on initial load, not during polling
         if (!findingsLoadedRef.current) {
-        setFindingsLoading(true);
+          setFindingsLoading(true);
         }
-        setFindingsError(null);
+        setFindingsError(null); // Clear error before each attempt
         // Fetch findings with pagination and tool filter
         const skip = findingsPage * findingsLimit;
         let url = `/api/scans/${scanId}/findings?limit=${findingsLimit}&skip=${skip}`;
@@ -563,6 +563,8 @@ export default function ScanReportPage() {
           return prevFindings;
         });
         setFindingsTotal(newTotal);
+        // Clear error on successful fetch
+        setFindingsError(null);
         // Debug: Log first finding to verify API response
         if (data.items && data.items.length > 0) {
           const firstFinding = data.items[0];
@@ -592,7 +594,10 @@ export default function ScanReportPage() {
         setCveIds(Array.from(uniqueCves).sort());
       } catch (err) {
         console.error('Error loading findings:', err);
-        setFindingsError(err instanceof Error ? err.message : 'Failed to load findings');
+        // Only set error if this is not a polling attempt (to avoid showing transient errors)
+        if (!isPolling || !findingsLoadedRef.current) {
+          setFindingsError(err instanceof Error ? err.message : 'Failed to load findings');
+        }
       } finally {
         setFindingsLoading(false);
       }
