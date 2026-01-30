@@ -76,7 +76,7 @@ export const metadata: Metadata = {
         url: 'https://thandev.io/og-image.png',
         width: 1200,
         height: 630,
-        alt: 'Thandev - Cybersecurity Intelligence Platform',
+        alt: 'Thandev - Cybersecurity Scanning Tool | Web Security Testing Platform',
       },
     ],
   },
