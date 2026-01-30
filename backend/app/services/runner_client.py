@@ -61,86 +61,112 @@ async def _publish_tools_after_enumeration(
     waited = 0
     enumeration_completed = False
     
-    while waited < max_wait:
-        await asyncio.sleep(check_interval)
-        waited += check_interval
-        
-        db = SessionLocal()
-        try:
-            tool_state = db.query(ScanToolState).filter(
-                ScanToolState.scan_id == scan_job_id,
-                ScanToolState.tool == "enumeration"
-            ).order_by(ScanToolState.updated_at.desc()).first()
+    try:
+        while waited < max_wait:
+            await asyncio.sleep(check_interval)
+            waited += check_interval
             
-            if tool_state and tool_state.stage in ["completed", "failed"]:
-                logger.info(f"[ENUM-WAIT] Enumeration {tool_state.stage} for scan {scan_job_id} after {waited}s")
-                enumeration_completed = True
-                break
-        finally:
-            db.close()
+            db = SessionLocal()
+            try:
+                tool_state = db.query(ScanToolState).filter(
+                    ScanToolState.scan_id == scan_job_id,
+                    ScanToolState.tool == "enumeration"
+                ).order_by(ScanToolState.updated_at.desc()).first()
+                
+                if tool_state and tool_state.stage in ["completed", "failed"]:
+                    logger.info(f"[ENUM-WAIT] Enumeration {tool_state.stage} for scan {scan_job_id} after {waited}s")
+                    enumeration_completed = True
+                    break
+            except Exception as db_error:
+                logger.warning(f"[ENUM-WAIT] Error checking enumeration status for scan {scan_job_id}: {db_error}")
+            finally:
+                db.close()
+            
+            if waited % 15 == 0:
+                logger.info(f"[ENUM-WAIT] Still waiting for enumeration for scan {scan_job_id} ({waited}s elapsed)")
         
-        if waited % 15 == 0:
-            logger.info(f"[ENUM-WAIT] Still waiting for enumeration for scan {scan_job_id} ({waited}s elapsed)")
-    
-    if not enumeration_completed:
-        logger.warning(f"[ENUM-WAIT] Enumeration did not complete within {max_wait}s for scan {scan_job_id}, publishing tools anyway")
-    
-    # Now publish all other tools
-    logger.info(f"[ENUM-WAIT] Publishing {len(tools)} tools for scan {scan_job_id} after enumeration")
-    
-    published_count = 0
-    for tool_config in tools:
-        if not tool_config.get("enabled", True):
-            continue
+        if not enumeration_completed:
+            logger.warning(f"[ENUM-WAIT] Enumeration did not complete within {max_wait}s for scan {scan_job_id}, publishing tools anyway")
         
-        tool_id = tool_config.get("key") or tool_config.get("name")
+        # Now publish all other tools
+        logger.info(f"[ENUM-WAIT] Publishing {len(tools)} tools for scan {scan_job_id} after enumeration")
         
-        # Extract mode_id
-        mode_id = None
-        if "mode" in tool_config:
-            mode_id = tool_config["mode"]
-        elif "profile" in tool_config:
-            mode_id = tool_config["profile"]
-        elif "intensity" in tool_config:
-            mode_id = tool_config["intensity"]
-        else:
-            default_modes = {
-                "sslscan": "standard",
-                "sqlmap": "sqli_light",
-                "dalfox": "standard",
-                "nmap": "top_ports",
-                "nuclei": "basic_web",
-                "httpx": "low",
-            }
-            mode_id = default_modes.get(tool_id, "standard")
+        published_count = 0
+        failed_count = 0
+        for tool_config in tools:
+            if not tool_config.get("enabled", True):
+                continue
+            
+            tool_id = tool_config.get("key") or tool_config.get("name")
+            if not tool_id:
+                logger.warning(f"[ENUM-WAIT] Skipping tool config without tool_id: {tool_config}")
+                continue
+            
+            try:
+                # Extract mode_id
+                mode_id = None
+                if "mode" in tool_config:
+                    mode_id = tool_config["mode"]
+                elif "profile" in tool_config:
+                    mode_id = tool_config["profile"]
+                elif "intensity" in tool_config:
+                    mode_id = tool_config["intensity"]
+                else:
+                    default_modes = {
+                        "sslscan": "standard",
+                        "sqlmap": "sqli_light",
+                        "dalfox": "standard",
+                        "nmap": "top_ports",
+                        "nuclei": "basic_web",
+                        "httpx": "low",
+                    }
+                    mode_id = default_modes.get(tool_id, "standard")
+                
+                params = tool_config.get("params", {})
+                # CRITICAL: Add scan_level to params so tools can use it (especially for inventory waiting)
+                params["scan_level"] = scan_level_str
+                # CRITICAL: Add timeout_seconds from scan_timeouts configuration
+                timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+                params["timeout_seconds"] = timeout_seconds
+                logger.info(f"[ENUM-WAIT] Added timeout_seconds={timeout_seconds}s for {tool_id} in {scan_level_str} scan")
+                reason = f"Scan level {scan_level.value} requires {tool_id}"
+                
+                tool_step_id = await publish_step_request(
+                    session_id=scan_job_id,
+                    tool_id=tool_id,
+                    mode_id=mode_id,
+                    params=params,
+                    target_ref=target_url,
+                    depends_on=[enumeration_step_id],
+                    reason=reason,
+                    org_id=org_id,
+                    project_id=project_id,
+                    scan_job_id=scan_job_id,
+                )
+                
+                if tool_step_id:
+                    published_count += 1
+                    logger.info(f"[ENUM-WAIT] Published {tool_id} (step_id={tool_step_id}) for scan {scan_job_id}")
+                else:
+                    failed_count += 1
+                    logger.error(f"[ENUM-WAIT] Failed to publish {tool_id} for scan {scan_job_id} (publish_step_request returned None)")
+            except Exception as tool_error:
+                failed_count += 1
+                logger.error(
+                    f"[ENUM-WAIT] Error publishing {tool_id} for scan {scan_job_id}: {tool_error}",
+                    exc_info=True
+                )
         
-        params = tool_config.get("params", {})
-        # CRITICAL: Add scan_level to params so tools can use it (especially for inventory waiting)
-        params["scan_level"] = scan_level_str
-        # CRITICAL: Add timeout_seconds from scan_timeouts configuration
-        timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
-        params["timeout_seconds"] = timeout_seconds
-        logger.info(f"[ENUM-WAIT] Added timeout_seconds={timeout_seconds}s for {tool_id} in {scan_level_str} scan")
-        reason = f"Scan level {scan_level.value} requires {tool_id}"
-        
-        tool_step_id = await publish_step_request(
-            session_id=scan_job_id,
-            tool_id=tool_id,
-            mode_id=mode_id,
-            params=params,
-            target_ref=target_url,
-            depends_on=[enumeration_step_id],
-            reason=reason,
-            org_id=org_id,
-            project_id=project_id,
-            scan_job_id=scan_job_id,
+        logger.info(
+            f"[ENUM-WAIT] Published {published_count} tools for scan {scan_job_id} after enumeration "
+            f"(failed: {failed_count}, total: {len(tools)})"
         )
-        
-        if tool_step_id:
-            published_count += 1
-            logger.info(f"[ENUM-WAIT] Published {tool_id} for scan {scan_job_id}")
-    
-    logger.info(f"[ENUM-WAIT] Published {published_count} tools for scan {scan_job_id} after enumeration completed")
+    except Exception as e:
+        logger.error(
+            f"[ENUM-WAIT] Fatal error in _publish_tools_after_enumeration for scan {scan_job_id}: {e}",
+            exc_info=True
+        )
+        raise  # Re-raise to be caught by wrapper
 
 
 async def publish_step_request(
@@ -369,15 +395,43 @@ async def publish_scan_steps_to_runner(
                 logger.info(f"Published enumeration step {enumeration_step_id} for scan {scan_job_id}")
                 # Schedule background task to publish other tools after enumeration completes
                 import asyncio
-                asyncio.create_task(_publish_tools_after_enumeration(
-                    scan_job_id=scan_job_id,
-                    target_url=target_url,
-                    scan_level=scan_level,
-                    tools=tools,
-                    org_id=org_id,
-                    project_id=project_id,
-                    enumeration_step_id=enumeration_step_id,
-                ))
+                
+                async def _publish_tools_wrapper():
+                    """Wrapper to ensure background task errors are logged"""
+                    try:
+                        await _publish_tools_after_enumeration(
+                            scan_job_id=scan_job_id,
+                            target_url=target_url,
+                            scan_level=scan_level,
+                            tools=tools,
+                            org_id=org_id,
+                            project_id=project_id,
+                            enumeration_step_id=enumeration_step_id,
+                        )
+                    except Exception as e:
+                        logger.error(
+                            f"[ENUM-WAIT] Background task failed for scan {scan_job_id}: {e}",
+                            exc_info=True
+                        )
+                        # Try to publish tools anyway (fallback)
+                        try:
+                            logger.warning(f"[ENUM-WAIT] Attempting to publish tools without waiting for enumeration for scan {scan_job_id}")
+                            from app.services.runner_client import publish_scan_steps_to_runner
+                            # Publish tools directly (without enumeration dependency)
+                            await publish_scan_steps_to_runner(
+                                scan_job_id=scan_job_id,
+                                target_url=target_url,
+                                scan_level=scan_level,
+                                org_id=org_id,
+                                project_id=project_id,
+                            )
+                        except Exception as fallback_error:
+                            logger.error(
+                                f"[ENUM-WAIT] Fallback publishing also failed for scan {scan_job_id}: {fallback_error}",
+                                exc_info=True
+                            )
+                
+                asyncio.create_task(_publish_tools_wrapper())
                 logger.info(f"Scheduled background task to publish tools after enumeration for scan {scan_job_id}")
                 return True  # Return early - tools will be published by background task
             else:
