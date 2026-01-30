@@ -280,8 +280,7 @@ export default function TermsPage() {
                   </p>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
                     IN NO EVENT SHALL THANDEV'S TOTAL LIABILITY TO YOU FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE EXCEED 
-                    {/* TODO: Add jurisdiction-specific liability cap if required (e.g., "$100 USD" or "the amount you paid to Thandev in the 12 months preceding the claim") */}
-                    THE AMOUNT YOU PAID TO THANDEV IN THE 12 MONTHS PRECEDING THE CLAIM, OR $100 USD, WHICHEVER IS GREATER.
+                    $100 USD.
                   </p>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
                     Some jurisdictions do not allow the exclusion or limitation of certain damages, so some of the above limitations 
