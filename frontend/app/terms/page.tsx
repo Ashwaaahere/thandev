@@ -175,9 +175,8 @@ export default function TermsPage() {
                   </p>
                   <div className="mt-4 p-4 bg-gray-50 dark:bg-slate-700 rounded-lg">
                     <p className="text-gray-700 dark:text-gray-300">
-                      <strong>Email:</strong> legal@thandev.com<br />
-                      <strong>Website:</strong> https://thandev.com<br />
-                      <strong>Address:</strong> [Your Business Address]
+                      <strong>Email:</strong> help@thandev.io<br />
+                      <strong>Website:</strong> https://thandev.io
                     </p>
                   </div>
                 </section>
