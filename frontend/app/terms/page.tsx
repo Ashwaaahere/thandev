@@ -141,7 +141,7 @@ export default function TermsPage() {
                     <li>Steal, exfiltrate, or misuse data obtained through scanning</li>
                     <li>Exploit vulnerabilities discovered through scanning for malicious purposes</li>
                     <li>Interfere with, disrupt, or damage the Service or any third-party systems</li>
-                    <li>Bypass or circumvent security controls, rate limits, or access restrictions on the Service</li>
+                    <li>Bypass or circumvent security controls or access restrictions on the Service</li>
                     <li>Use the Service for any illegal activity or in violation of any applicable laws or regulations</li>
                     <li>Violate the rights of others, including intellectual property rights, privacy rights, or contractual obligations</li>
                     <li>Impersonate others or provide false information when creating an account</li>
