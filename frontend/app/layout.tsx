@@ -8,7 +8,7 @@ import SeoJsonLd from '@/components/SeoJsonLd';
 
 export const metadata: Metadata = {
   title: {
-    default: 'Thandev - Cybersecurity Intelligence Platform',
+    default: 'Thandev - Cybersecurity Scanning Tool | Web Security Testing Platform',
     template: '%s | Thandev'
   },
   icons: {
@@ -21,7 +21,7 @@ export const metadata: Metadata = {
       { url: '/apple-touch-icon.png', sizes: '180x180' },
     ],
   },
-  description: 'Thandev is a comprehensive cybersecurity intelligence platform providing real-time threat monitoring, CVE tracking, vulnerability scanning, security news aggregation, and professional security surface scanning. Trusted by developers and security teams worldwide.',
+  description: 'Professional web security scanning tool used by real cybersecurity teams. Test your applications like security experts with automated vulnerability scanning, penetration testing, and threat detection.',
   keywords: [
     'cybersecurity',
     'threat intelligence',
@@ -82,8 +82,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Thandev - Cybersecurity Intelligence Platform',
-    description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.',
+    title: 'Thandev - Cybersecurity Scanning Tool | Web Security Testing Platform',
+    description: 'Professional web security scanning tool used by real cybersecurity teams. Test your applications like security experts with automated vulnerability scanning.',
     images: ['/og-image.png'],
     creator: '@thandev',
   },

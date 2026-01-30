@@ -4,14 +4,14 @@ import ThandevLandingClient from './ThandevLandingClient';
 const SITE_URL = 'https://thandev.io';
 
 export const metadata: Metadata = {
-  title: 'Thandev — Cybersecurity Intelligence Platform for Developers',
-  description: 'Thandev is a comprehensive cybersecurity intelligence platform providing real-time threat monitoring, CVE tracking, vulnerability scanning, security news aggregation, and professional security surface scanning. Trusted by developers and security teams worldwide.',
+  title: 'Thandev — Cybersecurity Scanning Tool | Web Security Testing Platform',
+  description: 'Professional web security scanning tool used by real cybersecurity teams. Test your applications like security experts with automated vulnerability scanning, penetration testing, and threat detection.',
   alternates: {
     canonical: `${SITE_URL}/`,
   },
   openGraph: {
-    title: 'Thandev — Cybersecurity Intelligence Platform for Developers',
-    description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.',
+    title: 'Thandev — Cybersecurity Scanning Tool | Web Security Testing Platform',
+    description: 'Professional web security scanning tool used by real cybersecurity teams. Test your applications like security experts with automated vulnerability scanning.',
     url: `${SITE_URL}/`,
   },
 };
