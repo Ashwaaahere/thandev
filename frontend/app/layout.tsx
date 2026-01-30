@@ -69,8 +69,8 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: 'https://thandev.io',
     siteName: 'Thandev',
-    title: 'Thandev - Cybersecurity Intelligence Platform',
-    description: 'Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, and security news aggregation.',
+    title: 'Thandev - Cybersecurity Scanning Tool | Web Security Testing Platform',
+    description: 'Professional web security scanning tool used by real cybersecurity teams. Test your applications like security experts with automated vulnerability scanning.',
     images: [
       {
         url: 'https://thandev.io/og-image.png',
