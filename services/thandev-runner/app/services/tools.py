@@ -3876,25 +3876,32 @@ class ToolExecutor:
         sqlmap_path = None
         possible_paths = [
             "/opt/sqlmap/sqlmap.py",  # Container installation (baked into image)
+            "/usr/local/bin/sqlmap",  # Symlink from Dockerfile
             "sqlmap",  # In PATH
             str(Path.home() / ".local" / "bin" / "sqlmap"),  # User local bin
-            "/usr/local/bin/sqlmap",  # System local
             "/usr/bin/sqlmap",  # System bin
         ]
         
         for path in possible_paths:
             try:
+                # For Python scripts, use python3 explicitly if it's a .py file
+                if path.endswith(".py"):
+                    check_cmd = ["python3", path, "--version"]
+                else:
+                    check_cmd = [path, "--version"]
+                
                 check_result = await asyncio.to_thread(subprocess.run,
-                    [path, "--version"],
+                    check_cmd,
                     capture_output=True,
                     timeout=5,
                     text=True
                 )
                 if check_result.returncode == 0:
                     sqlmap_path = path
-                    logger.info(f"sqlmap binary found at {path} for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
+                    logger.info(f"[SQLMAP] sqlmap found at {path} for scan {scan_job_id}: {check_result.stdout.strip()[:50]}")
                     break
-            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
+                logger.debug(f"[SQLMAP] sqlmap check failed for {path}: {e}")
                 continue
         
         if not sqlmap_path:
