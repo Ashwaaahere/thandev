@@ -3973,7 +3973,11 @@ class ToolExecutor:
         request_timeout = 120  # Increased from 60 to 120 for slow/unstable connections
         
         # Build sqlmap command based on mode
-        cmd = [sqlmap_path, "--batch"]
+        # Use python3 explicitly if sqlmap_path is a .py file
+        if sqlmap_path.endswith(".py"):
+            cmd = ["python3", sqlmap_path, "--batch"]
+        else:
+            cmd = [sqlmap_path, "--batch"]
         
         # Mode-specific command building
         # CRITICAL: For login pages, always use --forms directly, don't use bulk mode
