@@ -3804,27 +3804,31 @@ class ToolExecutor:
         # 2. Fall back to harvesting from job directory if no inventory URLs
         harvested_requests = []
         if not parameterized_urls and scan_job_dir:
-            logger.info(f"Harvesting parameterized endpoints for SQLMap scan {scan_job_id}: {target_url}")
-            harvested_count = harvester.harvest_from_job_dir()
-            logger.info(f"SQLMap scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
-            harvested_requests = harvester.get_all_requests()
+            logger.info(f"[SQLMAP] Harvesting parameterized endpoints for SQLMap scan {scan_job_id}: {target_url}")
+            try:
+                harvested_count = harvester.harvest_from_job_dir()
+                logger.info(f"[SQLMAP] scan {scan_job_id}: Harvested {harvested_count} parameterized requests from job dir")
+                harvested_requests = harvester.get_all_requests()
+            except Exception as harvest_error:
+                logger.warning(f"[SQLMAP] Error harvesting from job dir for scan {scan_job_id}: {harvest_error}. Will continue with other methods.")
+                harvested_requests = []
         
         # 3. Crawl only if we don't have inventory URLs and are in generic scan mode
         if not parameterized_urls and mode_id in ["sqli_light", "sqli_get_basic"]:
-            logger.info(f"Crawling target for SQLMap scan {scan_job_id}...")
+            logger.info(f"[SQLMAP] Crawling target for SQLMap scan {scan_job_id}...")
             try:
                 _, crawler_param_urls = await self._crawl_target(target_url, scan_job_id, scan_level)
-                logger.info(f"SQLMap found {len(crawler_param_urls)} parameterized URLs from crawler")
+                logger.info(f"[SQLMAP] Found {len(crawler_param_urls)} parameterized URLs from crawler for scan {scan_job_id}")
                 
                 # Add crawler results to harvester
                 if crawler_param_urls:
                     crawler_count = harvester.harvest_from_crawler_output(crawler_param_urls)
-                    logger.info(f"SQLMap scan {scan_job_id}: Added {crawler_count} URLs from crawler")
+                    logger.info(f"[SQLMAP] scan {scan_job_id}: Added {crawler_count} URLs from crawler")
                     parameterized_urls = crawler_param_urls
             except Exception as crawl_error:
-                logger.warning(f"SQLMap crawler failed for {scan_job_id}: {crawl_error}. Will test target URL directly.")
+                logger.warning(f"[SQLMAP] Crawler failed for scan {scan_job_id}: {crawl_error}. Will test target URL directly or use fallback targets.")
         elif parameterized_urls:
-            logger.info(f"Skipping crawler for SQLMap scan {scan_job_id} (using inventory URLs)")
+            logger.info(f"[SQLMAP] Skipping crawler for scan {scan_job_id} (using inventory URLs)")
         
         # Get all harvested parameterized URLs
         harvested_param_urls = harvester.get_parameterized_urls()
@@ -3847,12 +3851,19 @@ class ToolExecutor:
         # If still no URLs, create fallback targets with common parameters
         if not parameterized_urls:
             logger.warning(
-                f"SQLMap scan {scan_job_id}: No parameterized URLs found from harvester or crawler! "
-                f"Creating fallback test parameters."
+                f"[SQLMAP] scan {scan_job_id}: No parameterized URLs found from inventory, harvester, or crawler! "
+                f"Creating fallback test parameters to ensure SQLMap has targets to test."
             )
-            fallback_urls = create_fallback_targets(target_url)
-            parameterized_urls.extend(fallback_urls)
-            logger.info(f"SQLMap scan {scan_job_id}: Added {len(fallback_urls)} fallback parameterized URLs")
+            try:
+                fallback_urls = create_fallback_targets(target_url)
+                parameterized_urls.extend(fallback_urls)
+                logger.info(f"[SQLMAP] scan {scan_job_id}: Added {len(fallback_urls)} fallback parameterized URLs")
+            except Exception as fallback_error:
+                logger.error(f"[SQLMAP] Failed to create fallback targets for scan {scan_job_id}: {fallback_error}")
+                # Even if fallback fails, we should still try to test the target URL directly
+                if target_url not in parameterized_urls:
+                    parameterized_urls.append(target_url)
+                    logger.info(f"[SQLMAP] scan {scan_job_id}: Added target URL {target_url} as fallback")
         
         # Get stats
         harvester_stats = harvester.get_stats()
