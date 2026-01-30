@@ -51,7 +51,7 @@ export default function DocsSearch({ onSelect, className = '' }: DocsSearchProps
           type="text"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search docs..."
+          placeholder="Q Search documentation..."
           className="w-full pl-10 pr-4 py-2 rounded-lg text-sm"
           style={{
             background: 'var(--surface)',

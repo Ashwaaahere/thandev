@@ -23,16 +23,36 @@ export const mdxComponents = {
       {children}
     </h1>
   ),
-  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h2 className="text-2xl font-bold mt-6 mb-3" style={{ color: 'var(--fg)' }} {...props}>
-      {children}
-    </h2>
-  ),
-  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => (
-    <h3 className="text-xl font-semibold mt-4 mb-2" style={{ color: 'var(--fg)' }} {...props}>
-      {children}
-    </h3>
-  ),
+  h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const id = typeof children === 'string' 
+      ? children.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+      : undefined;
+    return (
+      <h2 
+        id={id}
+        className="text-2xl font-bold mt-6 mb-3" 
+        style={{ color: 'var(--fg)' }} 
+        {...props}
+      >
+        {children}
+      </h2>
+    );
+  },
+  h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
+    const id = typeof children === 'string' 
+      ? children.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+      : undefined;
+    return (
+      <h3 
+        id={id}
+        className="text-xl font-semibold mt-4 mb-2" 
+        style={{ color: 'var(--fg)' }} 
+        {...props}
+      >
+        {children}
+      </h3>
+    );
+  },
   p: ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
     <p className="mb-4 leading-relaxed" style={{ color: 'var(--fg)' }} {...props}>
       {children}
