@@ -2499,15 +2499,17 @@ class ToolExecutor:
                     },
                 }
             
-            # Mark as successful if we have findings or if exit code is 0
-            # Dalfox may return non-zero even with findings, so check output
+            # Mark as successful if execution completed without errors
+            # Dalfox may return non-zero exit codes even when it completes successfully (just no XSS found)
+            # Only mark as failed if we detected an actual error (is_error=True)
+            # If we got here, execution completed successfully, even if no findings were found
             return {
                 "tool_name": "dalfox",
                 "output": normalized_output,
                 "exit_code": exit_code,
                 "command": " ".join(cmd),
                 "timed_out": False,
-                "success": has_findings or exit_code == 0,  # Success if we have findings or exit code is 0
+                "success": True,  # Always mark as success if execution completed (even if no findings)
                 "execution_time": exec_duration,  # Accurate subprocess-only execution time
                 "targets_count": len(all_urls),  # Number of URLs scanned
                 "meta": {
@@ -2525,6 +2527,7 @@ class ToolExecutor:
                 "error": f"Tool execution timed out after {timeout} seconds",
                 "command": " ".join(cmd),
                 "timed_out": True,
+                "success": False,  # Timeout is a failure
             }
         except Exception as e:
             logger.error(f"dalfox execution error for scan {scan_job_id}: {e}", exc_info=True)
@@ -2535,6 +2538,7 @@ class ToolExecutor:
                 "error": f"dalfox execution failed: {str(e)}",
                 "command": " ".join(cmd),
                 "timed_out": False,
+                "success": False,  # Exception is a failure
             }
     
     # TODO: Vulnerability classes covered by sqlmap:
@@ -4295,6 +4299,7 @@ class ToolExecutor:
                     "timed_out": True,
                     "output_dir": str(sqlmap_output_dir),
                     "execution_time": exec_duration,  # Actual time before timeout
+                    "success": False,  # Timeout without results is a failure
                 }
         except Exception as e:
             logger.error(f"sqlmap execution error for scan {scan_job_id}: {e}", exc_info=True)
@@ -4308,6 +4313,7 @@ class ToolExecutor:
                 "command": " ".join(cmd),
                 "timed_out": False,
                 "output_dir": str(sqlmap_output_dir),
+                "success": False,  # Exception is a failure
             }
     
     async def _run_sslscan(self, target_url: str, scan_level: str, **kwargs) -> Dict:
