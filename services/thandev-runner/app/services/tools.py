@@ -14,6 +14,9 @@ from datetime import datetime
 import tempfile
 from app.utils.crawler import SmartCrawler
 
+# Initialize logger first (needed for BASE_DIR detection warning)
+logger = logging.getLogger(__name__)
+
 # Ensure PATH includes common tool locations when module loads
 # This helps subprocess.find_executable() and await asyncio.to_thread(subprocess.run,) find tools
 _home_dir = os.path.expanduser("~")
@@ -42,10 +45,6 @@ else:
     logger.warning(f"Could not automatically detect BASE_DIR with 'services' folder. Defaulting to: {_BASE_DIR}")
 
 BASE_DIR = _BASE_DIR
-
-# Initialize logger after PATH setup
-if 'logger' not in locals():
-    logger = logging.getLogger(__name__)
 
 # Nuclei profile to tags mapping
 # Maps profile names from tool_matrix to Nuclei -tags CLI argument
@@ -3775,7 +3774,11 @@ class ToolExecutor:
         logger.info(f"[SQLMAP] Starting for scan {scan_job_id}, scan_level={scan_level}")
         if scan_level in ["pro", "advanced"]:
             logger.info(f"[SQLMAP] Waiting for inventory (Pro/Advanced scan) for {scan_job_id}")
-            inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+            try:
+                inventory = await get_scan_inventory_with_retry(scan_job_id, max_retries=20, retry_delay=3.0)
+            except Exception as inv_error:
+                logger.warning(f"[SQLMAP] Error fetching inventory for scan {scan_job_id}: {inv_error}. Will proceed without inventory.")
+                inventory = None
         
         if inventory and isinstance(inventory, dict):
             discovery = inventory.get("discovery", {})
@@ -3794,9 +3797,9 @@ class ToolExecutor:
                     harvester.add_url(url)
                 parameterized_urls = limited_urls
             else:
-                logger.info(f"Asset inventory found but contains no parameterized URLs for scan {scan_job_id}")
+                logger.warning(f"[SQLMAP] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}. Will fall back to other methods.")
         else:
-            logger.info(f"No asset inventory found for scan {scan_job_id}")
+            logger.warning(f"[SQLMAP] No asset inventory found for scan {scan_job_id}. Will proceed with fallback methods (harvesting, crawling, or fallback targets).")
         
         # 2. Fall back to harvesting from job directory if no inventory URLs
         harvested_requests = []
