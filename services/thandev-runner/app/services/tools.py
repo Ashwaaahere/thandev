@@ -4223,6 +4223,7 @@ class ToolExecutor:
                     "output_dir": str(sqlmap_output_dir),
                     "execution_time": exec_duration,  # Accurate subprocess-only execution time
                     "targets_count": len(parameterized_urls),
+                    "success": False,  # Error detected is a failure
                     "meta": {
                         "harvested_requests": harvester_stats.get("total_requests", 0),
                         "total_parameters": harvester_stats.get("total_parameters", 0),
