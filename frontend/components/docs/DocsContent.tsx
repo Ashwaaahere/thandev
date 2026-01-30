@@ -87,35 +87,6 @@ export default function DocsContent({ source, title, description, href, lastUpda
             <div className="text-xs" style={{ color: 'var(--muted)' }}>
               Last updated: {lastUpdated}
             </div>
-            <div className="flex items-center gap-4">
-              <a
-                href="https://twitter.com/thandev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs hover:opacity-80 transition-opacity"
-                style={{ color: 'var(--muted)' }}
-              >
-                Twitter
-              </a>
-              <a
-                href="https://github.com/thandev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs hover:opacity-80 transition-opacity"
-                style={{ color: 'var(--muted)' }}
-              >
-                GitHub
-              </a>
-              <a
-                href="https://discord.gg/thandev"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs hover:opacity-80 transition-opacity"
-                style={{ color: 'var(--muted)' }}
-              >
-                Discord
-              </a>
-            </div>
           </div>
         )}
       </div>

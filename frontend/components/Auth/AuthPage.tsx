@@ -9,6 +9,7 @@ export default function AuthPage() {
   const [error, setError] = useState<string | null>(null);
   const [providers, setProviders] = useState<any>(null);
   const [hasGitHub, setHasGitHub] = useState(false);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
@@ -31,6 +32,11 @@ export default function AuthPage() {
   }, []);
 
   const handleGitHubSignIn = async () => {
+    if (!acceptedTerms) {
+      setError('Please accept the Terms and Conditions to continue.');
+      return;
+    }
+    
     if (!hasGitHub) {
       setError('GitHub authentication is not available. Please configure GitHub OAuth credentials.');
       return;
@@ -140,11 +146,54 @@ export default function AuthPage() {
                 </div>
               )}
 
+              {/* Terms and Conditions Checkbox */}
+              <div className="mb-6">
+                <label className="flex items-start gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={acceptedTerms}
+                    onChange={(e) => {
+                      setAcceptedTerms(e.target.checked);
+                      setError(null); // Clear error when checkbox is toggled
+                    }}
+                    className="mt-1 w-5 h-5 rounded border-2 cursor-pointer transition-colors"
+                    style={{
+                      accentColor: 'var(--brand)',
+                      borderColor: acceptedTerms ? 'var(--brand)' : 'var(--border)',
+                    }}
+                  />
+                  <span className="text-sm leading-relaxed" style={{ color: 'var(--muted)' }}>
+                    I agree to the{' '}
+                    <a
+                      href="/terms"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:opacity-80 transition-opacity font-medium"
+                      style={{ color: 'var(--brand)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Terms and Conditions
+                    </a>
+                    {' '}and{' '}
+                    <a
+                      href="/privacy"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline hover:opacity-80 transition-opacity font-medium"
+                      style={{ color: 'var(--brand)' }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      Privacy Policy
+                    </a>
+                  </span>
+                </label>
+              </div>
+
               {/* GitHub Authentication */}
               <div className="mb-8">
                 <button
                   onClick={handleGitHubSignIn}
-                  disabled={isLoading || !hasGitHub || providers === null}
+                  disabled={isLoading || !hasGitHub || providers === null || !acceptedTerms}
                   className="w-full flex items-center justify-center gap-4 py-5 px-8 rounded-xl font-semibold text-white transition-all duration-200 hover:shadow-lg hover:scale-[1.02] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100"
                   style={{ 
                     background: 'linear-gradient(135deg, #24292e 0%, #1a1e22 100%)',
