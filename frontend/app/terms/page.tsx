@@ -262,50 +262,7 @@ export default function TermsPage() {
                   </h2>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
                     The Thandev platform, including its software, user interfaces, branding, logos, and documentation, is the exclusive 
-                    property of Thandev and is protected by copyright, trademark, and other intellectual property laws. You may not use 
-                    our trademarks, logos, or branding without our prior written permission.
-                  </p>
-                </section>
-
-                {/* Limitation of Liability */}
-                <section className="mb-8">
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                    10. Limitation of Liability
-                  </h2>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                    TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THANDEV SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, 
-                    CONSEQUENTIAL, OR PUNITIVE DAMAGES.
-                  </p>
-                </section>
-
-                {/* Indemnification */}
-                <section className="mb-8">
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                    11. Indemnification
-                  </h2>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                    You agree to indemnify, defend, and hold harmless Thandev and its affiliates, officers, directors, employees, and 
-                    agents from and against any and all claims, damages, obligations, losses, liabilities, costs, and expenses 
-                    (including reasonable attorneys' fees) arising out of or relating to: (a) your use of the Service; (b) your violation 
-                    of these Terms; (c) your violation of any third-party rights, including unauthorized scanning or access; (d) any 
-                    content you submit to the Service; or (e) your violation of any applicable laws or regulations.
-                  </p>
-                </section>
-
-                {/* Governing Law */}
-                <section className="mb-8">
-                  <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
-                    12. Governing Law and Dispute Resolution
-                  </h2>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-                    {/* TODO: Founder to specify jurisdiction (e.g., "These Terms shall be governed by and construed in accordance with the laws of [State/Country], without regard to its conflict of law provisions.") */}
-                    These Terms shall be governed by and construed in accordance with applicable laws. Any disputes arising out of or 
-                    relating to these Terms or the Service shall be resolved through binding arbitration or in the courts of 
-                    {/* TODO: Specify venue (e.g., "[City, State/Country]") */}the appropriate jurisdiction.
-                  </p>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
-                    If any provision of these Terms is found to be unenforceable or invalid, that provision shall be limited or 
-                    eliminated to the minimum extent necessary, and the remaining provisions shall remain in full force and effect.
+                    property of Thandev and is protected by copyright, trademark, and other intellectual property laws.
                   </p>
                 </section>
 
