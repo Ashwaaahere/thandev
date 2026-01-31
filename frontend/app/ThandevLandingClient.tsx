@@ -47,10 +47,11 @@ function useLiveStats(): LiveStats {
     const statsUrl = `${API}/api/stats`;
 
     const fetchStats = async () => {
+      let timeoutId: NodeJS.Timeout | null = null;
       try {
         // Add timeout and abort controller for better error handling
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
         
         const response = await fetch(statsUrl, {
           signal: controller.signal,
@@ -60,7 +61,7 @@ function useLiveStats(): LiveStats {
           mode: 'cors',
         });
         
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         
         if (!response.ok) {
           console.warn(`[Stats] API returned ${response.status}: ${response.statusText}`, {
@@ -98,7 +99,7 @@ function useLiveStats(): LiveStats {
           console.warn('[Stats] Invalid response format:', statsRes);
         }
       } catch (err: any) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (err.name !== 'AbortError') {
           console.error('[Stats] Fetch failed:', {
             error: err.message,
