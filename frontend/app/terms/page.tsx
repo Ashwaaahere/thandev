@@ -273,10 +273,9 @@ export default function TermsPage() {
                     10. Limitation of Liability
                   </h2>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-                    TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THANDEV AND ITS AFFILIATES, OFFICERS, DIRECTORS, EMPLOYEES, AND 
-                    AGENTS SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT 
-                    NOT LIMITED TO LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, ARISING OUT OF OR RELATING TO YOUR 
-                    USE OF OR INABILITY TO USE THE SERVICE.
+                    TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THANDEV SHALL NOT BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, 
+                    CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER 
+                    INTANGIBLE LOSSES, ARISING OUT OF OR RELATING TO YOUR USE OF OR INABILITY TO USE THE SERVICE.
                   </p>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
                     Some jurisdictions do not allow the exclusion or limitation of certain damages, so some of the above limitations 
