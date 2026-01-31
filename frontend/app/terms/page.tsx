@@ -278,10 +278,6 @@ export default function TermsPage() {
                     NOT LIMITED TO LOSS OF PROFITS, DATA, USE, GOODWILL, OR OTHER INTANGIBLE LOSSES, ARISING OUT OF OR RELATING TO YOUR 
                     USE OF OR INABILITY TO USE THE SERVICE.
                   </p>
-                  <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
-                    IN NO EVENT SHALL THANDEV'S TOTAL LIABILITY TO YOU FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THE SERVICE EXCEED 
-                    $100 USD.
-                  </p>
                   <p className="text-gray-700 dark:text-gray-300 leading-relaxed">
                     Some jurisdictions do not allow the exclusion or limitation of certain damages, so some of the above limitations 
                     may not apply to you.
