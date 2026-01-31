@@ -30,37 +30,49 @@ function useLiveStats(): LiveStats {
   });
 
   useEffect(() => {
-    const API =
-      process.env.NEXT_PUBLIC_API_BASE?.replace(/\/$/, "") ??
-      "https://thandev-backend.fly.dev";
+    // Try multiple backend URLs in order of preference
+    const getBackendUrl = () => {
+      if (process.env.NEXT_PUBLIC_API_BASE) {
+        return process.env.NEXT_PUBLIC_API_BASE.replace(/\/$/, "");
+      }
+      // Try Azure Container Apps URL first (production)
+      if (typeof window !== 'undefined' && window.location.hostname === 'thandev.io') {
+        return "https://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io";
+      }
+      // Fallback to Fly.dev
+      return "https://thandev-backend.fly.dev";
+    };
+
+    const API = getBackendUrl();
+    const statsUrl = `${API}/api/stats`;
 
     const fetchStats = async () => {
       try {
         // Add timeout and abort controller for better error handling
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
         
-        const statsRes = await fetch(`${API}/api/stats`, {
+        const response = await fetch(statsUrl, {
           signal: controller.signal,
           headers: {
             'Accept': 'application/json',
           },
-        }).then((r) => {
-          clearTimeout(timeoutId);
-          if (!r.ok) {
-            console.warn(`Stats API returned ${r.status}: ${r.statusText}`);
-            return null;
-          }
-          return r.json();
-        }).catch((err) => {
-          clearTimeout(timeoutId);
-          if (err.name !== 'AbortError') {
-            console.warn('Stats API fetch failed:', err.message);
-          }
-          return null;
+          mode: 'cors',
         });
-
-        if (statsRes) {
+        
+        clearTimeout(timeoutId);
+        
+        if (!response.ok) {
+          console.warn(`[Stats] API returned ${response.status}: ${response.statusText}`, {
+            url: statsUrl,
+            status: response.status,
+          });
+          return null;
+        }
+        
+        const statsRes = await response.json();
+        
+        if (statsRes && typeof statsRes === 'object') {
           setStats({
             totalScans:
               typeof statsRes.total_scans === "number"
@@ -81,9 +93,19 @@ function useLiveStats(): LiveStats {
                   ? 0
                   : null,
           });
+          console.log('[Stats] Successfully fetched stats:', statsRes);
+        } else {
+          console.warn('[Stats] Invalid response format:', statsRes);
         }
-      } catch (error) {
-        console.error("Error fetching platform stats:", error);
+      } catch (err: any) {
+        clearTimeout(timeoutId);
+        if (err.name !== 'AbortError') {
+          console.error('[Stats] Fetch failed:', {
+            error: err.message,
+            url: statsUrl,
+            name: err.name,
+          });
+        }
       }
     };
 
