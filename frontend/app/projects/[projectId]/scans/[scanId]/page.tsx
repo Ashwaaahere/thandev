@@ -2720,10 +2720,10 @@ export default function ScanReportPage() {
                       {inventory.discovery?.merged?.param_urls && inventory.discovery.merged.param_urls.length > 0 && (
                         <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
                           <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>
-                            Parameterized URLs (for XSS/SQLi testing) - showing first 15
+                            Parameterized URLs (for XSS/SQLi testing) - {inventory.discovery.merged.param_urls.length} total
                           </h3>
-                          <div className="space-y-2 max-h-64 overflow-y-auto">
-                            {inventory.discovery.merged.param_urls.slice(0, 15).map((url: string, idx: number) => (
+                          <div className="space-y-2 max-h-96 overflow-y-auto">
+                            {inventory.discovery.merged.param_urls.map((url: string, idx: number) => (
                               <div
                                 key={idx}
                                 className="text-sm font-mono p-2 rounded break-all"
@@ -2742,10 +2742,10 @@ export default function ScanReportPage() {
                         return urls.length > 0 ? (
                           <div className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
                             <h3 className="text-md font-semibold mb-3" style={{ color: 'var(--fg)' }}>
-                              All Discovered URLs (showing first 30)
+                              All Discovered URLs - {urls.length} total
                             </h3>
                             <div className="space-y-2 max-h-96 overflow-y-auto">
-                              {urls.slice(0, 30).map((url: string, idx: number) => (
+                              {urls.map((url: string, idx: number) => (
                                 <div
                                   key={idx}
                                   className="text-sm font-mono p-2 rounded break-all"
@@ -2754,11 +2754,6 @@ export default function ScanReportPage() {
                                   {url}
                                 </div>
                               ))}
-                              {urls.length > 30 && (
-                                <div className="text-center text-sm py-2" style={{ color: 'var(--muted)' }}>
-                                  ... and {urls.length - 30} more URLs
-                                </div>
-                              )}
                             </div>
                           </div>
                         ) : null;
