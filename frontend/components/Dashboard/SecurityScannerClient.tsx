@@ -863,6 +863,12 @@ export default function SecurityScannerClient() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    // Prevent form submission in "new" mode - only "Add to project" button should work
+    if (selectedMode === 'new') {
+      return;
+    }
+    
     if (!session) {
       setError('Session required. Please log in again.');
       return;
@@ -1386,6 +1392,12 @@ export default function SecurityScannerClient() {
                         setTargetUrl(e.target.value);
                         setVerificationData(null);
                         setError(null);
+                      }}
+                      onKeyDown={(e) => {
+                        // Prevent form submission on Enter key in new target mode
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                        }
                       }}
                       placeholder="https://example.com"
                       required
