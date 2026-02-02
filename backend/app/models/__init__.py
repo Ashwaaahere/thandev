@@ -5,7 +5,7 @@ from app.models.tenant import Tenant
 from app.models.project import Project
 from app.models.project_url import ProjectUrl
 from app.models.scan import ScanJob
-from app.models.finding import Finding, ToolResult
+from app.models.finding import Finding, FindingInstance, ToolResult
 from app.models.domain_verification import DomainVerification, DomainVerificationStatus
 from app.models.entitlement import Entitlement
 from app.models.performance_scan import PerformanceScan
@@ -23,6 +23,7 @@ __all__ = [
     "ProjectUrl",
     "ScanJob",
     "Finding",
+    "FindingInstance",
     "ToolResult",
     "DomainVerification",
     "DomainVerificationStatus",

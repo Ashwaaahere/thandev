@@ -26,6 +26,15 @@ import { useScanEvents } from '@/hooks/useScanEvents';
 // Types
 type FindingStatus = "open" | "acknowledged" | "resolved" | "suppressed";
 
+type FindingInstance = {
+  url?: string | null;
+  path?: string | null;
+  http_method?: string | null;
+  parameter?: string | null;
+  evidence_snippet?: string | null;
+  is_static_asset?: boolean | null;
+};
+
 type Finding = {
   id?: string;
   title: string;
@@ -55,6 +64,11 @@ type Finding = {
   default_remediation_steps?: string | null;
   // Impact field
   impact_summary?: string | null;
+  // Grouping fields (for deduplicated findings)
+  affected_count?: number | null;
+  instances_sample?: FindingInstance[] | null;
+  mostly_static?: boolean | null;
+  rule_family?: string | null;
 };
 
 type TopRisk = {
@@ -186,6 +200,7 @@ export default function ScanReportPage() {
   const [findingsTotal, setFindingsTotal] = useState(0);
   const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
   const [selectedToolFilter, setSelectedToolFilter] = useState<string>('all');  // Filter findings by tool
+  const [showInfoFindings, setShowInfoFindings] = useState(false);  // Toggle for INFO findings
   const [expandedToolRows, setExpandedToolRows] = useState<Set<string>>(new Set());  // Track expanded tool rows
   const [availableTools, setAvailableTools] = useState<string[]>([]);  // All tools that have findings
   const [findingsPage, setFindingsPage] = useState(0);  // Current page (0-indexed)
@@ -1496,6 +1511,33 @@ export default function ScanReportPage() {
                             ))}
                           </select>
                         )}
+                        {(() => {
+                          const infoCount = findings.filter(f => f.severity?.toLowerCase() === 'info').length;
+                          if (infoCount > 0) {
+                            return (
+                              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={showInfoFindings}
+                                  onChange={(e) => {
+                                    setShowInfoFindings(e.target.checked);
+                                    setFindingsPage(0);
+                                  }}
+                                  className="w-4 h-4 rounded border"
+                                  style={{
+                                    background: showInfoFindings ? 'var(--brand)' : 'var(--surface)',
+                                    borderColor: 'var(--border)',
+                                    accentColor: 'var(--brand)'
+                                  }}
+                                />
+                                <span style={{ color: 'var(--fg)' }}>
+                                  Show informational ({infoCount})
+                                </span>
+                              </label>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     </div>
 
@@ -1563,7 +1605,7 @@ export default function ScanReportPage() {
                       </div>
                     ) : (
                       <div className="space-y-4">
-                        {findings.map((finding, idx) => {
+                        {findings.filter(f => showInfoFindings || f.severity?.toLowerCase() !== 'info').map((finding, idx) => {
                           // Generate stable key from finding properties
                           const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
                           return (
@@ -1604,11 +1646,71 @@ export default function ScanReportPage() {
                                     Where it was found
                                   </div>
                                   {(() => {
+                                    // Check if this is a grouped finding
+                                    const affectedCount = finding.affected_count || 1;
+                                    const instances = finding.instances_sample || [];
+                                    const mostlyStatic = finding.mostly_static || false;
+                                    
                                     // Tolerant logic: use defaults when missing
                                     const method = finding.http_method || "GET";
                                     const url = finding.url || finding.path || null;
                                     const param = finding.parameter;
 
+                                    // Show grouped finding if affected_count > 1
+                                    if (affectedCount > 1) {
+                                      return (
+                                        <>
+                                          <div className="text-xs font-medium mb-2" style={{ color: 'var(--fg)' }}>
+                                            This issue affects <strong>{affectedCount}</strong> URL{affectedCount !== 1 ? 's' : ''}
+                                            {mostlyStatic && (
+                                              <span className="ml-2 px-2 py-0.5 text-[10px] rounded border" style={{ background: 'var(--surface)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                                Mostly static assets
+                                              </span>
+                                            )}
+                                          </div>
+                                          {instances.length > 0 && (
+                                            <details className="mt-2">
+                                              <summary className="text-xs cursor-pointer font-medium mb-2" style={{ color: 'var(--brand)' }}>
+                                                View affected URLs ({instances.length} shown{affectedCount > instances.length ? ` of ${affectedCount}` : ''})
+                                              </summary>
+                                              <div className="mt-2 space-y-1 max-h-64 overflow-y-auto">
+                                                {instances.map((inst, instIdx) => (
+                                                  <div key={instIdx} className="text-xs font-mono p-2 rounded border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                                                    <div className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
+                                                      <span className="font-semibold">{inst.http_method || method}</span>{' '}
+                                                      <span>{inst.url || inst.path || 'N/A'}</span>
+                                                    </div>
+                                                    {inst.parameter && (
+                                                      <div className="text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                                                        Parameter: <span className="font-mono">{inst.parameter}</span>
+                                                      </div>
+                                                    )}
+                                                    {inst.is_static_asset && (
+                                                      <span className="text-[10px] px-1 py-0.5 rounded border ml-1" style={{ background: 'var(--surface-2)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                                        Static
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                ))}
+                                                {affectedCount > instances.length && (
+                                                  <p className="text-xs italic text-center pt-2" style={{ color: 'var(--muted)' }}>
+                                                    ... and {affectedCount - instances.length} more URL{affectedCount - instances.length !== 1 ? 's' : ''}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </details>
+                                          )}
+                                          {instances.length === 0 && url && (
+                                            <div className="text-xs font-mono break-all overflow-wrap-anywhere" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+                                              <span className="font-semibold">{method}</span>{' '}
+                                              <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
+                                            </div>
+                                          )}
+                                        </>
+                                      );
+                                    }
+
+                                    // Single finding (legacy behavior)
                                     if (!url) {
                                       return (
                                         <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
@@ -2564,7 +2666,7 @@ export default function ScanReportPage() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {findings.map((finding, idx) => {
+                      {findings.filter(f => showInfoFindings || f.severity?.toLowerCase() !== 'info').map((finding, idx) => {
                         const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
                         return (
                           <div key={findingKey} className="border rounded-lg p-4" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>

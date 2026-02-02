@@ -32,6 +32,14 @@ if [ $# -gt 0 ]; then
   fi
 fi
 
+# Run database migrations before starting the server
+echo "Running database migrations..."
+cd /app
+python -m alembic upgrade head || {
+  echo "Warning: Migrations failed, but continuing startup..."
+}
+echo "Migrations completed!"
+
 # ----------------------------
 # Runtime mode
 # ----------------------------

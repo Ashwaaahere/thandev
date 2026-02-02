@@ -81,12 +81,17 @@ class Finding(Base):
     needs_verification = Column(Boolean, nullable=False, default=False, server_default="false")  # Flag: true if confidence is low and needs manual verification
     
     # Lifecycle fields
-    dedup_key = Column(String(64), nullable=True, index=True)  # Deterministic hash for deduplication
+    dedup_key = Column(String(64), nullable=True, index=True)  # Deterministic hash for deduplication (legacy)
+    finding_key = Column(String(64), nullable=True, index=True)  # New normalized finding key for deduplication
     first_seen_at = Column(DateTime(timezone=True), nullable=True)  # When first detected
     last_seen_at = Column(DateTime(timezone=True), nullable=True)  # When last detected
     last_seen_in_scan_id = Column(String(36), ForeignKey("scan_jobs.id"), nullable=True)  # Most recent scan where seen
     found_count = Column(Integer, nullable=False, default=1, server_default="1")  # Number of scans where appeared
     not_seen_in_latest_scan = Column(Boolean, nullable=False, default=False, server_default="false")  # Flag: true if not seen in latest scan
+    
+    # Grouping fields (for deduplicated findings)
+    affected_count = Column(Integer, nullable=False, default=1, server_default="1")  # Number of instances/URLs affected
+    rule_family = Column(String(50), nullable=True)  # Rule family (cors, cache, csp, etc.)
     
     # Remediation (enhanced)
     recommendation = Column(Text, nullable=True)  # Kept for backwards compatibility
@@ -117,6 +122,30 @@ class Finding(Base):
     scan_job = relationship("ScanJob", back_populates="findings", foreign_keys=[scan_job_id])
     project = relationship("Project", foreign_keys=[project_id])
     last_seen_in_scan = relationship("ScanJob", foreign_keys=[last_seen_in_scan_id])
+    instances = relationship("FindingInstance", back_populates="finding", cascade="all, delete-orphan")
+
+
+class FindingInstance(Base):
+    """FindingInstance model for storing individual instances of deduplicated findings"""
+    
+    __tablename__ = "finding_instances"
+    
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    finding_id = Column(String(36), ForeignKey("findings.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Instance-specific location data
+    url = Column(String(2048), nullable=True)
+    path = Column(String(2048), nullable=True)
+    http_method = Column(String(10), nullable=True)
+    parameter = Column(String(255), nullable=True)
+    evidence_snippet = Column(Text, nullable=True)  # Truncated evidence for this instance
+    is_static_asset = Column(Boolean, nullable=False, default=False, server_default="false")
+    
+    # Timestamps
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    
+    # Relationships
+    finding = relationship("Finding", back_populates="instances")
 
 
 class ToolExecutionStatus(str, enum.Enum):

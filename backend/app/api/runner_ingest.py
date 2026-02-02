@@ -22,7 +22,7 @@ from app.models.scan import ScanJob, ScanStatus
 from app.models.finding import ToolResult, ToolExecutionStatus
 from app.schemas.scan import ToolResultCreate, ToolResultResponse
 from app.schemas.scan_event import ScanEventCreate, ScanEventBatchCreate, ScanEventResponse, ScanToolStateResponse, ScanInventoryCreate, ScanInventoryResponse
-from app.services.findings_ingestor import create_or_update_finding
+from app.services.findings_ingestor import create_or_update_finding, create_or_update_finding_with_normalizer
 from app.core.severity import normalize_severity, zap_to_severity, nuclei_to_severity, retire_to_severity, sslscan_to_severity, portfinding_to_severity, httpx_wappalyzer_to_severity, header_finding_to_severity
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
 from app.models.finding import Severity
@@ -713,15 +713,26 @@ async def create_tool_result(
                     assert severity is not None, "ZAP severity must be computed from riskcode"
                     assert severity != Severity.INFO or riskcode == 0, f"ZAP finding with riskcode={riskcode} should not be INFO"
                 
-                # Create or update finding
-                finding = create_or_update_finding(
-                    db=db,
-                    scan_job_id=scan_id,
-                    project_id=project_id,
-                    finding_data=normalized_finding,
-                    tool_result_id=tool_result_id,
-                )
-                findings_created.append(finding)
+                # Use normalizer for ZAP findings to enable deduplication and grouping
+                if tool_name.lower() == "zap":
+                    finding, instance = create_or_update_finding_with_normalizer(
+                        db=db,
+                        scan_job_id=scan_id,
+                        project_id=project_id,
+                        finding_data=normalized_finding,
+                        tool_result_id=tool_result_id,
+                    )
+                    findings_created.append(finding)
+                else:
+                    # Use legacy function for non-ZAP tools (backward compatibility)
+                    finding = create_or_update_finding(
+                        db=db,
+                        scan_job_id=scan_id,
+                        project_id=project_id,
+                        finding_data=normalized_finding,
+                        tool_result_id=tool_result_id,
+                    )
+                    findings_created.append(finding)
                 logger.debug(
                     f"[INGEST-DEBUG] Successfully ingested finding {idx+1}: finding_id={finding.id if finding else 'None'}"
                 )

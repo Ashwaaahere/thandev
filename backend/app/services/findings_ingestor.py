@@ -7,12 +7,12 @@ import json
 import xml.etree.ElementTree as ET
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload
 from urllib.parse import urlparse
 
-from app.models.finding import Finding, Severity, FindingStatus
+from app.models.finding import Finding, FindingInstance, Severity, FindingStatus
 from app.models.scan import ScanJob
 from app.utils.finding_utils import (
     generate_dedup_key,
@@ -23,6 +23,10 @@ from app.utils.finding_utils import (
 )
 from app.services.tool_name_utils import canonical_tool_name
 from app.core.severity import normalize_severity, nuclei_to_severity
+from app.utils.finding_normalizer import (
+    normalize_and_group_finding,
+    is_static_asset_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -346,6 +350,150 @@ def create_or_update_finding(
         
         db.add(finding)
         return finding
+
+
+def create_or_update_finding_with_normalizer(
+    db: Session,
+    scan_job_id: str,
+    project_id: str,
+    finding_data: Dict[str, Any],
+    tool_result_id: str | None = None,
+) -> Tuple[Finding, FindingInstance]:
+    """
+    Create or update a finding using the new normalizer for deduplication and grouping.
+    
+    This function:
+    - Normalizes the finding using finding_normalizer
+    - Groups identical findings by finding_key
+    - Creates/updates canonical Finding and appends FindingInstance
+    - Handles severity normalization (de-noising)
+    
+    Args:
+        db: Database session
+        scan_job_id: Current scan job ID
+        project_id: Project ID
+        finding_data: Dict with finding fields
+        tool_result_id: Optional tool_result_id
+        
+    Returns:
+        Tuple of (Finding, FindingInstance)
+    """
+    now = datetime.now(timezone.utc)
+    
+    # Normalize and group finding
+    canonical_data, instance_data = normalize_and_group_finding(
+        finding_data,
+        scan_job_id,
+        project_id,
+    )
+    
+    finding_key = canonical_data["finding_key"]
+    canonical_tool = canonical_tool_name(canonical_data["tool"])
+    
+    # Check for existing finding by finding_key (within this scan)
+    existing_finding = db.query(Finding).filter(
+        Finding.scan_job_id == scan_job_id,
+        Finding.finding_key == finding_key
+    ).first()
+    
+    if existing_finding:
+        # Update existing finding
+        existing_finding.last_seen_at = now
+        existing_finding.affected_count += 1
+        
+        # Update severity if new one is higher
+        new_severity = canonical_data["severity"]
+        if isinstance(new_severity, str):
+            new_severity = normalize_severity(new_severity)
+        
+        if new_severity.value != "info" and (
+            existing_finding.severity == Severity.INFO or
+            (existing_finding.severity == Severity.LOW and new_severity in [Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL]) or
+            (existing_finding.severity == Severity.MEDIUM and new_severity in [Severity.HIGH, Severity.CRITICAL]) or
+            (existing_finding.severity == Severity.HIGH and new_severity == Severity.CRITICAL)
+        ):
+            existing_finding.severity = new_severity
+        
+        # Update rule_family if not set
+        if not existing_finding.rule_family and canonical_data.get("rule_family"):
+            existing_finding.rule_family = canonical_data["rule_family"]
+        
+        # Create new instance
+        instance = FindingInstance(
+            finding_id=existing_finding.id,
+            url=instance_data.get("url"),
+            path=instance_data.get("path"),
+            http_method=instance_data.get("http_method"),
+            parameter=instance_data.get("parameter"),
+            evidence_snippet=instance_data.get("evidence_snippet"),
+            is_static_asset=instance_data.get("is_static_asset", False),
+        )
+        db.add(instance)
+        
+        return existing_finding, instance
+    else:
+        # Create new finding
+        # Get remediation hint
+        vuln_type = canonical_data.get("vuln_type")
+        remediation = {}
+        if vuln_type:
+            remediation = get_remediation_hint(vuln_type)
+        
+        finding = _create_finding_with_canonical_name(
+            tool_name=canonical_tool,
+            tool_result_id=tool_result_id,
+            scan_job_id=scan_job_id,
+            project_id=project_id,
+            title=canonical_data.get("title", "Security Finding")[:500],
+            description=canonical_data.get("description"),
+            severity=canonical_data["severity"],
+            needs_verification=finding_data.get("needs_verification", False),
+            wasc_id=canonical_data.get("wasc_id"),
+            plugin_id=canonical_data.get("plugin_id"),
+            alert_ref=canonical_data.get("alert_ref"),
+            zap_confidence=canonical_data.get("zap_confidence"),
+            zap_riskcode=canonical_data.get("zap_riskcode"),
+            cve_id=(canonical_data.get("cve_id")[:50] if canonical_data.get("cve_id") else None),
+            cwe_id=(canonical_data.get("cwe_id")[:50] if canonical_data.get("cwe_id") else None),
+            cvss_score=canonical_data.get("cvss_score"),
+            url=None,  # No specific URL for canonical finding
+            path=None,  # No specific path for canonical finding
+            template_id=canonical_data.get("template_id"),
+            rule_id=canonical_data.get("rule_id"),
+            vuln_type=vuln_type,
+            category=(canonical_data.get("categories", [])[0] if canonical_data.get("categories") else None),
+            evidence=canonical_data.get("evidence"),
+            raw_data=canonical_data.get("raw_data"),
+            finding_key=finding_key,
+            dedup_key=finding_key,  # Also set dedup_key for backward compatibility
+            first_seen_at=now,
+            last_seen_at=now,
+            last_seen_in_scan_id=scan_job_id,
+            found_count=1,
+            not_seen_in_latest_scan=False,
+            affected_count=1,
+            rule_family=canonical_data.get("rule_family"),
+            remediation_summary=canonical_data.get("remediation_summary") or remediation.get("summary"),
+            remediation_steps=canonical_data.get("remediation_steps") or ("\n".join(remediation["steps"]) if remediation.get("steps") else None),
+            status=FindingStatus.OPEN,
+        )
+        
+        db.add(finding)
+        db.flush()  # Flush to get finding.id
+        
+        # Create first instance
+        instance = FindingInstance(
+            finding_id=finding.id,
+            url=instance_data.get("url"),
+            path=instance_data.get("path"),
+            http_method=instance_data.get("http_method"),
+            parameter=instance_data.get("parameter"),
+            evidence_snippet=instance_data.get("evidence_snippet"),
+            is_static_asset=instance_data.get("is_static_asset", False),
+        )
+        db.add(instance)
+        
+        return finding, instance
 
 
 def categorize_nuclei_finding(template_tags: list[str]) -> list[str]:

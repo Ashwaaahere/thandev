@@ -2711,8 +2711,9 @@ async def get_scan_findings(
             detail=f"Scan not found. The scan ID '{scan_id}' does not exist or you don't have permission to access it."
         )
     
-    # Build query for findings
-    query = db.query(Finding).filter(Finding.scan_job_id == scan_id)
+    # Build query for findings (eager load instances for grouped findings)
+    from sqlalchemy.orm import joinedload
+    query = db.query(Finding).options(joinedload(Finding.instances)).filter(Finding.scan_job_id == scan_id)
     
     # Apply filters
     if severity:
@@ -2748,6 +2749,7 @@ async def get_scan_findings(
         query
         .order_by(
             severity_order.asc(),  # Lower number = higher priority
+            Finding.affected_count.desc().nulls_last(),  # More affected URLs first
             Finding.cvss_score.desc().nulls_last(),  # Higher CVSS first
             Finding.created_at.desc()  # Newer findings first within same severity/CVSS
         )
@@ -2770,6 +2772,22 @@ async def get_scan_findings(
     
     items = []
     for finding in findings:
+        # Load instances for this finding (if using new normalizer)
+        instances = []
+        affected_count = 1
+        mostly_static = False
+        if hasattr(finding, 'instances'):
+            # Instances relationship may be loaded via joinedload
+            instances_list = finding.instances if finding.instances else []
+            instances = list(instances_list) if instances_list else []
+            affected_count = finding.affected_count if hasattr(finding, 'affected_count') and finding.affected_count else (len(instances) if instances else 1)
+            if instances:
+                static_count = sum(1 for inst in instances if inst.is_static_asset)
+                mostly_static = (static_count / len(instances)) > 0.8
+        elif hasattr(finding, 'affected_count') and finding.affected_count and finding.affected_count > 1:
+            # Fallback: use affected_count if instances not loaded
+            affected_count = finding.affected_count
+        
         # Extract location from raw_data if needed
         location_data = extract_location_from_raw_data(finding)
         
@@ -2778,6 +2796,12 @@ async def get_scan_findings(
         url = location_data.get("url")
         http_method = location_data.get("http_method")
         parameter = location_data.get("parameter")
+        
+        # If we have instances, use first instance URL as primary
+        if instances and instances[0].url:
+            url = instances[0].url
+            http_method = instances[0].http_method or http_method
+            parameter = instances[0].parameter or parameter
         
         if not url and scan_target_url:
             url = scan_target_url
@@ -2877,6 +2901,11 @@ async def get_scan_findings(
                 ai_source=finding.ai_source if hasattr(finding, 'ai_source') else None,
                 ai_model=finding.ai_model if hasattr(finding, 'ai_model') else None,
                 ai_confidence=finding.ai_confidence if hasattr(finding, 'ai_confidence') else None,
+                # Grouping fields
+                affected_count=affected_count,
+                instances_sample=instances_sample,
+                mostly_static=mostly_static,
+                rule_family=finding.rule_family if hasattr(finding, 'rule_family') else None,
             )
         )
     

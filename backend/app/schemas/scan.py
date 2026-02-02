@@ -51,6 +51,11 @@ class FindingResponse(BaseModel):
     ai_source: Optional[str] = None  # Source identifier (e.g., "brain_v1", "fallback")
     ai_model: Optional[str] = None  # AI model used (e.g., "gpt-4o-mini")
     ai_confidence: Optional[float] = None  # Confidence score (0.0-1.0)
+    # Grouping fields (for deduplicated findings)
+    affected_count: Optional[int] = None  # Number of instances/URLs affected
+    instances_sample: Optional[List[Dict[str, Any]]] = None  # Sample of up to 10 instances
+    mostly_static: Optional[bool] = None  # True if >80% of instances are static assets
+    rule_family: Optional[str] = None  # Rule family (cors, cache, csp, etc.)
     
     model_config = ConfigDict(from_attributes=True)
 
