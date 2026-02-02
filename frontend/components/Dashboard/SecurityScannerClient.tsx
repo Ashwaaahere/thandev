@@ -745,6 +745,122 @@ export default function SecurityScannerClient() {
     }
   }, [session, selectedProjectId, loadDomainVerification]);
 
+  const handleAddToProject = async () => {
+    if (!session) {
+      setError('Session required. Please log in again.');
+      return;
+    }
+
+    const trimmed = targetUrl.trim();
+    if (!trimmed) {
+      setError('Please enter a target URL');
+      return;
+    }
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      setError('URL must start with http:// or https://');
+      return;
+    }
+
+    const isAdmin = Boolean(session.user?.isAdmin);
+    
+    // Check if domain is verified or allowlisted
+    if (!isAdmin && !allowedForTargetUrl) {
+      if (!preparedProjectId) {
+        setError('Please verify domain ownership first');
+        return;
+      }
+      if (!verificationData) {
+        setError('Please verify domain ownership first');
+        return;
+      }
+      if (verificationData.status === 'PENDING') {
+        setError('Domain verification is pending. Please complete DNS verification first.');
+        return;
+      }
+      if (verificationData.status !== 'VERIFIED' && verificationData.status !== 'ALLOWLISTED') {
+        setError('Domain not verified. Please verify domain ownership first.');
+        return;
+      }
+    }
+
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      // Determine project ID
+      let projectId = preparedProjectId;
+      
+      // If no project ID yet, try to get/create one
+      if (!projectId) {
+        if (isAdmin || allowedForTargetUrl) {
+          try {
+            const resp = await thandevFetchJSON<DomainVerificationStartResponse>(
+              '/api/domain-verifications/start',
+              session,
+              {
+                method: 'POST',
+                body: JSON.stringify({ url: trimmed }),
+              }
+            );
+            if (resp?.project_id) {
+              projectId = resp.project_id;
+              setPreparedProjectId(resp.project_id);
+            }
+          } catch (e: any) {
+            console.warn('Auto-prepare project failed:', e?.message || e);
+            if (!allowedForTargetUrl) {
+              setError('Please verify domain ownership first');
+              return;
+            }
+          }
+        } else {
+          setError('Please verify domain ownership first');
+          return;
+        }
+      }
+
+      if (!projectId) {
+        setError('Unable to determine project. Please verify domain ownership first.');
+        return;
+      }
+
+      // Add target URL to project
+      await thandevFetchJSON(
+        `/api/projects/${projectId}/targets`,
+        session,
+        {
+          method: 'POST',
+          body: JSON.stringify({ url: trimmed }),
+        }
+      );
+
+      // Success - switch to existing project mode
+      setSelectedProjectId(projectId);
+      await loadProjects();
+      await loadExistingUrls(projectId);
+      setSelectedMode('existing');
+      setVerificationData(null);
+      setTargetUrl('https://');
+      setPreparedProjectId('');
+      
+      toast.success('Target added to project successfully!', 3000);
+    } catch (err: any) {
+      console.error('Failed to add target to project', err);
+      const data = err?.response?.data;
+      const detail = data?.detail;
+      const msg =
+        detail?.message ||
+        (typeof detail === 'string' ? detail : null) ||
+        data?.message ||
+        err?.message ||
+        'Failed to add target to project';
+      setError(msg);
+      toast.error(msg, 5000);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!session) {
@@ -1477,8 +1593,8 @@ export default function SecurityScannerClient() {
                   </div>
                 )}
 
-                {/* Scan Level Selector */}
-                {!(selectedMode === 'new' && !session.user?.isAdmin) && (
+                {/* Scan Level Selector - Only show in existing project mode */}
+                {selectedMode === 'existing' && (
                   <div className="mb-6">
                     <label className="block text-sm font-medium mb-3" style={{ color: 'var(--fg)' }}>
                       Scan Level
@@ -1548,33 +1664,51 @@ export default function SecurityScannerClient() {
 
                 {/* Actions */}
                 <div className="flex items-center justify-between gap-4">
-                  <button
-                    type="submit"
-                    disabled={
-                      submitting ||
-                      (selectedMode === 'existing'
-                        ? (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
-                        : (
-                            // Allow admins to bypass preparedProjectId for new target
-                            // For non-admins: require preparedProjectId OR allowlisted domain
-                            (!session.user?.isAdmin &&
-                              !allowedForTargetUrl &&
-                              (!preparedProjectId ||
-                                (verificationData && !['VERIFIED', 'ALLOWLISTED'].includes(verificationData.status))))
-                          ))
-                    }
-                    className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
-                    style={{ background: 'var(--brand)' }}
-                  >
-                    {submitting ? (
-                      <span className="flex items-center gap-2">
-                        <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
-                        Starting scan...
-                      </span>
-                    ) : (
-                      'Start scan'
-                    )}
-                  </button>
+                  {selectedMode === 'new' ? (
+                    // New target mode: Show "Add to project" button
+                    <button
+                      type="button"
+                      onClick={handleAddToProject}
+                      disabled={
+                        submitting ||
+                        (!session.user?.isAdmin &&
+                          !allowedForTargetUrl &&
+                          (!preparedProjectId ||
+                            (verificationData && !['VERIFIED', 'ALLOWLISTED'].includes(verificationData.status))))
+                      }
+                      className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+                      style={{ background: 'var(--brand)' }}
+                    >
+                      {submitting ? (
+                        <span className="flex items-center gap-2">
+                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                          Adding to project...
+                        </span>
+                      ) : (
+                        'Add to project'
+                      )}
+                    </button>
+                  ) : (
+                    // Existing project mode: Show "Start scan" button
+                    <button
+                      type="submit"
+                      disabled={
+                        submitting ||
+                        (!selectedProjectId || (!session.user?.isAdmin && !allowedForSelectedProject && dvStatus && dvStatus.status !== 'verified'))
+                      }
+                      className="px-6 py-3 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed hover:opacity-90"
+                      style={{ background: 'var(--brand)' }}
+                    >
+                      {submitting ? (
+                        <span className="flex items-center gap-2">
+                          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></span>
+                          Starting scan...
+                        </span>
+                      ) : (
+                        'Start scan'
+                      )}
+                    </button>
+                  )}
                   <Link
                     href="/dashboard/history"
                     className="text-sm font-medium hover:opacity-80 transition-opacity"
