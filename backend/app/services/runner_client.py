@@ -506,6 +506,9 @@ async def publish_scan_steps_to_runner(
                     except Exception as fallback_error:
                         logger.error(f"[ENUM-WAIT] Fallback publishing failed for scan {scan_job_id}: {fallback_error}", exc_info=True)
                 
+                logger.info(f"[PUBLISH-STEPS] Enumeration step published for scan {scan_job_id}, tools will be published by background task after enumeration completes")
+                # Return True to indicate enumeration step was published successfully
+                # Tools will be published by background task after enumeration completes
                 return True  # Return early - tools will be published by background task
             else:
                 logger.warning(f"Failed to publish enumeration step for scan {scan_job_id}, continuing with regular tools")
