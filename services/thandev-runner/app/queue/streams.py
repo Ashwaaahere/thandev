@@ -194,6 +194,7 @@ async def consume_step_requests(
                         pending_count = 0
 
                 if pending_count > 0:
+                    logger.info(f"[STREAM-CONSUME] Found {pending_count} pending messages, attempting to claim them")
                     # Get pending message details for the group (do NOT filter by consumer).
                     # redis-py API differs by version:
                     # - Newer: xpending_range(...)

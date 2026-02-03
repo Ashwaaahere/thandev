@@ -1154,7 +1154,7 @@ async def run_worker_loop() -> None:
                 consumer_name=settings.CONSUMER_NAME,
                 count=consume_count,  # Use available slots instead of fixed half
                 block_ms=500,  # Reduced block time
-                check_pending=first_iteration,  # Only check pending on first iteration
+                check_pending=True,  # Always check pending messages to recover stuck scans
             )
             messages.extend(global_messages or [])
             
