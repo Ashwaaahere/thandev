@@ -1338,8 +1338,43 @@ async def quick_scan(
                     db.commit()
                     db.refresh(scan_job)
     
+        # CRITICAL: Before returning, ensure scan has steps published or is properly failed
+        # If scan is RUNNING but has no tool states, something went wrong
+        from app.models.scan_tool_state import ScanToolState
+        tool_state_count = db.query(ScanToolState).filter(ScanToolState.scan_id == scan_job.id).count()
+        
+        if scan_job.status == ScanStatus.RUNNING and tool_state_count == 0:
+            logger.error(
+                f"[QUICK-SCAN] CRITICAL: Scan {scan_job.id} is RUNNING but has no tool states! "
+                f"This indicates steps were not published. Attempting emergency fallback to Runner."
+            )
+            # Emergency fallback: try to publish steps directly
+            try:
+                from app.services.runner_client import publish_scan_steps_to_runner
+                logger.info(f"[QUICK-SCAN] Emergency fallback: Publishing steps for scan {scan_job.id}")
+                success = await publish_scan_steps_to_runner(
+                    scan_job_id=scan_job.id,
+                    target_url=project.target_url,
+                    scan_level=scan_job.scan_level,
+                    org_id=tenant.id,
+                    project_id=project.id,
+                    background_tasks=background_tasks,
+                )
+                if success:
+                    logger.info(f"[QUICK-SCAN] Emergency fallback succeeded for scan {scan_job.id}")
+                else:
+                    logger.error(f"[QUICK-SCAN] Emergency fallback failed for scan {scan_job.id}")
+                    scan_job.status = ScanStatus.FAILED
+                    scan_job.error_message = "Failed to publish scan steps (emergency fallback also failed)"
+                    db.commit()
+            except Exception as emergency_error:
+                logger.error(f"[QUICK-SCAN] Emergency fallback exception for scan {scan_job.id}: {emergency_error}", exc_info=True)
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = f"Emergency fallback failed: {str(emergency_error)}"
+                db.commit()
+        
         # Always return a response (Brain path or Runner path)
-        logger.info(f"[QUICK-SCAN] Returning response for scan {scan_job.id}, status={scan_job.status}")
+        logger.info(f"[QUICK-SCAN] Returning response for scan {scan_job.id}, status={scan_job.status}, tool_states={tool_state_count}")
         return QuickScanResponse(
             project_id=project.id,
             scan_id=scan_job.id,
