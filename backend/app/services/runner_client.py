@@ -699,6 +699,68 @@ async def publish_scan_steps_to_runner(
                 f"{failed_count} failed out of {total_attempted} total"
             )
         
+        # CRITICAL: For BASIC scans (no enumeration), verify that steps were consumed and tool states created
+        # Wait a short time and check if tool states exist
+        if scan_level_str == 'basic' and published_count > 0:
+            logger.info(f"[PUBLISH-STEPS] Verifying consumption for BASIC scan {scan_job_id}...")
+            import asyncio
+            await asyncio.sleep(2)  # Give runner 2 seconds to consume and create tool states
+            
+            try:
+                from app.models.scan_tool_state import ScanToolState
+                from app.core.database import SessionLocal
+                verify_db = SessionLocal()
+                try:
+                    tool_states = verify_db.query(ScanToolState).filter(
+                        ScanToolState.scan_id == scan_job_id
+                    ).count()
+                    
+                    if tool_states == 0:
+                        logger.error(
+                            f"[PUBLISH-STEPS] CRITICAL: BASIC scan {scan_job_id} has {published_count} steps in Redis "
+                            f"but 0 tool states after 2s. Runner may not be consuming. "
+                            f"Retrying publication..."
+                        )
+                        # Retry publishing - maybe there was a transient issue
+                        retry_published = 0
+                        for tool_config in tools:
+                            if not tool_config.get("enabled", True):
+                                continue
+                            tool_id = tool_config.get("key") or tool_config.get("name")
+                            mode_id = tool_config.get("mode") or tool_config.get("profile") or tool_config.get("intensity") or "standard"
+                            params = tool_config.get("params", {})
+                            params["scan_level"] = scan_level_str
+                            timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+                            params["timeout_seconds"] = timeout_seconds
+                            reason = f"Scan level {scan_level.value} requires {tool_id} (RETRY)"
+                            
+                            retry_step_id = await publish_step_request(
+                                session_id=scan_job_id,
+                                tool_id=tool_id,
+                                mode_id=mode_id,
+                                params=params,
+                                target_ref=target_url,
+                                depends_on=[],
+                                reason=reason,
+                                org_id=org_id,
+                                project_id=project_id,
+                                scan_job_id=scan_job_id,
+                            )
+                            if retry_step_id:
+                                retry_published += 1
+                        
+                        if retry_published > 0:
+                            logger.info(f"[PUBLISH-STEPS] Retry published {retry_published} steps for BASIC scan {scan_job_id}")
+                        else:
+                            logger.error(f"[PUBLISH-STEPS] Retry publishing failed for BASIC scan {scan_job_id}")
+                    else:
+                        logger.info(f"[PUBLISH-STEPS] Verified: BASIC scan {scan_job_id} has {tool_states} tool states (consumption successful)")
+                finally:
+                    verify_db.close()
+            except Exception as verify_error:
+                logger.error(f"[PUBLISH-STEPS] Error verifying tool states for BASIC scan {scan_job_id}: {verify_error}", exc_info=True)
+                # Don't fail if verification fails, but log it
+        
         return published_count > 0
         
     except Exception as e:

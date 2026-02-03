@@ -1231,9 +1231,12 @@ async def quick_scan(
                     db.refresh(scan_job)
                     logger.info(f"[QUICK-SCAN] Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
                     
-                    # CRITICAL: Verify steps were actually published by checking Redis
+                    # CRITICAL: Verify steps were actually published AND consumed by checking Redis and tool states
                     try:
                         from app.core.redis_client import get_redis_client
+                        from app.models.scan_tool_state import ScanToolState
+                        import asyncio
+                        
                         redis_client = get_redis_client()
                         # Check if any messages for this scan exist in Redis
                         messages = redis_client.xrevrange('scan_step_requests', count=100)
@@ -1266,6 +1269,31 @@ async def quick_scan(
                                 scan_job.status = ScanStatus.FAILED
                                 scan_job.error_message = "Failed to publish scan steps to Redis (retry also failed)"
                                 db.commit()
+                        else:
+                            # Steps are in Redis, now verify runner consumed them (for BASIC scans, check immediately)
+                            scan_level_value = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level).lower()
+                            if scan_level_value == 'basic':
+                                # For BASIC scans, wait a bit and check if tool states were created
+                                await asyncio.sleep(3)  # Give runner 3 seconds to consume
+                                tool_states = db.query(ScanToolState).filter(
+                                    ScanToolState.scan_id == scan_job.id
+                                ).count()
+                                
+                                if tool_states == 0:
+                                    logger.error(
+                                        f"[QUICK-SCAN] CRITICAL: BASIC scan {scan_job.id} has steps in Redis "
+                                        f"but 0 tool states after 3s. Runner may not be consuming. "
+                                        f"Triggering emergency recovery..."
+                                    )
+                                    # Emergency recovery: Use health check service to re-publish
+                                    try:
+                                        from app.services.scan_health_check import check_and_fix_stuck_scans
+                                        # This will detect the stuck scan and re-publish steps
+                                        await check_and_fix_stuck_scans()
+                                    except Exception as recovery_error:
+                                        logger.error(f"[QUICK-SCAN] Emergency recovery failed: {recovery_error}", exc_info=True)
+                                else:
+                                    logger.info(f"[QUICK-SCAN] Verified: BASIC scan {scan_job.id} has {tool_states} tool states (runner consuming successfully)")
                     except Exception as verify_error:
                         logger.error(f"[QUICK-SCAN] Error verifying Redis publication for scan {scan_job.id}: {verify_error}", exc_info=True)
                         # Don't fail the scan if verification fails, but log it

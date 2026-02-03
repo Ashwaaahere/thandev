@@ -650,7 +650,7 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
     logger.error(
         f"Failed to post inventory after {MAX_RETRIES} attempts. Last error: {last_exception}"
     )
-        return False
+    return False
 
 
 async def get_scan_artifact(scan_id: str, artifact_name: str) -> Optional[Dict[str, Any]]:

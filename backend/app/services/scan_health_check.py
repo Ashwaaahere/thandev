@@ -106,8 +106,21 @@ async def check_and_fix_stuck_scans():
                             scan_job.status = ScanStatus.FAILED
                             scan_job.error_message = f"Scan stuck: auto-recovery exception: {str(fix_error)}"
                             db.commit()
-            finally:
-                db.close()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"[SCAN-HEALTH] Error in health check: {e}", exc_info=True)
+
+
+async def run_scan_health_check():
+    """
+    Periodically checks for stuck scans (RUNNING but no tool states/results)
+    and attempts to re-publish their steps.
+    """
+    logger.info("[SCAN-HEALTH] Starting background scan health check service...")
+    while True:
+        try:
+            await _check_and_fix_stuck_scans_impl()
             
             # Wait 60 seconds before next check
             await asyncio.sleep(60)
