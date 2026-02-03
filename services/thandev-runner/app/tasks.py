@@ -1082,6 +1082,17 @@ async def run_worker_loop() -> None:
         f"name={settings.CONSUMER_NAME})"
     )
     
+    # Test backend connectivity on startup
+    try:
+        from app.backend_client import test_backend_connectivity
+        connectivity_ok = await test_backend_connectivity()
+        if connectivity_ok:
+            logger.info("✅ Backend connectivity test passed on startup")
+        else:
+            logger.warning("⚠️ Backend connectivity test failed on startup - tool result posting may fail")
+    except Exception as e:
+        logger.warning(f"Could not test backend connectivity on startup: {e}")
+    
     # NOTE: Removed local debug.log instrumentation (was breaking tools in containers).
     
     # Track if this is the first iteration (to check for pending messages on startup)
