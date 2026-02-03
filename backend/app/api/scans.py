@@ -2545,6 +2545,74 @@ async def get_scan(
     return response
 
 
+@router.post("/{scan_id}/retry-publish", response_model=dict)
+async def retry_publish_scan_steps(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Manually retry publishing scan steps to Runner for a stuck scan.
+    Useful when a scan is stuck in prepare stage with no tool states.
+    """
+    scan_job = db.query(ScanJob).filter(
+        ScanJob.id == scan_id,
+        ScanJob.project.has(tenant_id=tenant.id)
+    ).first()
+    
+    if not scan_job:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    
+    if scan_job.status not in [ScanStatus.RUNNING, ScanStatus.QUEUED]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot retry publishing for scan with status {scan_job.status.value}"
+        )
+    
+    project = db.query(Project).filter(Project.id == scan_job.project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    
+    try:
+        from app.services.runner_client import publish_scan_steps_to_runner
+        
+        logger.info(f"Manually retrying to publish scan steps for scan {scan_id}")
+        
+        success = await publish_scan_steps_to_runner(
+            scan_job_id=scan_id,
+            target_url=project.target_url,
+            scan_level=scan_job.scan_level,
+            org_id=tenant.id,
+            project_id=project.id,
+        )
+        
+        if success:
+            scan_job.status = ScanStatus.RUNNING
+            if not scan_job.started_at:
+                scan_job.started_at = datetime.now(timezone.utc)
+            db.commit()
+            db.refresh(scan_job)
+            logger.info(f"Successfully republished scan steps for scan {scan_id}")
+            return {
+                "success": True,
+                "message": "Scan steps published successfully",
+                "scan_id": scan_id
+            }
+        else:
+            error_msg = "Failed to publish scan steps to Runner"
+            logger.error(f"Failed to republish scan steps for scan {scan_id}: {error_msg}")
+            return {
+                "success": False,
+                "message": error_msg,
+                "scan_id": scan_id
+            }
+    except Exception as e:
+        error_msg = f"Error retrying scan step publishing: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+
 @router.patch("/{scan_id}/cancel", response_model=ScanResponse)
 async def cancel_scan(
     scan_id: str,
