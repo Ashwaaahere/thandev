@@ -470,12 +470,17 @@ async def publish_scan_steps_to_runner(
                                 exc_info=True
                             )
                 
-                # Use asyncio.create_task to run in background
-                # Note: This requires the event loop to be running
-                try:
-                    task = asyncio.create_task(_publish_tools_wrapper())
-                    logger.info(f"Scheduled background task to publish tools after enumeration for scan {scan_job_id} (task={task})")
-                except Exception as task_error:
+                # Use background_tasks if provided (FastAPI), otherwise use asyncio.create_task
+                if background_tasks is not None:
+                    # FastAPI BackgroundTasks - more reliable
+                    background_tasks.add_task(_publish_tools_wrapper)
+                    logger.info(f"[PUBLISH-STEPS] Scheduled FastAPI background task to publish tools after enumeration for scan {scan_job_id}")
+                else:
+                    # Fallback to asyncio.create_task
+                    try:
+                        task = asyncio.create_task(_publish_tools_wrapper())
+                        logger.info(f"[PUBLISH-STEPS] Scheduled asyncio background task to publish tools after enumeration for scan {scan_job_id} (task={task})")
+                    except Exception as task_error:
                     logger.error(f"Failed to create background task for scan {scan_job_id}: {task_error}", exc_info=True)
                     # Fallback: Check if enumeration is already complete and publish tools immediately
                     try:
