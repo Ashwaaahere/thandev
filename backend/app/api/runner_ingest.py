@@ -1203,6 +1203,12 @@ async def create_scan_inventory(
     try:
         from app.models.scan_artifact import ScanArtifact
         
+        logger.info(
+            f"[INVENTORY-RECEIVE] Received inventory POST for scan {scan_id}, "
+            f"inventory_type={type(inventory_data.inventory).__name__}, "
+            f"inventory_keys={list(inventory_data.inventory.keys()) if isinstance(inventory_data.inventory, dict) else 'not dict'}"
+        )
+        
         # Check if inventory already exists
         existing_artifact = db.query(ScanArtifact).filter(
             and_(
@@ -1214,7 +1220,7 @@ async def create_scan_inventory(
         if existing_artifact:
             # Update existing inventory
             existing_artifact.payload = inventory_data.inventory
-            logger.info(f"Updated asset inventory for scan {scan_id}")
+            logger.info(f"[INVENTORY-UPDATE] Updated asset inventory for scan {scan_id}")
             artifact = existing_artifact
         else:
             # Create new inventory
@@ -1224,9 +1230,10 @@ async def create_scan_inventory(
                 payload=inventory_data.inventory
             )
             db.add(artifact)
-            logger.info(f"Created asset inventory for scan {scan_id}")
+            logger.info(f"[INVENTORY-CREATE] Created asset inventory for scan {scan_id}")
         
         db.commit()
+        logger.info(f"[INVENTORY-SUCCESS] Successfully saved inventory for scan {scan_id}")
         
         return ScanInventoryResponse(
             scan_id=scan_id,
