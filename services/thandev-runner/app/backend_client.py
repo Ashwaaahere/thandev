@@ -334,9 +334,9 @@ async def post_tool_result(
                 response.raise_for_status()
                 
                 logger.info(
-                    f"Posted tool result to backend (status code {response.status_code}): "
+                    f"[TOOL-RESULT-POST-SUCCESS] Posted tool result to backend (status code {response.status_code}): "
                     f"scan={scan_job_id}, step={step_id}, tool={tool_name}, tool_run_id={tool_run_id}, "
-                    f"findings={len(findings)}, payload_size={payload_size_mb:.2f}MB"
+                    f"findings={len(findings)}, payload_size={payload_size_mb:.2f}MB, endpoint={endpoint}"
                 )
                 
                 return True
@@ -359,7 +359,8 @@ async def post_tool_result(
             else:
                 # Non-retryable status code or max retries reached
                 logger.error(
-                    f"Backend API returned error status {e.response.status_code} for tool result POST: {e.response.text}"
+                    f"[TOOL-RESULT-POST-FAILED] Backend API returned error status {e.response.status_code} for tool result POST: {e.response.text}, "
+                    f"scan={scan_job_id}, tool={tool_name}, endpoint={endpoint}"
                 )
                 return False
                 
@@ -385,18 +386,22 @@ async def post_tool_result(
                 )
                 await asyncio.sleep(delay)
                 continue
-            else:
-                logger.error(
-                    f"Network error during tool result POST after {MAX_RETRIES} attempts: {e}. "
-                    f"Payload size: {payload_size_mb:.2f}MB, Endpoint: {endpoint}",
-                    exc_info=True,
-                    extra=error_details
-                )
-                return False
+                else:
+                    logger.error(
+                        f"[TOOL-RESULT-POST-FAILED] Network error during tool result POST after {MAX_RETRIES} attempts: {e}. "
+                        f"Payload size: {payload_size_mb:.2f}MB, Endpoint: {endpoint}, scan={scan_job_id}, tool={tool_name}",
+                        exc_info=True,
+                        extra=error_details
+                    )
+                    return False
                 
         except Exception as e:
             # Non-retryable exception
-            logger.error(f"Failed to POST tool result to backend: {e}", exc_info=True)
+            logger.error(
+                f"[TOOL-RESULT-POST-EXCEPTION] Failed to POST tool result to backend: {e}, "
+                f"scan={scan_job_id}, tool={tool_name}, endpoint={endpoint}, attempt={attempt + 1}/{MAX_RETRIES}",
+                exc_info=True
+            )
             return False
     
     # If we get here, all retries failed
@@ -600,8 +605,8 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                 resp = await client.post(endpoint, headers=headers, json=payload)
                 resp.raise_for_status()
                 logger.info(
-                    f"Posted asset inventory for scan {scan_id}: "
-                    f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}"
+                    f"[INVENTORY-POST-SUCCESS] Posted asset inventory for scan {scan_id}: "
+                    f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}, endpoint={endpoint}"
                 )
                 return True
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
@@ -616,8 +621,8 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                     continue
                 else:
                     logger.error(
-                        f"Network error during inventory POST after {MAX_RETRIES} attempts: {e}. "
-                        f"Payload size: {payload_size_mb:.2f}MB"
+                        f"[INVENTORY-POST-FAILED] Network error during inventory POST after {MAX_RETRIES} attempts: {e}. "
+                        f"Payload size: {payload_size_mb:.2f}MB, endpoint={endpoint}, scan_id={scan_id}"
                     )
                     return False
             except httpx.HTTPStatusError as e:
@@ -632,7 +637,8 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                     continue
                 else:
                     logger.error(
-                        f"Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}"
+                        f"[INVENTORY-POST-FAILED] Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}, "
+                        f"endpoint={endpoint}, scan_id={scan_id}"
                     )
                     return False
             finally:
@@ -640,7 +646,11 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                     await custom_client.aclose()
         except Exception as e:
             last_exception = e
-            logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
+            logger.error(
+                f"[INVENTORY-POST-EXCEPTION] Failed to post scan inventory for {scan_id}: {e}, "
+                f"endpoint={endpoint}, attempt={attempt + 1}/{MAX_RETRIES}",
+                exc_info=True
+            )
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
                 await asyncio.sleep(delay)
@@ -648,7 +658,8 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
             return False
     
     logger.error(
-        f"Failed to post inventory after {MAX_RETRIES} attempts. Last error: {last_exception}"
+        f"[INVENTORY-POST-FAILED] Failed to post inventory after {MAX_RETRIES} attempts for scan {scan_id}. "
+        f"Last error: {last_exception}, endpoint={endpoint}"
     )
     return False
 

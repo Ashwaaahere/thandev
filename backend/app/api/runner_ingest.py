@@ -259,6 +259,9 @@ async def create_tool_result(
     response: Response,
     db: Session = Depends(get_db),
 ):
+    # CRITICAL: FastAPI will try to parse JSON automatically if we use a Pydantic model in the function signature
+    # We need to read the body manually BEFORE FastAPI tries to parse it
+    # This is why we use Request instead of a Pydantic model parameter
     """
     Create tool result and ingest findings from runner service.
     
@@ -276,6 +279,7 @@ async def create_tool_result(
     """
     # CRITICAL: Read raw request body to capture meta field before Pydantic deserialization
     # We need to read the body manually because FastAPI consumes it for Pydantic
+    # IMPORTANT: FastAPI can only read the body once, so we must read it here and reuse it
     try:
         body_bytes = await request.body()
         body_size_mb = len(body_bytes) / (1024 * 1024)
@@ -290,7 +294,23 @@ async def create_tool_result(
                 f"This may cause performance issues."
             )
         
-        raw_body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+        if not body_bytes:
+            logger.error(f"[TOOL-RESULT-RECEIVE] Empty request body for scan {scan_id}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request body is empty"
+            )
+        
+        raw_body = json.loads(body_bytes.decode('utf-8'))
+    except json.JSONDecodeError as e:
+        logger.error(
+            f"[TOOL-RESULT-RECEIVE] Invalid JSON in request body for scan {scan_id}: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid JSON in request body: {str(e)}"
+        )
     except Exception as e:
         logger.error(
             f"[TOOL-RESULT-RECEIVE] Failed to read request body for scan {scan_id}: {e}",
