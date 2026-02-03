@@ -152,7 +152,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Scan recovery is disabled (SCAN_RECOVERY_ENABLED=false)")
     
+    # Start automatic health check service to detect and fix stuck scans
+    try:
+        import asyncio
+        from app.services.scan_health_check import start_scan_health_check
+        # Start health check in background
+        asyncio.create_task(start_scan_health_check())
+        logger.info("Started automatic scan health check service")
+    except Exception as e:
+        logger.error(f"Failed to start scan health check service: {e}", exc_info=True)
+        # Don't fail startup if health check fails - log and continue
+    
     yield
+    
+    # Shutdown: Stop health check service
+    try:
+        from app.services.scan_health_check import stop_scan_health_check
+        stop_scan_health_check()
+        logger.info("Stopped scan health check service")
+    except Exception as e:
+        logger.error(f"Error stopping scan health check service: {e}", exc_info=True)
     
     # Shutdown
     logger.info("Shutting down Thandev v2 API...")
