@@ -386,14 +386,14 @@ async def post_tool_result(
                 )
                 await asyncio.sleep(delay)
                 continue
-                else:
-                    logger.error(
-                        f"[TOOL-RESULT-POST-FAILED] Network error during tool result POST after {MAX_RETRIES} attempts: {e}. "
-                        f"Payload size: {payload_size_mb:.2f}MB, Endpoint: {endpoint}, scan={scan_job_id}, tool={tool_name}",
-                        exc_info=True,
-                        extra=error_details
-                    )
-                    return False
+            else:
+                logger.error(
+                    f"[TOOL-RESULT-POST-FAILED] Network error during tool result POST after {MAX_RETRIES} attempts: {e}. "
+                    f"Payload size: {payload_size_mb:.2f}MB, Endpoint: {endpoint}, scan={scan_job_id}, tool={tool_name}",
+                    exc_info=True,
+                    extra=error_details
+                )
+                return False
                 
         except Exception as e:
             # Non-retryable exception
@@ -405,22 +405,10 @@ async def post_tool_result(
             return False
     
     # If we get here, all retries failed
-    error_summary = {
-        "scan_job_id": scan_job_id,
-        "tool_name": tool_name,
-        "step_id": step_id,
-        "endpoint": endpoint,
-        "backend_url": settings.BACKEND_URL,
-        "payload_size_mb": f"{payload_size_mb:.2f}",
-        "findings_count": len(findings),
-        "last_error_type": type(last_exception).__name__ if last_exception else "Unknown",
-        "last_error": str(last_exception) if last_exception else "Unknown error"
-    }
     logger.error(
-        f"Failed to POST tool result to backend after {MAX_RETRIES} attempts. "
-        f"Last error: {last_exception}. Payload size: {payload_size_mb:.2f}MB",
-        extra=error_summary,
-        exc_info=True
+        f"[TOOL-RESULT-POST-FAILED] All retries exhausted for tool result POST: "
+        f"scan={scan_job_id}, tool={tool_name}, endpoint={endpoint}, "
+        f"payload_size={payload_size_mb:.2f}MB, last_error={last_exception}"
     )
     return False
 
