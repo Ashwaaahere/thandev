@@ -1145,6 +1145,13 @@ async def quick_scan(
                     except Exception as e:
                         logger.error(f"[DEPENDENCY-SCAN] Exception enqueuing dependency scan job for quick scan {scan_job.id}: {e}", exc_info=True)
                         # Don't fail the scan if dependency scanning fails
+                
+                # CRITICAL: Return early after successful brain session creation to prevent Runner path execution
+                logger.info(f"[QUICK-SCAN] Brain session created successfully for scan {scan_job.id}, returning early (Brain will handle execution)")
+                return QuickScanResponse(
+                    project_id=project.id,
+                    scan_id=scan_job.id,
+                )
             except Exception as e:
                 # Log the error with full details for debugging
                 error_detail = str(e) if str(e) else repr(e)
