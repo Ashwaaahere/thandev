@@ -663,7 +663,7 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             
             if result and output_file and not output_file.exists():
                 # Write file if we have output OR if tool should always have a file (nuclei/zap)
-                    output_text = result.get("output") or ""
+                output_text = result.get("output") or ""
                 if output_text or should_have_file:
                     try:
                         output_file.parent.mkdir(parents=True, exist_ok=True)
