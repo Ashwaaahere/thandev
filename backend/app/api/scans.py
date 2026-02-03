@@ -1269,6 +1269,7 @@ async def quick_scan(
                 db.refresh(scan_job)
                 logger.warning(f"[QUICK-SCAN] Quick scan created but Runner publishing failed: {error_msg}")
         else:
+            # Brain is enabled and has session, or brain is required but no session
             logger.warning(
                 f"[QUICK-SCAN] Scan {scan_job.id} not using Runner path: "
                 f"brain_enabled={brain_enabled}, brain_required={brain_required}, "
@@ -1282,6 +1283,51 @@ async def quick_scan(
                 scan_job.error_message = error_msg
                 db.commit()
                 db.refresh(scan_job)
+            elif has_brain_session:
+                # Brain session exists, should have returned early above
+                # This shouldn't happen, but if it does, log it
+                logger.warning(
+                    f"[QUICK-SCAN] Scan {scan_job.id} has brain session but reached Runner path check. "
+                    f"This should not happen - brain session should have returned early."
+                )
+            else:
+                # Brain enabled but no session and not required - this is unexpected
+                logger.error(
+                    f"[QUICK-SCAN] Scan {scan_job.id}: Brain enabled but no session created and not required. "
+                    f"This is unexpected - should have used Runner path."
+                )
+                # Fallback: Try to use Runner anyway
+                logger.info(f"[QUICK-SCAN] Attempting fallback to Runner for scan {scan_job.id}")
+                try:
+                    from app.services.runner_client import publish_scan_steps_to_runner
+                    success = await publish_scan_steps_to_runner(
+                        scan_job_id=scan_job.id,
+                        target_url=project.target_url,
+                        scan_level=payload.scan_level,
+                        org_id=tenant.id,
+                        project_id=project.id,
+                        background_tasks=background_tasks,
+                    )
+                    if success:
+                        scan_job.status = ScanStatus.RUNNING
+                        if not scan_job.started_at:
+                            scan_job.started_at = datetime.now(timezone.utc)
+                        db.commit()
+                        db.refresh(scan_job)
+                        logger.info(f"[QUICK-SCAN] Fallback Runner publishing succeeded for scan {scan_job.id}")
+                    else:
+                        error_msg = "Failed to publish scan steps to Runner (fallback)"
+                        logger.error(f"[QUICK-SCAN] {error_msg} for scan {scan_job.id}")
+                        scan_job.status = ScanStatus.FAILED
+                        scan_job.error_message = error_msg
+                        db.commit()
+                        db.refresh(scan_job)
+                except Exception as fallback_error:
+                    logger.error(f"[QUICK-SCAN] Fallback Runner publishing failed for scan {scan_job.id}: {fallback_error}", exc_info=True)
+                    scan_job.status = ScanStatus.FAILED
+                    scan_job.error_message = f"Both Brain and Runner publishing failed: {str(fallback_error)}"
+                    db.commit()
+                    db.refresh(scan_job)
     
         # Always return a response (Brain path or Runner path)
         logger.info(f"[QUICK-SCAN] Returning response for scan {scan_job.id}, status={scan_job.status}")
