@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Header
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 import json
@@ -1202,6 +1202,7 @@ async def quick_scan(
                     scan_level=payload.scan_level,
                     org_id=tenant.id,
                     project_id=project.id,
+                    background_tasks=background_tasks,
                 )
                 
                 logger.info(f"[QUICK-SCAN] publish_scan_steps_to_runner returned success={success} for scan {scan_job.id}")
