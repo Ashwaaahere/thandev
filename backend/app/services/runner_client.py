@@ -472,7 +472,7 @@ async def publish_scan_steps_to_runner(
                 
                 # Use background_tasks if provided (FastAPI), otherwise use asyncio.create_task
                 if background_tasks is not None:
-                    # FastAPI BackgroundTasks - more reliable
+                    # FastAPI BackgroundTasks - can handle async functions
                     background_tasks.add_task(_publish_tools_wrapper)
                     logger.info(f"[PUBLISH-STEPS] Scheduled FastAPI background task to publish tools after enumeration for scan {scan_job_id}")
                 else:
