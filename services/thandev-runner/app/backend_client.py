@@ -596,18 +596,15 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                 custom_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT))
                 client = custom_client
             
-        try:
-            resp = await client.post(endpoint, headers=headers, json=payload)
-            resp.raise_for_status()
+            try:
+                resp = await client.post(endpoint, headers=headers, json=payload)
+                resp.raise_for_status()
                 logger.info(
                     f"Posted asset inventory for scan {scan_id}: "
                     f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}"
                 )
-            return True
-            finally:
-                if custom_client:
-                    await custom_client.aclose()
-        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+                return True
+            except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
             last_exception = e
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
