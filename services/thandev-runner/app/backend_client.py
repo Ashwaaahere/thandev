@@ -605,39 +605,42 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                 )
                 return True
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+                last_exception = e
+                if attempt < MAX_RETRIES - 1:
+                    delay = _calculate_retry_delay(attempt)
+                    logger.warning(
+                        f"Network error during inventory POST (attempt {attempt + 1}/{MAX_RETRIES}): "
+                        f"{type(e).__name__}: {e}. Retrying in {delay:.2f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(
+                        f"Network error during inventory POST after {MAX_RETRIES} attempts: {e}. "
+                        f"Payload size: {payload_size_mb:.2f}MB"
+                    )
+                    return False
+            except httpx.HTTPStatusError as e:
+                last_exception = e
+                if e.response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES - 1:
+                    delay = _calculate_retry_delay(attempt)
+                    logger.warning(
+                        f"Backend returned retryable status {e.response.status_code} for inventory POST "
+                        f"(attempt {attempt + 1}/{MAX_RETRIES}). Retrying in {delay:.2f}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                else:
+                    logger.error(
+                        f"Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}"
+                    )
+                    return False
+            finally:
+                if custom_client:
+                    await custom_client.aclose()
+        except Exception as e:
             last_exception = e
-            if attempt < MAX_RETRIES - 1:
-                delay = _calculate_retry_delay(attempt)
-                logger.warning(
-                    f"Network error during inventory POST (attempt {attempt + 1}/{MAX_RETRIES}): "
-                    f"{type(e).__name__}: {e}. Retrying in {delay:.2f}s..."
-                )
-                await asyncio.sleep(delay)
-                continue
-            else:
-                logger.error(
-                    f"Network error during inventory POST after {MAX_RETRIES} attempts: {e}. "
-                    f"Payload size: {payload_size_mb:.2f}MB"
-                )
-                return False
-        except httpx.HTTPStatusError as e:
-            last_exception = e
-            if e.response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES - 1:
-                delay = _calculate_retry_delay(attempt)
-                logger.warning(
-                    f"Backend returned retryable status {e.response.status_code} for inventory POST "
-                    f"(attempt {attempt + 1}/{MAX_RETRIES}). Retrying in {delay:.2f}s..."
-                )
-                await asyncio.sleep(delay)
-                continue
-            else:
-                logger.error(
-                    f"Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}"
-                )
-                return False
-    except Exception as e:
-            last_exception = e
-        logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
+            logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
                 await asyncio.sleep(delay)
