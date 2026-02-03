@@ -980,19 +980,35 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             f"Backend may be unreachable or payload too large."
                         )
                         
-                        # Emit failed event
+                        # Emit failed event with more context
                         try:
-                            # Try to get actual POST failure error from backend_client logs
-                            # If post_tool_result failed, the error is likely in the exception handling
-                            # For now, use a more descriptive error message
-                            error_msg = result.get("error") or result.get("error_message") or "Failed to post results to backend"
+                            # Check if tool execution actually succeeded but POST failed
+                            tool_execution_success = result.get("success", False) if result else False
+                            tool_error = result.get("error") or result.get("error_message") if result else None
+                            
+                            if tool_execution_success and len(findings) > 0:
+                                # Tool ran successfully but POST failed
+                                error_msg = f"Tool execution succeeded ({len(findings)} findings) but failed to post results to backend"
+                            elif tool_error:
+                                # Tool execution failed
+                                error_msg = f"Tool execution failed: {str(tool_error)[:100]}"
+                            else:
+                                # Unknown error
+                                error_msg = "Failed to post results to backend (unknown error)"
+                            
                             await emit_scan_event(
                                 scan_id=scan_job_id,
                                 phase="scan",
                                 tool=tool_id,
                                 stage="failed",
                                 message=f"{tool_id.upper()} scan failed: {str(error_msg)[:100]}",
-                                meta={"error": str(error_msg)[:500], "post_failed": True, "findings_count": len(findings)}
+                                meta={
+                                    "error": str(error_msg)[:500], 
+                                    "post_failed": True, 
+                                    "findings_count": len(findings),
+                                    "tool_execution_success": tool_execution_success,
+                                    "tool_error": str(tool_error)[:200] if tool_error else None
+                                }
                             )
                         except Exception as e:
                             logger.warning(f"Failed to emit failed event: {e}")
