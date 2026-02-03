@@ -24,20 +24,14 @@ _health_check_running = False
 _health_check_task = None
 
 
-async def check_and_fix_stuck_scans():
+async def _check_and_fix_stuck_scans_impl():
     """
-    Check for stuck scans (RUNNING but no tool states) and fix them.
-    This runs in a background loop.
+    Internal implementation: checks for stuck scans (RUNNING but no tool states/results)
+    and attempts to re-publish their steps.
     """
-    global _health_check_running
-    
-    logger.info("[SCAN-HEALTH] Starting scan health check service")
-    _health_check_running = True
-    
-    while _health_check_running:
+    try:
+        db = SessionLocal()
         try:
-            db = SessionLocal()
-            try:
                 # Find scans that are RUNNING but have no tool states or results
                 # Only check scans created in the last hour (to avoid old stuck scans)
                 cutoff_time = datetime.now(timezone.utc) - timedelta(hours=1)
