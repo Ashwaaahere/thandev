@@ -616,7 +616,7 @@ async def publish_scan_steps_to_runner(
             logger.warning(
                 f"[PUBLISH-STEPS] Some tools failed to publish for scan {scan_job_id}: "
                 f"{failed_count} failed out of {total_attempted} total"
-            )
+        )
         
         # #region agent log
         log_data = {

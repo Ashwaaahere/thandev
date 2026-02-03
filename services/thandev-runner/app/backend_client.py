@@ -597,13 +597,13 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                 client = custom_client
             
             try:
-                resp = await client.post(endpoint, headers=headers, json=payload)
-                resp.raise_for_status()
+            resp = await client.post(endpoint, headers=headers, json=payload)
+            resp.raise_for_status()
                 logger.info(
                     f"Posted asset inventory for scan {scan_id}: "
                     f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}"
                 )
-                return True
+            return True
             finally:
                 if custom_client:
                     await custom_client.aclose()
@@ -638,9 +638,9 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                     f"Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}"
                 )
                 return False
-        except Exception as e:
+    except Exception as e:
             last_exception = e
-            logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
+        logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
                 await asyncio.sleep(delay)
@@ -650,7 +650,7 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
     logger.error(
         f"Failed to post inventory after {MAX_RETRIES} attempts. Last error: {last_exception}"
     )
-    return False
+        return False
 
 
 async def get_scan_artifact(scan_id: str, artifact_name: str) -> Optional[Dict[str, Any]]:

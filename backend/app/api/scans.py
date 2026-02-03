@@ -1195,7 +1195,16 @@ async def quick_scan(
             f"will_use_runner={not brain_enabled or (not brain_required and not has_brain_session)}"
         )
         
-        if not brain_enabled or (not brain_required and not has_brain_session):
+        # CRITICAL: Always attempt Runner path if Brain didn't create a session
+        # This ensures scans don't get stuck
+        should_use_runner = not brain_enabled or (not brain_required and not has_brain_session)
+        
+        logger.info(
+            f"[QUICK-SCAN] Scan {scan_job.id}: should_use_runner={should_use_runner} "
+            f"(brain_enabled={brain_enabled}, brain_required={brain_required}, has_brain_session={has_brain_session})"
+        )
+        
+        if should_use_runner:
             # Use Runner via Redis streams
             logger.info(f"[QUICK-SCAN] Publishing quick scan steps to Runner for scan {scan_job.id}")
             try:
