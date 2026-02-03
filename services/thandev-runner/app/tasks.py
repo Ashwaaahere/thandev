@@ -982,14 +982,17 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         
                         # Emit failed event
                         try:
-                            error_msg = result.get("error") or result.get("error_message") or "Unknown error"
+                            # Try to get actual POST failure error from backend_client logs
+                            # If post_tool_result failed, the error is likely in the exception handling
+                            # For now, use a more descriptive error message
+                            error_msg = result.get("error") or result.get("error_message") or "Failed to post results to backend"
                             await emit_scan_event(
                                 scan_id=scan_job_id,
                                 phase="scan",
                                 tool=tool_id,
                                 stage="failed",
                                 message=f"{tool_id.upper()} scan failed: {str(error_msg)[:100]}",
-                                meta={"error": str(error_msg)[:500]}
+                                meta={"error": str(error_msg)[:500], "post_failed": True, "findings_count": len(findings)}
                             )
                         except Exception as e:
                             logger.warning(f"Failed to emit failed event: {e}")
