@@ -1178,13 +1178,24 @@ async def quick_scan(
             # Fall through to Runner path below
     
         # Default path: Use Runner via Redis streams (when brain is disabled or not required)
-        if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
+        brain_enabled = settings.BRAIN_SERVICE_ENABLED
+        brain_required = settings.BRAIN_REQUIRED
+        has_brain_session = bool(scan_job.brain_session_id)
+        
+        logger.info(
+            f"[QUICK-SCAN] Scan {scan_job.id}: brain_enabled={brain_enabled}, "
+            f"brain_required={brain_required}, has_brain_session={has_brain_session}, "
+            f"will_use_runner={not brain_enabled or (not brain_required and not has_brain_session)}"
+        )
+        
+        if not brain_enabled or (not brain_required and not has_brain_session):
             # Use Runner via Redis streams
-            logger.info(f"Publishing quick scan steps to Runner for scan {scan_job.id}")
+            logger.info(f"[QUICK-SCAN] Publishing quick scan steps to Runner for scan {scan_job.id}")
             try:
                 from app.services.runner_client import publish_scan_steps_to_runner
             
                 # Publish step requests to Runner
+                logger.info(f"[QUICK-SCAN] Calling publish_scan_steps_to_runner for scan {scan_job.id}")
                 success = await publish_scan_steps_to_runner(
                     scan_job_id=scan_job.id,
                     target_url=project.target_url,
@@ -1192,21 +1203,23 @@ async def quick_scan(
                     org_id=tenant.id,
                     project_id=project.id,
                 )
+                
+                logger.info(f"[QUICK-SCAN] publish_scan_steps_to_runner returned success={success} for scan {scan_job.id}")
             
                 if success:
                     scan_job.status = ScanStatus.RUNNING
                     scan_job.started_at = datetime.now(timezone.utc)
                     db.commit()
                     db.refresh(scan_job)
-                    logger.info(f"Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
+                    logger.info(f"[QUICK-SCAN] Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
                 else:
                     error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
-                    logger.error(error_msg)
+                    logger.error(f"[QUICK-SCAN] {error_msg} for scan {scan_job.id}")
                     scan_job.status = ScanStatus.FAILED
                     scan_job.error_message = error_msg
                     db.commit()
                     db.refresh(scan_job)
-                    logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
+                    logger.warning(f"[QUICK-SCAN] Quick scan created but Runner publishing failed: {error_msg}")
                 
                 # Enqueue dependency scan jobs for PRO and ADVANCED scans (Runner path for quick scan)
                 scan_level_value = payload.scan_level.value if hasattr(payload.scan_level, 'value') else str(payload.scan_level).lower()
@@ -1241,14 +1254,29 @@ async def quick_scan(
                         # Don't fail the scan if dependency scanning fails
             except Exception as e:
                 error_msg = f"Failed to publish scan steps to Runner: {str(e)}"
-                logger.error(error_msg, exc_info=True)
+                logger.error(f"[QUICK-SCAN] Exception publishing scan steps for scan {scan_job.id}: {error_msg}", exc_info=True)
                 scan_job.status = ScanStatus.FAILED
                 scan_job.error_message = error_msg
                 db.commit()
                 db.refresh(scan_job)
-                logger.warning(f"Quick scan created but Runner publishing failed: {error_msg}")
+                logger.warning(f"[QUICK-SCAN] Quick scan created but Runner publishing failed: {error_msg}")
+        else:
+            logger.warning(
+                f"[QUICK-SCAN] Scan {scan_job.id} not using Runner path: "
+                f"brain_enabled={brain_enabled}, brain_required={brain_required}, "
+                f"has_brain_session={has_brain_session}"
+            )
+            # If brain is required but not available, fail the scan
+            if brain_required and not has_brain_session:
+                error_msg = "Brain service is required but no session was created"
+                logger.error(f"[QUICK-SCAN] {error_msg} for scan {scan_job.id}")
+                scan_job.status = ScanStatus.FAILED
+                scan_job.error_message = error_msg
+                db.commit()
+                db.refresh(scan_job)
     
         # Always return a response (Brain path or Runner path)
+        logger.info(f"[QUICK-SCAN] Returning response for scan {scan_job.id}, status={scan_job.status}")
         return QuickScanResponse(
             project_id=project.id,
             scan_id=scan_job.id,
