@@ -597,6 +597,15 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                     f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}, endpoint={endpoint}"
                 )
                 return True
+            except httpx.HTTPStatusError as e:
+                # Log detailed error response
+                error_text = e.response.text if e.response else "No response text"
+                logger.error(
+                    f"[INVENTORY-POST-FAILED] Backend returned status {e.response.status_code} for inventory POST: {error_text}, "
+                    f"scan_id={scan_id}, endpoint={endpoint}, payload_keys={list(payload.keys()) if isinstance(payload, dict) else 'not dict'}"
+                )
+                # Re-raise to be handled by outer exception handler
+                raise
             except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
                 last_exception = e
                 if attempt < MAX_RETRIES - 1:
