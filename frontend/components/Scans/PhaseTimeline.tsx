@@ -179,7 +179,7 @@ export default function PhaseTimeline({
   };
 
   return (
-    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+    <div className="rounded-2xl border shadow-lg p-6 overflow-hidden" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Scan Pipeline</h2>
         <div className="flex items-center gap-2">
@@ -232,7 +232,7 @@ export default function PhaseTimeline({
                 </div>
 
                 {/* Phase Content */}
-                <div className="flex-1 -mt-1">
+                <div className="flex-1 -mt-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <h3
                       className={`font-semibold ${
@@ -242,7 +242,7 @@ export default function PhaseTimeline({
                       {phase.label}
                     </h3>
                     {isActive && (
-                      <div className="animate-spin h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full" />
+                      <div className="animate-spin h-4 w-4 border-2 border-blue-400 border-t-transparent rounded-full flex-shrink-0" />
                     )}
                   </div>
                   <p className="text-xs text-slate-400 mb-3">{phase.description}</p>
@@ -259,42 +259,50 @@ export default function PhaseTimeline({
                         return (
                           <div
                             key={`${toolState.tool}-${toolState.phase}`}
-                            className="rounded-lg border p-3"
+                            className="rounded-lg border p-3 overflow-hidden"
                             style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
                           >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex items-start gap-2 flex-1">
-                                <span className="text-lg mt-0.5">{icon}</span>
-                                <div className="flex-1">
-                                  <div className="font-medium text-sm mb-1" style={{ color: 'var(--fg)' }}>
+                            <div className="flex items-start justify-between gap-2 min-w-0">
+                              <div className="flex items-start gap-2 flex-1 min-w-0">
+                                <span className="text-lg mt-0.5 flex-shrink-0">{icon}</span>
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-sm mb-1 truncate" style={{ color: 'var(--fg)' }}>
                                     {toolState.tool.charAt(0).toUpperCase() + toolState.tool.slice(1)}
                                   </div>
                                   {toolState.last_message && (
-                                    <p className="text-xs text-slate-400 mb-2">{toolState.last_message}</p>
+                                    <p className="text-xs text-slate-400 mb-2 break-words overflow-wrap-anywhere" style={{ wordBreak: 'break-word' }}>
+                                      {toolState.last_message}
+                                    </p>
                                   )}
                                   {toolState.meta && (
                                     <div className="flex flex-wrap gap-2 text-xs">
-                                      {Object.entries(toolState.meta).map(([key, value]) => (
-                                        <span
-                                          key={key}
-                                          className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300"
-                                        >
-                                          {key}: {String(value)}
-                                        </span>
-                                      ))}
+                                      {Object.entries(toolState.meta).map(([key, value]) => {
+                                        const valueStr = String(value);
+                                        const isLongValue = valueStr.length > 50;
+                                        return (
+                                          <span
+                                            key={key}
+                                            className="px-2 py-0.5 rounded-full bg-slate-700/40 text-slate-300 break-words max-w-full"
+                                            style={{ wordBreak: 'break-word' }}
+                                            title={isLongValue ? valueStr : undefined}
+                                          >
+                                            {key}: {isLongValue ? `${valueStr.substring(0, 47)}...` : valueStr}
+                                          </span>
+                                        );
+                                      })}
                                     </div>
                                   )}
                                 </div>
                               </div>
-                              <div className="flex flex-col items-end gap-1">
+                              <div className="flex flex-col items-end gap-1 flex-shrink-0">
                                 <span
-                                  className={`px-2 py-0.5 rounded-full text-xs font-medium ${stageBg} ${stageColor}`}
+                                  className={`px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${stageBg} ${stageColor}`}
                                 >
                                   {stageLabel}
                                 </span>
                                 {toolState.progress !== null && toolState.progress !== undefined && (
-                                  <span className="text-xs font-medium text-slate-400">
-                                    {toolState.progress}%
+                                  <span className="text-xs font-medium text-slate-400 whitespace-nowrap">
+                                    {Math.round(toolState.progress)}%
                                   </span>
                                 )}
                               </div>
@@ -304,7 +312,7 @@ export default function PhaseTimeline({
                               <div className="mt-2 w-full h-1 rounded-full bg-slate-700 overflow-hidden">
                                 <div
                                   className="h-full bg-blue-500 transition-all duration-300"
-                                  style={{ width: `${toolState.progress}%` }}
+                                  style={{ width: `${Math.min(100, Math.max(0, toolState.progress))}%` }}
                                 />
                               </div>
                             )}

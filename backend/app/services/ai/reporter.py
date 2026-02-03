@@ -70,13 +70,15 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
         for f in sorted_findings[:5]
     ]
     
-    # Calculate risk score (0-10 scale)
+    # Calculate risk score (0-10 scale) using UNIQUE findings (not instances)
     # Formula: max severity (Critical=10, High=8, Medium=5, Low=2, Info=0)
     #          + log factor for medium+ findings (min(3, log2(1+count_medium_high)))
     #          clamped to 0-10, rounded to 1 decimal
+    #          CAP: if max severity is MEDIUM and no HIGH/CRITICAL, cap at 5.9
     import math
     
-    # Count findings by severity
+    # Count unique findings by severity (not instances)
+    unique_findings_count = len(findings)
     counts = {
         "critical": sum(1 for f in findings if f.severity.value == "critical"),
         "high": sum(1 for f in findings if f.severity.value == "high"),
@@ -84,6 +86,11 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
         "low": sum(1 for f in findings if f.severity.value == "low"),
         "info": sum(1 for f in findings if f.severity.value == "info"),
     }
+    
+    # Calculate total instances count
+    total_instances_count = sum(
+        getattr(f, "affected_count", 1) for f in findings
+    )
     
     # Max severity score
     max_severity_scores = {
@@ -96,16 +103,24 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
     
     # Find max severity present
     max_severity_score = 0
+    max_severity_name = "info"
     for severity, count in counts.items():
         if count > 0:
-            max_severity_score = max(max_severity_score, max_severity_scores.get(severity, 0))
+            score = max_severity_scores.get(severity, 0)
+            if score > max_severity_score:
+                max_severity_score = score
+                max_severity_name = severity
     
-    # Count medium+ findings for log factor
+    # Count medium+ findings for log factor (use UNIQUE count, not instances)
     count_medium_high = counts["medium"] + counts["high"] + counts["critical"]
     log_factor = min(3.0, math.log2(1 + count_medium_high)) if count_medium_high > 0 else 0.0
     
     # Calculate base score
     base_score = max_severity_score + log_factor
+    
+    # Apply cap: if max severity is MEDIUM and no HIGH/CRITICAL, cap at 5.9
+    if max_severity_name == "medium" and counts["high"] == 0 and counts["critical"] == 0:
+        base_score = min(base_score, 5.9)
     
     # Clamp to 0-10 and round to 1 decimal
     risk_score = max(0.0, min(10.0, base_score))
@@ -154,10 +169,12 @@ def generate_basic_report(scan_job: "ScanJob", findings: List["Finding"]) -> Dic
         "top_risks": top_risks,
         "remediation_overview": remediation_overview,
         CANON_RISK_SCORE: float(risk_score),  # Ensure float
-        CANON_FINDINGS_COUNT: len(findings),  # canonical
-        DEPRECATED_TOTAL_FINDINGS: len(findings),  # deprecated alias
+        CANON_FINDINGS_COUNT: unique_findings_count,  # canonical (unique findings)
+        DEPRECATED_TOTAL_FINDINGS: unique_findings_count,  # deprecated alias
         CANON_SEV_BREAKDOWN: severity_breakdown,  # canonical
         DEPRECATED_FINDINGS_BY_SEVERITY: severity_breakdown.copy(),  # deprecated alias
+        "unique_findings_count": unique_findings_count,  # New: unique findings count
+        "instances_count": total_instances_count,  # New: total instances count
     }
 
 

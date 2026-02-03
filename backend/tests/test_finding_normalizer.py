@@ -13,6 +13,7 @@ from app.utils.finding_normalizer import (
     normalize_url,
     is_static_asset_path,
     zap_rule_family,
+    group_scope_for_zap,
     compute_evidence_signature,
     compute_finding_key,
     normalize_severity_for_finding,
@@ -375,6 +376,207 @@ class TestNormalizeAndGroupFinding:
         # CSP should be at least MEDIUM
         assert canonical["severity"] == Severity.MEDIUM
         assert canonical["rule_family"] == "csp"
+    
+    def test_normalize_and_group_csp_header_not_set(self):
+        """Test that CSP Header Not Set findings group across all URLs"""
+        finding1 = {
+            "tool": "zap",
+            "title": "Content Security Policy (CSP) Header Not Set",
+            "url": "https://example.com/page1",
+            "path": "/page1",
+            "plugin_id": "10038",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2, "pluginId": "10038"}',
+        }
+        
+        finding2 = {
+            "tool": "zap",
+            "title": "Content Security Policy (CSP) Header Not Set",
+            "url": "https://example.com/page2",
+            "path": "/page2",
+            "plugin_id": "10038",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2, "pluginId": "10038"}',
+        }
+        
+        finding3 = {
+            "tool": "zap",
+            "title": "Content Security Policy (CSP) Header Not Set",
+            "url": "https://example.com/api/endpoint",
+            "path": "/api/endpoint",
+            "plugin_id": "10038",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2, "pluginId": "10038"}',
+        }
+        
+        canonical1, instance1 = normalize_and_group_finding(finding1, "scan1", "project1")
+        canonical2, instance2 = normalize_and_group_finding(finding2, "scan1", "project1")
+        canonical3, instance3 = normalize_and_group_finding(finding3, "scan1", "project1")
+        
+        # All should have the same finding_key (host-level grouping)
+        assert canonical1["finding_key"] == canonical2["finding_key"]
+        assert canonical2["finding_key"] == canonical3["finding_key"]
+        assert canonical1["rule_family"] == "csp"
+    
+    def test_normalize_and_group_modern_web_application(self):
+        """Test that Modern Web Application findings group across all URLs"""
+        finding1 = {
+            "tool": "zap",
+            "title": "Modern Web Application",
+            "url": "https://example.com/page1",
+            "path": "/page1",
+            "severity": Severity.INFO,
+            "raw_data": '{"riskcode": 0, "confidence": 1}',
+        }
+        
+        finding2 = {
+            "tool": "zap",
+            "title": "Modern Web Application",
+            "url": "https://example.com/page2",
+            "path": "/page2",
+            "severity": Severity.INFO,
+            "raw_data": '{"riskcode": 0, "confidence": 1}',
+        }
+        
+        finding3 = {
+            "tool": "zap",
+            "title": "Modern Web Application",
+            "url": "https://example.com/api/data",
+            "path": "/api/data",
+            "severity": Severity.INFO,
+            "raw_data": '{"riskcode": 0, "confidence": 1}',
+        }
+        
+        canonical1, instance1 = normalize_and_group_finding(finding1, "scan1", "project1")
+        canonical2, instance2 = normalize_and_group_finding(finding2, "scan1", "project1")
+        canonical3, instance3 = normalize_and_group_finding(finding3, "scan1", "project1")
+        
+        # All should have the same finding_key (host-level grouping)
+        assert canonical1["finding_key"] == canonical2["finding_key"]
+        assert canonical2["finding_key"] == canonical3["finding_key"]
+        assert canonical1["rule_family"] == "headers"  # Modern Web Application is categorized as headers
+    
+    def test_normalize_and_group_cookie_findings(self):
+        """Test that cookie findings group by cookie name across URLs"""
+        finding1 = {
+            "tool": "zap",
+            "title": "Cookie No HttpOnly Flag",
+            "url": "https://example.com/page1",
+            "path": "/page1",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+            "evidence": "Set-Cookie: GRUYERE=value; Path=/",
+        }
+        
+        finding2 = {
+            "tool": "zap",
+            "title": "Cookie No HttpOnly Flag",
+            "url": "https://example.com/page2",
+            "path": "/page2",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+            "evidence": "Set-Cookie: GRUYERE=value2; Path=/",
+        }
+        
+        canonical1, instance1 = normalize_and_group_finding(finding1, "scan1", "project1")
+        canonical2, instance2 = normalize_and_group_finding(finding2, "scan1", "project1")
+        
+        # Should have the same finding_key (same cookie name "GRUYERE")
+        assert canonical1["finding_key"] == canonical2["finding_key"]
+        assert canonical1["rule_family"] == "cookies"
+    
+    def test_normalize_and_group_csrf_findings(self):
+        """Test that CSRF findings group by form action path"""
+        finding1 = {
+            "tool": "zap",
+            "title": "Absence of Anti-CSRF Tokens",
+            "url": "https://example.com/upload.gtl?param1=value1",
+            "path": "/upload.gtl",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+        }
+        
+        finding2 = {
+            "tool": "zap",
+            "title": "Absence of Anti-CSRF Tokens",
+            "url": "https://example.com/upload.gtl?param2=value2",
+            "path": "/upload.gtl",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+        }
+        
+        canonical1, instance1 = normalize_and_group_finding(finding1, "scan1", "project1")
+        canonical2, instance2 = normalize_and_group_finding(finding2, "scan1", "project1")
+        
+        # Should have the same finding_key (same form action "/upload.gtl")
+        assert canonical1["finding_key"] == canonical2["finding_key"]
+        assert canonical1["rule_family"] == "csrf"
+    
+    def test_normalize_and_group_big_redirect(self):
+        """Test that Big Redirect findings group by redirecting path"""
+        finding1 = {
+            "tool": "zap",
+            "title": "Big Redirect Detected (Potential Sensitive Information Leak)",
+            "url": "https://example.com/redirect?url=http://evil.com",
+            "path": "/redirect",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+        }
+        
+        finding2 = {
+            "tool": "zap",
+            "title": "Big Redirect Detected (Potential Sensitive Information Leak)",
+            "url": "https://example.com/redirect?url=http://other.com",
+            "path": "/redirect",
+            "severity": Severity.MEDIUM,
+            "raw_data": '{"riskcode": 2, "confidence": 2}',
+        }
+        
+        canonical1, instance1 = normalize_and_group_finding(finding1, "scan1", "project1")
+        canonical2, instance2 = normalize_and_group_finding(finding2, "scan1", "project1")
+        
+        # Should have the same finding_key (same redirecting path "/redirect")
+        assert canonical1["finding_key"] == canonical2["finding_key"]
+    
+    def test_group_scope_for_zap_host_level(self):
+        """Test that CSP and header findings use host-level grouping"""
+        assert group_scope_for_zap("10038", "Content Security Policy (CSP) Header Not Set", "csp") == "host"
+        assert group_scope_for_zap(None, "X-Content-Type-Options Header Missing", "headers") == "host"
+        assert group_scope_for_zap(None, "Missing Anti-clickjacking Header", "headers") == "host"
+        assert group_scope_for_zap(None, "Modern Web Application", "headers") == "host"
+        assert group_scope_for_zap("10020", "Cross-Domain Misconfiguration", "cors") == "host"
+    
+    def test_group_scope_for_zap_path_level(self):
+        """Test that path-specific vulnerabilities use path-level grouping"""
+        assert group_scope_for_zap(None, "SQL Injection", "info") == "path"
+        assert group_scope_for_zap(None, "XSS Vulnerability", "info") == "path"
+        assert group_scope_for_zap(None, "Big Redirect Detected", "info") == "path"
+    
+    def test_group_scope_for_zap_cookies(self):
+        """Test that cookie findings use host-level grouping"""
+        assert group_scope_for_zap(None, "Cookie No HttpOnly Flag", "cookies") == "host"
+        assert group_scope_for_zap(None, "Cookie without SameSite Attribute", "cookies") == "host"
+        assert group_scope_for_zap(None, "Cookie Without Secure Flag", "cookies") == "host"
+    
+    def test_group_scope_for_zap_csrf(self):
+        """Test that CSRF findings use form_action grouping"""
+        assert group_scope_for_zap(None, "Absence of Anti-CSRF Tokens", "csrf") == "form_action"
+    
+    def test_zap_rule_family_modern_web_application(self):
+        """Test that Modern Web Application is detected"""
+        assert zap_rule_family(None, "Modern Web Application") == "headers"
+        assert zap_rule_family(None, "modern web application") == "headers"
+    
+    def test_zap_rule_family_cookies(self):
+        """Test that cookie-related findings are detected"""
+        assert zap_rule_family(None, "Cookie No HttpOnly Flag") == "cookies"
+        assert zap_rule_family(None, "Cookie without SameSite Attribute") == "cookies"
+        assert zap_rule_family(None, "Cookie Without Secure Flag") == "cookies"
+    
+    def test_zap_rule_family_csrf(self):
+        """Test that CSRF findings are detected"""
+        assert zap_rule_family(None, "Absence of Anti-CSRF Tokens") == "csrf"
+        assert zap_rule_family(None, "CSRF Token Missing") == "csrf"
 
 
 if __name__ == "__main__":

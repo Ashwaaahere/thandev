@@ -1462,9 +1462,20 @@ class ToolExecutor:
                 text=True,
                 timeout=per_ip_timeout,
             )
+            # CRITICAL: SSLScan may output to stderr or both stdout and stderr
+            # Combine both to ensure we capture all output
+            combined_output = result.stdout
+            if result.stderr and result.stderr.strip():
+                # If stdout is empty or only has version info, check stderr for actual results
+                if not result.stdout.strip() or "Version:" in result.stdout:
+                    combined_output = result.stderr
+                else:
+                    # Both have content, combine them
+                    combined_output = result.stdout + "\n" + result.stderr
+            
             return {
                 "tool_name": "sslscan",
-                "output": result.stdout,
+                "output": combined_output,
                 "exit_code": result.returncode,
                 "command": " ".join(cmd),
                 "stderr": result.stderr,
@@ -2284,7 +2295,7 @@ class ToolExecutor:
                 # NOTE: --deep-domxss removed due to headless Chrome timeout issues
                 # Headless browsers spawn child processes that don't respect subprocess timeout
                 # causing orphaned Chrome processes and early termination
-                "--context-aware",  # Context-aware payload selection
+                # NOTE: --context-aware removed - not supported in all dalfox versions
             ])
             logger.info(f"Dalfox Advanced scan without headless (timeout: {timeout}s)")
         elif scan_level_lower == "pro":
@@ -2692,19 +2703,29 @@ class ToolExecutor:
                 "success": False,
             }
         
-        # CRITICAL FIX: Don't create a new session for each scan
-        # Creating a new session clears the scan tree, preventing URLs from accumulating
-        # ZAP's spider discovers URLs but they're only added to scan tree when accessed through proxy
-        # Since proxy is not accessible, we need URLs to accumulate across scans in the same session
-        # We'll use the default session and not create a new one
-        logger.info("Using default ZAP session (not creating new session to preserve scan tree)")
+        # CRITICAL FIX: Create a new session for each scan to prevent URL accumulation
+        # URL accumulation from previous scans causes timeouts when trying to access hundreds of URLs
+        # Creating a new session clears the scan tree, giving each scan a fresh start
+        # This prevents the runner from getting stuck accessing URLs from previous scans
+        try:
+            new_session_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/newSession/?apikey=", timeout=10)
+            new_session_result = new_session_response.json()
+            if new_session_result.get("Result") == "OK":
+                logger.info("Created new ZAP session for this scan (cleared scan tree to prevent URL accumulation)")
+            else:
+                logger.warning(f"Failed to create new ZAP session: {new_session_result}, continuing with existing session")
+        except Exception as session_error:
+            logger.warning(f"Error creating new ZAP session: {session_error}, continuing with existing session")
         
-        # CRITICAL ISSUE: ZAP's proxy (port 8080) is not accessible in daemon mode
-        # This means URLs cannot be added to scan tree via proxy access
-        # ZAP spider discovers URLs but doesn't automatically add them to scan tree
-        # WORKAROUND: Don't create new session, let URLs accumulate if spider somehow adds them
-        # Also try accessing URLs directly via ZAP's internal HTTP client if available
-        logger.warning("ZAP proxy (port 8080) is not accessible - using workaround: no new session, relying on spider")
+        # Verify scan tree is cleared
+        try:
+            urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
+            urls_in_tree = urls_check.json().get("urls", [])
+            logger.info(f"ZAP scan tree after new session: {len(urls_in_tree)} URLs (should be 0 or very few)")
+            if len(urls_in_tree) > 10:
+                logger.warning(f"ZAP scan tree still has {len(urls_in_tree)} URLs after new session - may indicate session creation failed")
+        except Exception as check_error:
+            logger.debug(f"Failed to verify scan tree after new session: {check_error}")
         
         # Set target context
         # CRITICAL: Include both the target URL and base URL in context
@@ -3100,18 +3121,20 @@ class ToolExecutor:
             urls_check = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/view/urls/?apikey=", timeout=10)
             urls_in_tree = urls_check.json().get("urls", [])
             if len(urls_in_tree) > 0:
-                # CRITICAL: If ZAP has accumulated too many URLs from previous scans, limit processing
-                # For passive scans, only process a reasonable number of URLs to avoid timeouts
+                # Process URLs to trigger passive scanning
+                # With new session per scan, we should only have URLs from current scan (not accumulated)
+                # Still limit processing to avoid timeouts on large sites
                 max_urls_to_process = 50 if mode_id == "passive_spider" else 100
                 urls_to_process = urls_in_tree[:max_urls_to_process]
                 logger.info(f"Found {len(urls_in_tree)} URLs in scan tree - processing first {len(urls_to_process)} URLs via ZAP API to trigger passive scanning...")
                 if len(urls_in_tree) > max_urls_to_process:
-                    logger.warning(f"ZAP has {len(urls_in_tree)} URLs in scan tree (from previous scans?), limiting to {max_urls_to_process} to prevent timeout")
+                    logger.info(f"ZAP has {len(urls_in_tree)} URLs in scan tree, limiting to {max_urls_to_process} to prevent timeout")
                 accessed_count = 0
                 for url in urls_to_process:
                     try:
                         # Use ZAP's accessUrl API to access the URL - this should trigger passive scanning
-                        access_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/accessUrl/?url={url}&followRedirects=true&apikey=", timeout=10)
+                        # Reduced timeout from 10s to 5s to prevent long delays on slow/unresponsive URLs
+                        access_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/core/action/accessUrl/?url={url}&followRedirects=true&apikey=", timeout=5)
                         access_result = access_response.json()
                         if access_result.get("Result") == "OK":
                             accessed_count += 1
@@ -3119,7 +3142,9 @@ class ToolExecutor:
                         else:
                             logger.debug(f"Failed to access {url}: {access_result}")
                     except Exception as access_error:
+                        # Skip URLs that timeout or fail - don't block on individual URL failures
                         logger.debug(f"Exception accessing {url}: {access_error}")
+                        continue
                 logger.info(f"Accessed {accessed_count} URLs via ZAP accessUrl API to trigger passive scanning")
                 # Wait for passive scanners to process the newly accessed URLs
                 # CRITICAL: Increase wait time for passive scanners to analyze and generate alerts
@@ -3798,7 +3823,7 @@ class ToolExecutor:
                 )
                 # Add inventory URLs to harvester
                 for url in limited_urls:
-                    harvester.add_url(url)
+                    harvester.add_manual_url(url, method="GET")
                 parameterized_urls = limited_urls
             else:
                 logger.warning(f"[SQLMAP] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}. Will fall back to other methods.")

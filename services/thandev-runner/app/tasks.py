@@ -448,10 +448,12 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     if is_dalfox:
                         output_text = _normalize_dalfox_output(output_text)
                     
-                    # CRITICAL: For ZAP, ALWAYS write output (even if empty array "[]")
+                    # CRITICAL: For ZAP and Nuclei, ALWAYS write output (even if empty)
                     # ZAP output is a JSON string of findings array, so we must write it
+                    # Nuclei may have empty stdout when no vulnerabilities found, but we need the file for parsing
                     is_zap = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
-                    should_write = output_text.strip() or is_zap
+                    is_nuclei = (tool_name and "nuclei" in tool_name.lower()) or (tool_id and "nuclei" in tool_id.lower())
+                    should_write = output_text.strip() or is_zap or is_nuclei
                     
                     logger.info(
                         f"[MATERIALIZE-DECISION] Step {step_id} (tool={tool_id}): "
@@ -459,6 +461,14 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     )
                     
                     if should_write:
+                        # CRITICAL: For nuclei with empty output, write empty JSON array to ensure file exists
+                        if is_nuclei and not output_text.strip():
+                            output_text = "[]"
+                            logger.info(f"[NUCLEI-EMPTY-FIX] Writing empty array for nuclei (no vulnerabilities found)")
+                        # For zap with empty output, ensure it's at least "[]"
+                        if is_zap and not output_text.strip():
+                            output_text = "[]"
+                            logger.info(f"[ZAP-EMPTY-FIX] Writing empty array for zap")
                         output_file.write_text(output_text, encoding="utf-8")
                         logger.info(
                             "Materialized output for tool %s (step %s, scan_job %s) to %s (len=%d)",
@@ -581,16 +591,26 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         if is_dalfox:
                             output_text = _normalize_dalfox_output(output_text)
                         
-                        # CRITICAL: For ZAP, ALWAYS write output (even if empty array "[]")
+                        # CRITICAL: For ZAP and Nuclei, ALWAYS write output (even if empty array "[]")
                         # ZAP output is a JSON string of findings array, so we must write it
+                        # Nuclei may have empty stdout when no vulnerabilities found, but we need the file for parsing
                         # For other tools, write if we have any output (even if it's just whitespace)
                         # Tools like httpx, nmap, sslscan may have output that needs parsing
                         is_zap = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
-                        # Always write if we have output text (even if empty string - parsers will handle it)
-                        # Only skip if output_text is None or completely missing
-                        should_write = output_text is not None and (len(output_text) > 0 or is_zap)
+                        is_nuclei = (tool_name and "nuclei" in tool_name.lower()) or (tool_id and "nuclei" in tool_id.lower())
+                        # Always write if we have output text OR if tool requires file (nuclei/zap)
+                        # Only skip if output_text is None or completely missing AND tool doesn't require file
+                        should_write = output_text is not None and (len(output_text) > 0 or is_zap or is_nuclei)
                         
                         if should_write:
+                            # CRITICAL: For nuclei with empty output, write empty JSON array to ensure file exists
+                            if is_nuclei and not output_text.strip():
+                                output_text = "[]"
+                                logger.info(f"[MATERIALIZE2-NUCLEI-EMPTY] Writing empty array for nuclei")
+                            # For zap with empty output, ensure it's at least "[]"
+                            if is_zap and not output_text.strip():
+                                output_text = "[]"
+                                logger.info(f"[MATERIALIZE2-ZAP-EMPTY] Writing empty array for zap")
                             output_file.write_text(output_text, encoding="utf-8")
                             # Verify file was written
                             if output_file.exists():
@@ -636,15 +656,29 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             # #endregion
             
             # CRITICAL FIX: If we have output in result but file doesn't exist, write it now before parsing
-            if result and result.get("output") and output_file and not output_file.exists():
-                try:
-                    output_text = result.get("output") or ""
-                    if output_text:
+            # Also handle nuclei/zap which should always have a file even if output is empty
+            is_nuclei_fallback = (tool_name and "nuclei" in tool_name.lower()) or (tool_id and "nuclei" in tool_id.lower())
+            is_zap_fallback = (tool_name and "zap" in tool_name.lower()) or (tool_id and "zap" in tool_id.lower())
+            should_have_file = is_nuclei_fallback or is_zap_fallback
+            
+            if result and output_file and not output_file.exists():
+                # Write file if we have output OR if tool should always have a file (nuclei/zap)
+                output_text = result.get("output") or ""
+                if output_text or should_have_file:
+                    try:
                         output_file.parent.mkdir(parents=True, exist_ok=True)
+                        # For nuclei with empty output, write empty JSON array
+                        if is_nuclei_fallback and not output_text.strip():
+                            output_text = "[]"
+                            logger.info(f"[FALLBACK-NUCLEI-EMPTY] Writing empty array for nuclei")
+                        # For zap with empty output, ensure it's at least "[]"
+                        if is_zap_fallback and not output_text.strip():
+                            output_text = "[]"
+                            logger.info(f"[FALLBACK-ZAP-EMPTY] Writing empty array for zap")
                         output_file.write_text(output_text, encoding="utf-8")
-                        logger.info(f"[FALLBACK-WRITE] Wrote output to {output_file} (size={len(output_text)})")
-                except Exception as e:
-                    logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
+                        logger.info(f"[FALLBACK-WRITE] Wrote output to {output_file} (size={len(output_text)}, should_have_file={should_have_file})")
+                    except Exception as e:
+                        logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
             
             if output_file and output_file.exists():
                 try:

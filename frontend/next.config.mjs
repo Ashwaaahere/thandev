@@ -141,12 +141,14 @@ const nextConfig = {
             value: 'strict-origin-when-cross-origin',
           },
           // Content Security Policy
+          // Note: 'unsafe-eval' and 'unsafe-inline' are required for Next.js development and some features
+          // In production, consider using nonces or hashes for stricter CSP
           {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://vercel.live",
-              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+              "script-src 'self' 'unsafe-eval' 'unsafe-inline' https://vercel.live", // unsafe-eval/unsafe-inline needed for Next.js
+              "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com", // unsafe-inline needed for Next.js styles
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: https: blob:",
               "connect-src 'self' http://localhost:8000 ws://localhost:8000 http://127.0.0.1:8000 ws://127.0.0.1:8000 http://127.0.0.1:7242 https://thandev-backend.fly.dev wss://thandev-backend.fly.dev https://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io wss://thandev-backend.thankfulisland-9a04feba.eastus.azurecontainerapps.io https://api.github.com https://github.com https://github.com/login https://github.com/login/oauth https://feeds.feedburner.com https://www.cisa.gov https://nvd.nist.gov",
@@ -206,6 +208,19 @@ const nextConfig = {
           {
             key: 'X-Frame-Options',
             value: 'DENY',
+          },
+          // CORS headers only for API routes (not static assets)
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: process.env.NEXT_PUBLIC_API_BASE || '*',
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET, POST, PUT, DELETE, OPTIONS',
+          },
+          {
+            key: 'Access-Control-Allow-Headers',
+            value: 'Content-Type, Authorization, X-Thandev-Tenant-Id, X-Thandev-User-Id',
           },
         ],
       },

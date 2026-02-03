@@ -47,6 +47,13 @@ def parse_nuclei_output(path: Path) -> List[Dict[str, Any]]:
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     
     try:
+        # CRITICAL: Handle empty JSON array file (e.g., "[]" written when no findings)
+        # Read entire file first to check if it's just an empty array
+        content = path.read_text(encoding="utf-8", errors="ignore").strip()
+        if content == "[]" or content == "":
+            logger.info("Nuclei output file contains empty array or is empty: %s", path)
+            return []
+        
         with path.open("r", encoding="utf-8", errors="ignore") as f:
             for line_no, raw_line in enumerate(f, start=1):
                 line = raw_line.strip()
@@ -66,6 +73,21 @@ def parse_nuclei_output(path: Path) -> List[Dict[str, Any]]:
                 
                 try:
                     nuclei_data = json.loads(line)
+                    # Handle empty array (written when no findings) - skip it
+                    if isinstance(nuclei_data, list):
+                        if len(nuclei_data) == 0:
+                            logger.debug("Skipping empty array on line %d in %s", line_no, path)
+                            continue
+                        # If array has items, process each item as a finding
+                        for item in nuclei_data:
+                            if isinstance(item, dict):
+                                nuclei_data = item  # Process this item as a finding
+                                break  # Process first item only (nuclei outputs one finding per line)
+                            else:
+                                continue
+                        # If no dict items found in array, skip this line
+                        if not isinstance(nuclei_data, dict):
+                            continue
                     if not isinstance(nuclei_data, dict):
                         logger.debug("Skipping non-dict JSON on line %d in %s", line_no, path)
                         continue

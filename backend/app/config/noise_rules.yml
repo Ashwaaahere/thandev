@@ -1,0 +1,122 @@
+# Noise suppression and severity override rules for security findings
+# These rules help reduce false positives and noise in scan reports
+
+rules:
+  # CORS (Cross-Domain Misconfiguration) rules
+  - name: "cors_static_asset"
+    condition:
+      title_match: ["Cross-Domain Misconfiguration", "CORS"]
+      url_patterns:
+        - "^https?://[^/]+/_next/static/"
+        - "^https?://[^/]+/.*\\.(js|css|png|jpg|jpeg|svg|ico|webp|woff2?)$"
+        - "^https?://[^/]+/_next/image"
+        - "^https?://[^/]+/robots\\.txt$"
+        - "^https?://[^/]+/favicon\\.ico$"
+    action:
+      severity_override: "info"
+      tag: "likely-static-cors"
+      confidence: "low"
+      reason: "CORS on static assets is typically low risk"
+
+  - name: "cors_api_authenticated"
+    condition:
+      title_match: ["Cross-Domain Misconfiguration", "CORS"]
+      url_patterns:
+        - "^https?://[^/]+/api/"
+        - "^https?://[^/]+/auth"
+        - "^https?://[^/]+/dashboard"
+        - "^https?://[^/]+/account"
+        - "^https?://[^/]+/admin"
+      evidence_patterns:
+        - "credentials.*true"
+        - "acac.*true"
+        - "access-control-allow-credentials.*true"
+    action:
+      severity_override: "medium"
+      confidence: "high"
+      reason: "CORS on authenticated endpoints requires review"
+
+  - name: "cors_wildcard_credentials"
+    condition:
+      title_match: ["Cross-Domain Misconfiguration", "CORS"]
+      evidence_patterns:
+        - "\\*.*credentials"
+        - "access-control-allow-origin.*\\*.*credentials"
+    action:
+      severity_override: "high"
+      confidence: "high"
+      reason: "Wildcard CORS with credentials is high risk"
+
+  # User Agent Fuzzer - always INFO
+  - name: "ua_fuzzer"
+    condition:
+      title_match: ["User Agent Fuzzer", "UA Fuzzer"]
+    action:
+      severity_override: "info"
+      tag: "informational"
+      reason: "User Agent Fuzzer findings are informational"
+
+  # Cache control rules
+  - name: "cache_static_asset"
+    condition:
+      title_match: ["Retrieved from Cache", "Re-examine Cache-control Directives"]
+      url_patterns:
+        - "^https?://[^/]+/_next/static/"
+        - "^https?://[^/]+/.*\\.(js|css|png|jpg|jpeg|svg|ico|webp|woff2?)$"
+    action:
+      severity_override: "info"
+      reason: "Cache on static assets is expected behavior"
+
+  - name: "cache_authenticated"
+    condition:
+      title_match: ["Retrieved from Cache", "Re-examine Cache-control Directives"]
+      url_patterns:
+        - "^https?://[^/]+/api/"
+        - "^https?://[^/]+/dashboard"
+        - "^https?://[^/]+/account"
+        - "^https?://[^/]+/settings"
+    action:
+      severity_override: "low"
+      confidence: "medium"
+      reason: "Cache on authenticated pages may expose sensitive data"
+
+  # CSP (Content Security Policy) rules
+  - name: "csp_unsafe_eval"
+    condition:
+      title_match: ["CSP", "Content Security Policy"]
+      evidence_patterns:
+        - "unsafe-eval"
+        - "script-src.*unsafe-eval"
+    action:
+      severity_override: "medium"
+      confidence: "high"
+      reason: "CSP unsafe-eval is a security hardening issue"
+
+  - name: "csp_unsafe_inline"
+    condition:
+      title_match: ["CSP", "Content Security Policy"]
+      evidence_patterns:
+        - "unsafe-inline"
+        - "script-src.*unsafe-inline"
+    action:
+      severity_override: "medium"
+      confidence: "high"
+      reason: "CSP unsafe-inline is a security hardening issue"
+
+  - name: "csp_wildcard"
+    condition:
+      title_match: ["CSP", "Content Security Policy", "Wildcard Directive"]
+      evidence_patterns:
+        - "wildcard"
+        - "\\*"
+    action:
+      severity_override: "medium"
+      confidence: "high"
+      reason: "CSP wildcard directives reduce policy effectiveness"
+
+# Default behavior when no rules match
+default:
+  severity_override: null  # Keep original severity
+  confidence: "medium"
+
+

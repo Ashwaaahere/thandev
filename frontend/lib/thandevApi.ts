@@ -91,17 +91,29 @@ export async function thandevFetchJSON<T>(
   
   const fullUrl = url.startsWith('http') ? url : `${API_BASE}${url}`;
   
-  const response = await fetch(fullUrl, {
-    ...init,
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-      ...authHeaders,
-      ...init?.headers,
-    },
-    mode: 'cors',
-    credentials: 'omit',
-  });
+  let response: Response;
+  try {
+    response = await fetch(fullUrl, {
+      ...init,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...init?.headers,
+      },
+      mode: 'cors',
+      credentials: 'omit',
+    });
+  } catch (fetchError) {
+    // Network error (CORS, connection refused, etc.)
+    const errorMsg = fetchError instanceof Error ? fetchError.message : String(fetchError);
+    console.error('[ThandevAPI] Network error:', {
+      url: fullUrl,
+      error: errorMsg,
+      apiBase: API_BASE
+    });
+    throw new Error(`Failed to fetch: ${errorMsg}. Check if backend is running at ${API_BASE}`);
+  }
 
   if (!response.ok) {
     let errorMessage = `Request failed: ${response.status} ${response.statusText}`;

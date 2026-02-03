@@ -18,8 +18,49 @@ from urllib.parse import urlparse, urlunparse
 
 from app.models.finding import Severity
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
+from app.utils.noise_rules_engine import apply_noise_rules
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_zap_confidence(confidence: Any) -> Optional[int]:
+    """
+    Normalize ZAP confidence to integer (0=Low, 1=Medium, 2=High, 3=Confirmed).
+    
+    Args:
+        confidence: Can be int, str ("Low", "Medium", "High", "Confirmed"), or None
+        
+    Returns:
+        Integer confidence value (0-3) or None
+    """
+    if confidence is None:
+        return None
+    
+    if isinstance(confidence, int):
+        return max(0, min(3, confidence))  # Clamp to 0-3
+    
+    if isinstance(confidence, str):
+        conf_lower = confidence.lower()
+        if conf_lower in ["low", "0"]:
+            return 0
+        elif conf_lower in ["medium", "1"]:
+            return 1
+        elif conf_lower in ["high", "2"]:
+            return 2
+        elif conf_lower in ["confirmed", "3", "true"]:
+            return 3
+        else:
+            # Try to parse as int
+            try:
+                return int(confidence) if confidence.isdigit() else 0
+            except (ValueError, AttributeError):
+                return 0
+    
+    # Try to convert to int
+    try:
+        return int(confidence)
+    except (ValueError, TypeError):
+        return 0
 
 
 # Static asset file extensions
@@ -140,7 +181,7 @@ def zap_rule_family(plugin_id: Optional[str], name: Optional[str]) -> str:
         name: Alert name/title
         
     Returns:
-        Rule family string: "cors", "cache", "ua_fuzzer", "csp", "headers", "info", etc.
+        Rule family string: "cors", "cache", "ua_fuzzer", "csp", "headers", "cookies", "csrf", "info", etc.
     """
     name_lower = (name or "").lower()
     
@@ -174,11 +215,102 @@ def zap_rule_family(plugin_id: Optional[str], name: Optional[str]) -> str:
     if any(keyword in name_lower for keyword in ["csp", "content security policy", "unsafe-inline", "unsafe-eval", "wildcard directive"]):
         return "csp"
     
-    if any(keyword in name_lower for keyword in ["header", "missing header", "insecure header"]):
+    # Cookie-related findings (host-level, but group by cookie name)
+    if any(keyword in name_lower for keyword in [
+        "cookie no httponly", "cookie without samesite", "cookie without secure",
+        "httponly flag", "samesite attribute", "secure flag", "cookie"
+    ]):
+        return "cookies"
+    
+    # CSRF-related findings (form_action scope)
+    if any(keyword in name_lower for keyword in [
+        "absence of anti-csrf", "csrf token", "anti-csrf", "cross-site request forgery"
+    ]):
+        return "csrf"
+    
+    # Header-related findings (host-level issues)
+    if any(keyword in name_lower for keyword in [
+        "header", "missing header", "insecure header",
+        "x-content-type-options", "x-frame-options", "anti-clickjacking",
+        "strict-transport-security", "hsts", "x-frame-options header missing",
+        "missing anti-clickjacking", "re-examine cache-control"
+    ]):
         return "headers"
+    
+    # Modern Web Application is an informational finding (host-level)
+    if "modern web application" in name_lower:
+        return "headers"  # Treat as header/info finding for grouping purposes
     
     # Default to "info" for unknown rules
     return "info"
+
+
+def group_scope_for_zap(plugin_id: Optional[str], title: Optional[str], rule_family: str) -> str:
+    """
+    Determine grouping scope for a ZAP alert.
+    
+    Returns:
+        "host" - Group across all URLs on same host (headers, CSP, CORS, cookies, etc.)
+        "path" - Group by path pattern (vulnerabilities on specific endpoints, redirects)
+        "param" - Group by parameter name (XSS, SQLi in specific params)
+        "form_action" - Group by form action endpoint (CSRF tokens on same form)
+    """
+    title_lower = (title or "").lower()
+    
+    # Host-level issues (group across all URLs):
+    # - Header-related findings
+    # - CSP issues
+    # - CORS misconfigurations
+    # - Cache-control directives
+    # - Cookie issues (group by cookie name, but host-level)
+    # - Modern Web Application (informational)
+    
+    if rule_family in ["cors", "cache", "ua_fuzzer", "csp", "headers", "cookies"]:
+        return "host"
+    
+    # Form action scope (group by form endpoint):
+    # - CSRF token absence (group by form action path, not full URL)
+    if rule_family == "csrf":
+        return "form_action"
+    
+    # Check title patterns for host-level issues
+    host_level_patterns = [
+        "header not set", "header missing", "missing header",
+        "anti-clickjacking", "x-content-type-options", "x-frame-options",
+        "strict-transport-security", "hsts", "csp", "content security policy",
+        "cache-control", "re-examine cache-control",
+        "modern web application", "cross-domain", "cors",
+        "cookie no httponly", "cookie without samesite", "cookie without secure",
+        "httponly flag", "samesite attribute", "secure flag"
+    ]
+    
+    if any(pattern in title_lower for pattern in host_level_patterns):
+        return "host"
+    
+    # Form action patterns (CSRF)
+    if any(pattern in title_lower for pattern in [
+        "absence of anti-csrf", "csrf token", "anti-csrf", "cross-site request forgery"
+    ]):
+        return "form_action"
+    
+    # Path-level issues (group by normalized path):
+    # - Big Redirect Detected (group by redirecting path, not destination)
+    if "big redirect" in title_lower or "redirect detected" in title_lower:
+        return "path"
+    
+    # Param-level issues (group by parameter):
+    # - XSS in specific parameter
+    # - SQLi in specific parameter
+    # - Other parameter-specific vulnerabilities
+    
+    param_patterns = ["xss", "cross-site scripting", "sqli", "sql injection", "parameter"]
+    if any(pattern in title_lower for pattern in param_patterns):
+        # Check if there's a parameter mentioned
+        if "parameter" in title_lower or "param" in title_lower:
+            return "param"
+    
+    # Default to path-level for specific endpoint vulnerabilities
+    return "path"
 
 
 def compute_evidence_signature(finding_data: Dict[str, Any], raw_data: Dict[str, Any]) -> str:
@@ -218,29 +350,85 @@ def compute_evidence_signature(finding_data: Dict[str, Any], raw_data: Dict[str,
         components.append(f"rule:{rule_id}")
     
     # Key evidence markers (extract from description/evidence)
+    # Normalize evidence to avoid breaking grouping - only include stable signatures
     evidence = finding_data.get("evidence") or ""
     description = finding_data.get("description") or ""
     
     # Extract key patterns from evidence (e.g., "ACAO=*", "unsafe-inline", etc.)
     evidence_lower = (evidence + " " + description).lower()
     
+    # Normalize evidence: extract header names, not full values
+    # This prevents URL-specific evidence from breaking grouping
+    
     # Look for CORS markers
     if "acao" in evidence_lower or "access-control-allow-origin" in evidence_lower:
-        # Extract ACAO value if present
+        # Extract ACAO value if present (normalized)
         acao_match = re.search(r'access-control-allow-origin[:\s=]+([^\s,;]+)', evidence_lower)
         if acao_match:
-            components.append(f"acao:{acao_match.group(1)}")
+            acao_val = acao_match.group(1).lower().strip()
+            # Normalize wildcard variations
+            if acao_val in ["*", "null", "wildcard"]:
+                acao_val = "*"
+            components.append(f"acao:{acao_val}")
         acac_match = re.search(r'access-control-allow-credentials[:\s=]+([^\s,;]+)', evidence_lower)
         if acac_match:
-            components.append(f"acac:{acac_match.group(1)}")
+            acac_val = acac_match.group(1).lower().strip()
+            components.append(f"acac:{acac_val}")
     
-    # Look for CSP markers
+    # Look for CSP markers (normalized)
     if "unsafe-inline" in evidence_lower:
         components.append("csp:unsafe-inline")
     if "unsafe-eval" in evidence_lower:
         components.append("csp:unsafe-eval")
     if "wildcard" in evidence_lower and "directive" in evidence_lower:
         components.append("csp:wildcard")
+    
+    # Extract header names (not values) for header-related findings
+    # This ensures "X-Content-Type-Options Header Missing" groups together regardless of URL
+    header_names = [
+        "content-security-policy", "csp", "x-content-type-options",
+        "x-frame-options", "strict-transport-security", "hsts",
+        "cache-control", "x-xss-protection"
+    ]
+    for header_name in header_names:
+        if header_name in evidence_lower or header_name.replace("-", " ") in evidence_lower:
+            # Normalize header name (remove variations)
+            normalized_header = header_name.replace(" ", "-").lower()
+            components.append(f"header:{normalized_header}")
+            break  # Only include first matching header
+    
+    # Extract cookie name for cookie-related findings
+    # This allows grouping by cookie name (e.g., "GRUYERE" cookie issues group together)
+    cookie_patterns = [
+        r'cookie[:\s]+([a-zA-Z0-9_-]+)',
+        r'setcookie[:\s]+([a-zA-Z0-9_-]+)',
+        r'([a-zA-Z0-9_-]+)\s*=\s*[^;]+;\s*httponly',
+        r'([a-zA-Z0-9_-]+)\s*=\s*[^;]+;\s*samesite',
+        r'([a-zA-Z0-9_-]+)\s*=\s*[^;]+;\s*secure',
+    ]
+    for pattern in cookie_patterns:
+        cookie_match = re.search(pattern, evidence_lower)
+        if cookie_match:
+            cookie_name = cookie_match.group(1).lower().strip()
+            if cookie_name and len(cookie_name) > 0:
+                components.append(f"cookie:{cookie_name}")
+                break  # Only include first matching cookie
+    
+    # Extract form action for CSRF findings
+    # Group by normalized form action path (e.g., "/upload.gtl")
+    if "csrf" in evidence_lower or "anti-csrf" in evidence_lower or "cross-site request forgery" in evidence_lower:
+        # Try to extract form action from evidence or URL
+        form_action_match = re.search(r'action[:\s=]+([^\s,;<>"\']+)', evidence_lower)
+        if form_action_match:
+            form_action = form_action_match.group(1).lower().strip()
+            # Normalize form action (extract path only)
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(form_action if form_action.startswith('http') else f"http://example.com{form_action}")
+                form_path = parsed.path or "/"
+                components.append(f"form_action:{form_path}")
+            except:
+                components.append(f"form_action:{form_action}")
     
     # Parameter name (if present)
     parameter = finding_data.get("parameter")
@@ -322,29 +510,13 @@ def normalize_severity_for_finding(
     """
     Normalize severity based on rule family and context (de-noising).
     
-    Rules:
-    1. CORS:
-       - Static asset + no credentials risk -> INFO
-       - ACAO="*" + ACAC=true -> HIGH
-       - ACAO reflects Origin + ACAC=true -> HIGH
-       - Else (API endpoints) -> MEDIUM
-    2. Cache:
-       - Static asset -> INFO
-       - Authenticated path -> MEDIUM
-       - Else -> INFO
-    3. UA Fuzzer: INFO always
-    4. CSP:
-       - unsafe-eval -> MEDIUM (or HIGH)
-       - unsafe-inline -> MEDIUM
-       - wildcard directive -> MEDIUM
-    5. Keep original severity for everything else
+    First applies noise rules engine, then falls back to rule-family-specific logic.
     
     Args:
         finding_data: Finding data dict
         raw_data: Parsed raw_data dict
         rule_family: Rule family from zap_rule_family()
         is_static_asset: Whether this is a static asset
-        original_severity: Original severity from tool
         
     Returns:
         Normalized Severity enum
@@ -357,6 +529,16 @@ def normalize_severity_for_finding(
         from app.core.severity import normalize_severity
         original_severity = normalize_severity(original_severity_raw)
     
+    # First, try noise rules engine (YAML-based)
+    try:
+        adjusted_severity, tag, reason = apply_noise_rules(finding_data, raw_data, original_severity)
+        if adjusted_severity != original_severity:
+            logger.debug(f"Severity adjusted by noise rules: {original_severity.value} -> {adjusted_severity.value} ({reason})")
+            return adjusted_severity
+    except Exception as e:
+        logger.warning(f"Error applying noise rules, falling back to rule-family logic: {e}")
+    
+    # Fallback to rule-family-specific normalization (backward compatibility)
     # Never upgrade INFO-only issues
     if original_severity == Severity.INFO and rule_family not in ["cors", "cache", "ua_fuzzer", "csp"]:
         return original_severity
@@ -491,12 +673,43 @@ def normalize_and_group_finding(
     # Compute evidence signature
     evidence_sig = compute_evidence_signature(finding_data, raw_data)
     
-    # Determine path bucket
-    # For cors/cache/ua_fuzzer, use "host-level" to dedupe across all paths
-    if rule_family in ["cors", "cache", "ua_fuzzer"]:
+    # Determine path bucket based on grouping scope
+    # Host-level issues should group across all URLs on the same host
+    # Path-level issues should group by path pattern
+    # Param-level issues should group by parameter name
+    # Form_action-level issues should group by form action endpoint
+    grouping_scope = group_scope_for_zap(plugin_id, title, rule_family)
+    
+    if grouping_scope == "host":
+        # Host-level: group all URLs on same host (e.g., CSP, headers, CORS, cookies)
         path_bucket = "host-level"
+    elif grouping_scope == "form_action":
+        # Form action-level: group by normalized form action path (e.g., CSRF on /upload.gtl)
+        # For CSRF, the URL itself is usually the form action endpoint
+        # Extract normalized path from URL (strip query params)
+        form_action_path = None
+        if parsed:
+            form_action_path = parsed.path or "/"
+        # Try to extract from evidence if URL path is not clear
+        if not form_action_path or form_action_path == "/":
+            evidence = finding_data.get("evidence") or ""
+            if evidence:
+                form_action_match = re.search(r'action[:\s=]+([^\s,;<>"\']+)', evidence.lower())
+                if form_action_match:
+                    form_action = form_action_match.group(1).strip()
+                    try:
+                        from urllib.parse import urlparse
+                        parsed_action = urlparse(form_action if form_action.startswith('http') else f"http://example.com{form_action}")
+                        form_action_path = parsed_action.path or "/"
+                    except:
+                        form_action_path = form_action if form_action.startswith('/') else f"/{form_action}"
+        path_bucket = f"form_action:{form_action_path}" if form_action_path else "form_action:unknown"
+    elif grouping_scope == "param":
+        # Param-level: group by parameter name (e.g., XSS in specific param)
+        path_bucket = "param-level"
     else:
-        # For other issues, use normalized path (without query)
+        # Path-level: group by normalized path (e.g., SQLi on specific endpoint, Big Redirect)
+        # For redirects, use the redirecting path (not the destination)
         path_bucket = parsed.path if parsed else ""
     
     # Normalize parameter
@@ -536,7 +749,7 @@ def normalize_and_group_finding(
         "cve_id": finding_data.get("cve_id"),
         "cvss_score": finding_data.get("cvss_score"),
         "zap_riskcode": finding_data.get("zap_riskcode") or raw_data.get("riskcode"),
-        "zap_confidence": finding_data.get("zap_confidence") or raw_data.get("confidence"),
+        "zap_confidence": _normalize_zap_confidence(finding_data.get("zap_confidence") or raw_data.get("confidence")),
         "wasc_id": finding_data.get("wasc_id") or raw_data.get("wascid"),
         "alert_ref": finding_data.get("alert_ref") or raw_data.get("alertRef"),
         "vuln_type": finding_data.get("vuln_type"),

@@ -161,8 +161,16 @@ async def list_scans(
         risk_score, findings_count = _extract_summary_fields(scan_job.summary)
         
         # CRITICAL FIX: If findings_count is not in summary, calculate it from database
+        # Exclude surface assets (HTTPX enumeration data) from findings count
+        # Include findings where category IS NULL (existing findings) or category != "surface"
         if findings_count is None:
-            findings_count = db.query(Finding).filter(Finding.scan_job_id == scan_job.id).count()
+            from sqlalchemy import or_
+            findings_count = (
+                db.query(Finding)
+                .filter(Finding.scan_job_id == scan_job.id)
+                .filter(or_(Finding.category.is_(None), Finding.category != "surface"))
+                .count()
+            )
             # Update summary with findings_count for future queries
             if scan_job.summary:
                 if isinstance(scan_job.summary, dict):
@@ -303,7 +311,15 @@ async def list_scans_by_project(
         
         if findings_count is None:
             # Calculate from database
-            findings_count = db.query(Finding).filter(Finding.scan_job_id == scan.id).count()
+            # Exclude surface assets from findings count
+            # Include findings where category IS NULL (existing findings) or category != "surface"
+            from sqlalchemy import or_
+            findings_count = (
+                db.query(Finding)
+                .filter(Finding.scan_job_id == scan.id)
+                .filter(or_(Finding.category.is_(None), Finding.category != "surface"))
+                .count()
+            )
             if not summary_dict:
                 summary_dict = {}
             summary_dict["findings_count"] = findings_count
@@ -1355,11 +1371,113 @@ async def get_scan_inventory(
     ).first()
     
     if not artifact:
+        # Fallback: Try to build inventory from HTTPX findings if inventory artifact doesn't exist
+        # This handles cases where enumeration ran but inventory wasn't posted
+        from app.models.finding import Finding
+        httpx_findings = db.query(Finding).filter(
+            Finding.scan_job_id == scan_id,
+            Finding.tool_name == "httpx"
+        ).limit(100).all()
+        
+        if httpx_findings:
+            # Extract tech from HTTPX findings
+            technologies = []
+            httpx_data = {}
+            for finding in httpx_findings:
+                if finding.raw_data:
+                    try:
+                        import json as json_module
+                        raw = json_module.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
+                        if isinstance(raw, dict):
+                            tech_list = raw.get("tech", [])
+                            if tech_list and isinstance(tech_list, list):
+                                for tech_item in tech_list:
+                                    if isinstance(tech_item, str) and tech_item not in technologies:
+                                        technologies.append(tech_item)
+                                    elif isinstance(tech_item, dict):
+                                        tech_name = tech_item.get("name") or tech_item.get("value") or ""
+                                        if tech_name and tech_name not in technologies:
+                                            technologies.append(tech_name)
+                            # Extract other httpx data from first finding
+                            if not httpx_data.get("final_url") and finding.url:
+                                httpx_data["final_url"] = finding.url
+                            if not httpx_data.get("status") and raw.get("status_code"):
+                                httpx_data["status"] = raw.get("status_code")
+                            if not httpx_data.get("title") and raw.get("title"):
+                                httpx_data["title"] = raw.get("title")
+                    except Exception as e:
+                        logger.debug(f"Failed to extract tech from httpx finding: {e}")
+                        continue
+            
+            # Build minimal inventory structure
+            if technologies or httpx_data:
+                inventory_payload = {
+                    "target": scan_job.url or "",
+                    "scope": {
+                        "allowed_hosts": [],
+                        "start_url": scan_job.url or "",
+                        "final_url": httpx_data.get("final_url", scan_job.url or "")
+                    },
+                    "discovery": {
+                        "httpx": {
+                            "status": httpx_data.get("status", 0),
+                            "title": httpx_data.get("title", ""),
+                            "tech": technologies,
+                            "final_url": httpx_data.get("final_url", scan_job.url or "")
+                        }
+                    }
+                }
+                return {
+                    "scan_id": scan_id,
+                    "inventory": inventory_payload,
+                    "created_at": scan_job.created_at
+                }
+        
         return {"scan_id": scan_id, "inventory": None}
+    
+    # Ensure tech array is populated in inventory if missing
+    inventory_payload = artifact.payload
+    if isinstance(inventory_payload, dict):
+        discovery = inventory_payload.get("discovery", {})
+        httpx_data = discovery.get("httpx", {})
+        
+        # If tech array is missing or empty, try to populate from HTTPX findings
+        if not httpx_data.get("tech") or len(httpx_data.get("tech", [])) == 0:
+            from app.models.finding import Finding
+            httpx_findings = db.query(Finding).filter(
+                Finding.scan_job_id == scan_id,
+                Finding.tool_name == "httpx"
+            ).limit(100).all()
+            
+            technologies = []
+            for finding in httpx_findings:
+                if finding.raw_data:
+                    try:
+                        import json as json_module
+                        raw = json_module.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
+                        if isinstance(raw, dict):
+                            tech_list = raw.get("tech", [])
+                            if tech_list and isinstance(tech_list, list):
+                                for tech_item in tech_list:
+                                    if isinstance(tech_item, str) and tech_item not in technologies:
+                                        technologies.append(tech_item)
+                                    elif isinstance(tech_item, dict):
+                                        tech_name = tech_item.get("name") or tech_item.get("value") or ""
+                                        if tech_name and tech_name not in technologies:
+                                            technologies.append(tech_name)
+                    except Exception as e:
+                        logger.debug(f"Failed to extract tech from httpx finding: {e}")
+                        continue
+            
+            if technologies:
+                httpx_data["tech"] = technologies
+                discovery["httpx"] = httpx_data
+                inventory_payload["discovery"] = discovery
+                logger.info(f"Populated {len(technologies)} technologies in inventory from HTTPX findings")
     
     return {
         "scan_id": scan_id,
-        "inventory": artifact.payload,
+        "inventory": inventory_payload,
         "created_at": artifact.created_at
     }
 
@@ -2088,7 +2206,15 @@ async def get_scan(
     
     # Don't load all findings here - use paginated endpoint instead
     # Just get the count for summary generation
-    findings_count = db.query(Finding).filter(Finding.scan_job_id == scan_id).count()
+    # Exclude surface assets from findings count
+    # Include findings where category IS NULL (existing findings) or category != "surface"
+    from sqlalchemy import or_
+    findings_count = (
+        db.query(Finding)
+        .filter(Finding.scan_job_id == scan_id)
+        .filter(or_(Finding.category.is_(None), Finding.category != "surface"))
+        .count()
+    )
     
     # Get per-tool statuses for progress indicator
     from app.models.finding import ToolResult
@@ -2713,7 +2839,17 @@ async def get_scan_findings(
     
     # Build query for findings (eager load instances for grouped findings)
     from sqlalchemy.orm import joinedload
-    query = db.query(Finding).options(joinedload(Finding.instances)).filter(Finding.scan_job_id == scan_id)
+    # Filter out surface assets (HTTPX enumeration data, not vulnerabilities)
+    # Include findings where category IS NULL (existing findings) or category != "surface"
+    # Also explicitly exclude HTTPX tool findings (now stored as ScanArtifacts)
+    from sqlalchemy import or_
+    query = (
+        db.query(Finding)
+        .options(joinedload(Finding.instances))
+        .filter(Finding.scan_job_id == scan_id)
+        .filter(Finding.tool_name != "httpx")  # HTTPX findings are now artifacts, not findings
+        .filter(or_(Finding.category.is_(None), Finding.category != "surface"))  # Exclude surface assets, include NULLs
+    )
     
     # Apply filters
     if severity:
@@ -2772,148 +2908,300 @@ async def get_scan_findings(
     
     items = []
     for finding in findings:
-        # Load instances for this finding (if using new normalizer)
-        instances = []
-        affected_count = 1
-        mostly_static = False
-        if hasattr(finding, 'instances'):
-            # Instances relationship may be loaded via joinedload
-            instances_list = finding.instances if finding.instances else []
-            instances = list(instances_list) if instances_list else []
-            affected_count = finding.affected_count if hasattr(finding, 'affected_count') and finding.affected_count else (len(instances) if instances else 1)
-            if instances:
-                static_count = sum(1 for inst in instances if inst.is_static_asset)
-                mostly_static = (static_count / len(instances)) > 0.8
-        elif hasattr(finding, 'affected_count') and finding.affected_count and finding.affected_count > 1:
-            # Fallback: use affected_count if instances not loaded
-            affected_count = finding.affected_count
-        
-        # Extract location from raw_data if needed
-        location_data = extract_location_from_raw_data(finding)
-        
-        # Fallback: use scan's target URL if tool/DB didn't provide one
-        # This ensures we never show "Location information not available" when we know the scan target
-        url = location_data.get("url")
-        http_method = location_data.get("http_method")
-        parameter = location_data.get("parameter")
-        
-        # If we have instances, use first instance URL as primary
-        if instances and instances[0].url:
-            url = instances[0].url
-            http_method = instances[0].http_method or http_method
-            parameter = instances[0].parameter or parameter
-        
-        if not url and scan_target_url:
-            url = scan_target_url
-            # Default method when unknown
-            if not http_method:
-                http_method = "GET"
-        
-        # Get impact summary
-        impact_summary = get_impact_summary(finding)
-        
-        # Get remediation data
-        remediation_data = get_remediation_data(finding)
-        
-        # Debug logging for first finding
-        if len(items) == 0:
-            logger.info(f"DEBUG Finding extraction - ID: {finding.id}, Title: {finding.title}")
-            logger.info(f"  DB fields - url: {finding.url}, http_method: {finding.http_method}, parameter: {finding.parameter}")
-            logger.info(f"  Extracted - url: {location_data['url']}, http_method: {location_data['http_method']}, parameter: {location_data['parameter']}")
-            logger.info(f"  After fallback - url: {url}, http_method: {http_method}, parameter: {parameter}")
-            logger.info(f"  Scan target URL: {scan_target_url}")
-            logger.info(f"  Impact: {impact_summary}")
-            logger.info(f"  Remediation summary: {remediation_data['remediation_summary']}")
-            logger.info(f"  Default steps: {bool(remediation_data['default_remediation_steps'])}")
+        try:
+            # Load instances for this finding (if using new normalizer)
+            instances = []
+            affected_count = 1
+            mostly_static = False
+            instances_sample = []
+            if hasattr(finding, 'instances'):
+                # Instances relationship may be loaded via joinedload
+                instances_list = finding.instances if finding.instances else []
+                instances = list(instances_list) if instances_list else []
+                affected_count = finding.affected_count if hasattr(finding, 'affected_count') and finding.affected_count else (len(instances) if instances else 1)
+                if instances:
+                    static_count = sum(1 for inst in instances if inst.is_static_asset)
+                    mostly_static = (static_count / len(instances)) > 0.8
+                    # Create instances_sample (up to 10 instances)
+                    instances_sample = [
+                        {
+                            "url": inst.url,
+                            "path": inst.path,
+                            "http_method": inst.http_method,
+                            "parameter": inst.parameter,
+                            "evidence_snippet": inst.evidence_snippet,
+                            "is_static_asset": inst.is_static_asset,
+                        }
+                        for inst in instances[:10]  # Limit to 10 instances
+                    ]
+            elif hasattr(finding, 'affected_count') and finding.affected_count and finding.affected_count > 1:
+                # Fallback: use affected_count if instances not loaded
+                affected_count = finding.affected_count
+            
+            # Extract location from raw_data if needed
+            location_data = extract_location_from_raw_data(finding)
+            
+            # Fallback: use scan's target URL if tool/DB didn't provide one
+            # This ensures we never show "Location information not available" when we know the scan target
+            url = location_data.get("url")
+            http_method = location_data.get("http_method")
+            parameter = location_data.get("parameter")
+            
+            # If we have instances, use first instance URL as primary
+            if instances and len(instances) > 0 and instances[0].url:
+                url = instances[0].url
+                http_method = instances[0].http_method or http_method
+                parameter = instances[0].parameter or parameter
+            
+            if not url and scan_target_url:
+                url = scan_target_url
+                # Default method when unknown
+                if not http_method:
+                    http_method = "GET"
+            
+            # Get impact summary
+            impact_summary = get_impact_summary(finding)
+            
+            # Get remediation data
+            remediation_data = get_remediation_data(finding)
+            
+            # Debug logging for first finding
+            if len(items) == 0:
+                logger.info(f"DEBUG Finding extraction - ID: {finding.id}, Title: {finding.title}")
+                logger.info(f"  DB fields - url: {finding.url}, http_method: {finding.http_method}, parameter: {finding.parameter}")
+                logger.info(f"  Extracted - url: {location_data['url']}, http_method: {location_data['http_method']}, parameter: {location_data['parameter']}")
+                logger.info(f"  After fallback - url: {url}, http_method: {http_method}, parameter: {parameter}")
+                logger.info(f"  Scan target URL: {scan_target_url}")
+                logger.info(f"  Impact: {impact_summary}")
+                logger.info(f"  Remediation summary: {remediation_data['remediation_summary']}")
+                logger.info(f"  Default steps: {bool(remediation_data['default_remediation_steps'])}")
+                if finding.raw_data:
+                    try:
+                        import json
+                        rd = json.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
+                        logger.info(f"  Raw data keys: {list(rd.keys()) if isinstance(rd, dict) else 'Not a dict'}")
+                    except:
+                        logger.info(f"  Raw data: Could not parse")
+            
+            # Extract categories from raw_data if available
+            categories = None
             if finding.raw_data:
                 try:
-                    import json
-                    rd = json.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
-                    logger.info(f"  Raw data keys: {list(rd.keys()) if isinstance(rd, dict) else 'Not a dict'}")
-                except:
-                    logger.info(f"  Raw data: Could not parse")
-        
-        # Extract categories from raw_data if available
-        categories = None
-        if finding.raw_data:
-            try:
-                raw_data_dict = json.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
-                if isinstance(raw_data_dict, dict) and "categories" in raw_data_dict:
-                    categories = raw_data_dict["categories"]
-            except (json.JSONDecodeError, TypeError):
-                pass
+                    raw_data_dict = json.loads(finding.raw_data) if isinstance(finding.raw_data, str) else finding.raw_data
+                    if isinstance(raw_data_dict, dict) and "categories" in raw_data_dict:
+                        categories = raw_data_dict["categories"]
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
-        # Backfill CWE for ZAP findings if missing
-        cwe_id = finding.cwe_id
-        severity_value = finding.severity
-        tool_name = finding.tool_name or ""
-        if tool_name.lower() == "zap" and finding.raw_data:
-            raw_dict = parse_raw_json(finding.raw_data)
-            if raw_dict:
-                zap_meta = extract_zap_metadata(raw_dict)
-                if not cwe_id:
-                    cwe_id = normalize_cwe_id(zap_meta.get("cweid"))
-                # Backfill severity for ZAP findings if stored severity is missing/INFO
-                current_severity = None
-                if hasattr(severity_value, "value"):
-                    current_severity = severity_value.value
-                else:
-                    current_severity = str(severity_value) if severity_value is not None else None
-                if not current_severity or current_severity.lower() == "info":
-                    computed_severity, _ = zap_to_severity(
-                        zap_meta.get("riskcode", 0),
-                        zap_meta.get("confidence", 0),
-                        zap_meta.get("alert") or finding.title,
-                        zap_meta.get("raw_dict", raw_dict),
-                    )
-                    severity_value = computed_severity
-        
-        items.append(
-            FindingResponse(
-                id=finding.id,
-                title=finding.title,
-                description=finding.description,
-                severity=severity_value,
-                status=finding.status.value if hasattr(finding.status, 'value') else str(finding.status) if finding.status else 'open',
-                cve_id=finding.cve_id,
-                cwe_id=cwe_id,
-                cvss_score=finding.cvss_score,
-                # ZAP-specific metadata
-                wasc_id=finding.wasc_id if hasattr(finding, 'wasc_id') else None,
-                plugin_id=finding.plugin_id if hasattr(finding, 'plugin_id') else None,
-                alert_ref=finding.alert_ref if hasattr(finding, 'alert_ref') else None,
-                zap_confidence=finding.zap_confidence if hasattr(finding, 'zap_confidence') else None,
-                zap_riskcode=finding.zap_riskcode if hasattr(finding, 'zap_riskcode') else None,
-                url=url,
-                path=finding.path,
-                recommendation=finding.recommendation,
-                tool_name=finding.tool_name,  # This should be canonical "dalfox"
-                created_at=finding.created_at,
-                # Enhanced fields
-                vuln_type=finding.vuln_type,
-                http_method=http_method,
-                parameter=parameter,
-                remediation_summary=remediation_data["remediation_summary"],
-                remediation_steps=finding.remediation_steps if hasattr(finding, 'remediation_steps') else None,
-                default_remediation_steps=remediation_data["default_remediation_steps"],
-                impact_summary=impact_summary,
-                evidence=finding.evidence if hasattr(finding, 'evidence') else None,
-                ai_source=finding.ai_source if hasattr(finding, 'ai_source') else None,
-                ai_model=finding.ai_model if hasattr(finding, 'ai_model') else None,
-                ai_confidence=finding.ai_confidence if hasattr(finding, 'ai_confidence') else None,
-                # Grouping fields
-                affected_count=affected_count,
-                instances_sample=instances_sample,
-                mostly_static=mostly_static,
-                rule_family=finding.rule_family if hasattr(finding, 'rule_family') else None,
+            # Backfill CWE for ZAP findings if missing
+            cwe_id = finding.cwe_id
+            severity_value = finding.severity
+            tool_name = finding.tool_name or ""
+            if tool_name.lower() == "zap" and finding.raw_data:
+                raw_dict = parse_raw_json(finding.raw_data)
+                if raw_dict:
+                    zap_meta = extract_zap_metadata(raw_dict)
+                    if not cwe_id:
+                        cwe_id = normalize_cwe_id(zap_meta.get("cweid"))
+                    # Backfill severity for ZAP findings if stored severity is missing/INFO
+                    current_severity = None
+                    if hasattr(severity_value, "value"):
+                        current_severity = severity_value.value
+                    else:
+                        current_severity = str(severity_value) if severity_value is not None else None
+                    if not current_severity or current_severity.lower() == "info":
+                        computed_severity, _ = zap_to_severity(
+                            zap_meta.get("riskcode", 0),
+                            zap_meta.get("confidence", 0),
+                            zap_meta.get("alert") or finding.title,
+                            zap_meta.get("raw_dict", raw_dict),
+                        )
+                        severity_value = computed_severity
+            
+            items.append(
+                FindingResponse(
+                    id=finding.id,
+                    title=finding.title,
+                    description=finding.description,
+                    severity=severity_value,
+                    status=finding.status.value if hasattr(finding.status, 'value') else str(finding.status) if finding.status else 'open',
+                    cve_id=finding.cve_id,
+                    cwe_id=cwe_id,
+                    cvss_score=finding.cvss_score,
+                    # ZAP-specific metadata
+                    wasc_id=finding.wasc_id if hasattr(finding, 'wasc_id') else None,
+                    plugin_id=finding.plugin_id if hasattr(finding, 'plugin_id') else None,
+                    alert_ref=finding.alert_ref if hasattr(finding, 'alert_ref') else None,
+                    zap_confidence=finding.zap_confidence if hasattr(finding, 'zap_confidence') else None,
+                    zap_riskcode=finding.zap_riskcode if hasattr(finding, 'zap_riskcode') else None,
+                    url=url,
+                    path=finding.path,
+                    recommendation=finding.recommendation,
+                    tool_name=finding.tool_name,  # This should be canonical "dalfox"
+                    created_at=finding.created_at,
+                    # Enhanced fields
+                    vuln_type=finding.vuln_type,
+                    http_method=http_method,
+                    parameter=parameter,
+                    remediation_summary=remediation_data["remediation_summary"],
+                    remediation_steps=finding.remediation_steps if hasattr(finding, 'remediation_steps') else None,
+                    default_remediation_steps=remediation_data["default_remediation_steps"],
+                    impact_summary=impact_summary,
+                    evidence=finding.evidence if hasattr(finding, 'evidence') else None,
+                    ai_source=finding.ai_source if hasattr(finding, 'ai_source') else None,
+                    ai_model=finding.ai_model if hasattr(finding, 'ai_model') else None,
+                    ai_confidence=finding.ai_confidence if hasattr(finding, 'ai_confidence') else None,
+                    # Grouping fields
+                    affected_count=affected_count,
+                    instances_sample=instances_sample,
+                    mostly_static=mostly_static,
+                    rule_family=finding.rule_family if hasattr(finding, 'rule_family') else None,
+                )
             )
-        )
+        except Exception as e:
+            logger.error(f"Error constructing response for finding {finding.id}: {e}", exc_info=True)
+            # Continue with next finding instead of failing entire request
+            continue
     
     return {
         "items": items,
         "total": total,
         "skip": skip,
         "limit": limit
+    }
+
+
+@router.get("/{scan_id}/findings/{finding_id}/instances")
+async def get_finding_instances(
+    scan_id: str,
+    finding_id: str,
+    limit: int = Query(100000, ge=0, le=20000, description="Maximum number of instances to return. Use 0 or 100000 for all (max 20000)"),
+    offset: int = Query(0, ge=0, description="Number of instances to skip for pagination"),
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get all instances for a specific finding with pagination support.
+    
+    Supports:
+    - limit=0 or limit=100000: Returns all instances (up to server max of 20000)
+    - Pagination: Use offset and limit for chunked retrieval
+    - Returns URLs in stable sorted order (by URL ascending)
+    
+    Requires X-Thandev-Tenant-Id or X-Thandev-User-Id header.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required"
+        )
+    
+    # Verify scan belongs to tenant and user via project
+    scan_job = (
+        db.query(ScanJob)
+        .join(Project, ScanJob.project_id == Project.id)
+        .filter(
+            ScanJob.id == scan_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id
+        )
+        .first()
+    )
+    
+    if not scan_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scan not found or access denied"
+        )
+    
+    # Verify finding belongs to this scan
+    from app.models.finding import FindingInstance
+    finding = (
+        db.query(Finding)
+        .filter(
+            Finding.id == finding_id,
+            Finding.scan_job_id == scan_id
+        )
+        .first()
+    )
+    
+    if not finding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Finding not found"
+        )
+    
+    # Determine effective limit (0 or 100000 means "all", but cap at 20000)
+    # CRITICAL: For large findings, we need to return all instances, not cap at 20000
+    # If affected_count > 20000, we should still return up to 20000, but log a warning
+    effective_limit = 20000 if (limit == 0 or limit >= 100000) else limit
+    
+    # If finding has more than 20000 affected URLs, we can't return all in one request
+    # But we should at least return the first 20000
+    if finding.affected_count and finding.affected_count > 20000:
+        logger.warning(
+            f"Finding {finding_id} has {finding.affected_count} affected URLs, but API limit is 20000. "
+            f"Only returning first 20000 instances. Use pagination to get remaining instances."
+        )
+    
+    # Build query with stable ordering
+    query = (
+        db.query(FindingInstance)
+        .filter(FindingInstance.finding_id == finding_id)
+        .order_by(
+            FindingInstance.url.asc().nulls_last(),
+            FindingInstance.path.asc().nulls_last(),
+            FindingInstance.http_method.asc().nulls_last()
+        )
+    )
+    
+    # Get total count
+    total_count = query.count()
+    
+    # Apply pagination
+    instances = query.offset(offset).limit(effective_limit).all()
+    
+    logger.info(
+        f"Found {total_count} total instances for finding {finding_id} in scan {scan_id} "
+        f"(affected_count={finding.affected_count}, returning {len(instances)} with offset={offset}, limit={effective_limit})"
+    )
+    
+    # Convert to response format
+    instances_data = [
+        {
+            "url": inst.url,
+            "path": inst.path,
+            "http_method": inst.http_method,
+            "parameter": inst.parameter,
+            "evidence_snippet": inst.evidence_snippet,
+            "is_static_asset": inst.is_static_asset,
+        }
+        for inst in instances
+    ]
+    
+    # WARNING: If affected_count > stored instances, log a warning
+    if finding.affected_count and finding.affected_count > total_count:
+        logger.warning(
+            f"Data inconsistency: Finding {finding_id} has affected_count={finding.affected_count} "
+            f"but only {total_count} instances stored. This indicates an ingestion issue."
+        )
+    
+    # Calculate next offset for pagination
+    next_offset = None
+    if offset + len(instances) < total_count:
+        next_offset = offset + len(instances)
+    
+    logger.info(f"Returning {len(instances_data)} instances for finding {finding_id} (offset={offset}, next_offset={next_offset})")
+    
+    return {
+        "finding_id": finding_id,
+        "total": total_count,
+        "affected_count": finding.affected_count,  # Include affected_count for frontend comparison
+        "offset": offset,
+        "limit": effective_limit,
+        "next_offset": next_offset,
+        "items": instances_data
     }
 
 

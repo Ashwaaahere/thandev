@@ -713,7 +713,8 @@ async def create_tool_result(
                     assert severity is not None, "ZAP severity must be computed from riskcode"
                     assert severity != Severity.INFO or riskcode == 0, f"ZAP finding with riskcode={riskcode} should not be INFO"
                 
-                # Use normalizer for ZAP findings to enable deduplication and grouping
+                # CRITICAL: ZAP findings MUST use normalizer for grouping
+                # All ZAP findings must be grouped to prevent duplicates
                 if tool_name.lower() == "zap":
                     finding, instance = create_or_update_finding_with_normalizer(
                         db=db,
@@ -723,6 +724,17 @@ async def create_tool_result(
                         tool_result_id=tool_result_id,
                     )
                     findings_created.append(finding)
+                    
+                    # Assertion: ZAP findings must have finding_key and affected_count
+                    if not hasattr(finding, 'finding_key') or not finding.finding_key:
+                        logger.error(
+                            f"ZAP finding missing finding_key: {finding.id}, title={finding.title[:50]}, "
+                            f"plugin_id={finding.plugin_id}"
+                        )
+                    if not hasattr(finding, 'affected_count') or finding.affected_count < 1:
+                        logger.error(
+                            f"ZAP finding missing affected_count: {finding.id}, title={finding.title[:50]}"
+                        )
                 else:
                     # Use legacy function for non-ZAP tools (backward compatibility)
                     finding = create_or_update_finding(

@@ -591,8 +591,10 @@ def _run_single_tool(
             httpx_results = parse_httpx_output(output_file)
             parsed_count = len(httpx_results)
             logger.info("Parsed %d httpx findings for scan %s", parsed_count, scan_job.id)
-            findings = ingest_httpx_findings(db, scan_job.id, httpx_results, tool_result_id=tool_run_id)
-            created_count_hint = len(findings)
+            # HTTPX now stores data as ScanArtifacts, not Findings
+            artifact_ids = ingest_httpx_findings(db, scan_job.id, httpx_results, tool_result_id=tool_run_id)
+            # No findings created (stored as artifacts instead)
+            created_count_hint = 0
             update_tool_run_counts(db, tool_run_id, parsed_count, created_count_hint)
         except Exception as e:
             error_msg = f"Failed to ingest httpx findings: {str(e)}"
@@ -1993,19 +1995,40 @@ def run_scan_for_job(job: "ScanJob") -> None:
         
         # CRITICAL: Always update findings_count in summary from database
         # Query findings count directly from database to ensure accuracy
-        from app.models.finding import Finding
-        final_findings_count = db.query(Finding).filter(Finding.scan_job_id == scan_job.id).count()
+        from app.models.finding import Finding, FindingInstance
+        unique_findings_count = db.query(Finding).filter(Finding.scan_job_id == scan_job.id).count()
         
-        # Ensure summary has findings_count set
+        # Calculate total instances count
+        total_instances_count = db.query(FindingInstance).join(Finding).filter(
+            Finding.scan_job_id == scan_job.id
+        ).count()
+        # Fallback: if no instances, use affected_count sum
+        if total_instances_count == 0:
+            findings_with_count = db.query(Finding.affected_count).filter(
+                Finding.scan_job_id == scan_job.id
+            ).all()
+            total_instances_count = sum(row[0] or 1 for row in findings_with_count) if findings_with_count else unique_findings_count
+        
+        # Ensure summary has findings_count, unique_findings_count, and instances_count set
         if scan_job.summary:
             if isinstance(scan_job.summary, dict):
-                scan_job.summary["findings_count"] = final_findings_count
+                scan_job.summary["findings_count"] = unique_findings_count  # Backward compatibility
+                scan_job.summary["unique_findings_count"] = unique_findings_count
+                scan_job.summary["instances_count"] = total_instances_count
             else:
                 # If summary is not a dict, create a new one
-                scan_job.summary = {"findings_count": final_findings_count}
+                scan_job.summary = {
+                    "findings_count": unique_findings_count,
+                    "unique_findings_count": unique_findings_count,
+                    "instances_count": total_instances_count,
+                }
         else:
-            # If summary doesn't exist, create a minimal one with findings_count
-            scan_job.summary = {"findings_count": final_findings_count}
+            # If summary doesn't exist, create a minimal one
+            scan_job.summary = {
+                "findings_count": unique_findings_count,
+                "unique_findings_count": unique_findings_count,
+                "instances_count": total_instances_count,
+            }
         
         db.commit()
         # Reload to get final findings count

@@ -114,12 +114,15 @@ def _load_scan_and_findings(
 ) -> Tuple[ScanJob, List[Finding]]:
     """
     Load a ScanJob and its findings using tenant scoping.
+    Eager loads FindingInstance relationships for grouped findings.
     """
+    from app.models.finding import FindingInstance
+    
     q = (
         db.query(ScanJob)
         .options(
             joinedload(ScanJob.project),
-            joinedload(ScanJob.findings),
+            joinedload(ScanJob.findings).joinedload(Finding.instances),
         )
         .join(Project, ScanJob.project_id == Project.id)
         .filter(
@@ -132,7 +135,31 @@ def _load_scan_and_findings(
     if not scan:
         raise ValueError("Scan not found for this tenant")
 
-    findings: List[Finding] = list(getattr(scan, "findings", []) or [])
+    all_findings: List[Finding] = list(getattr(scan, "findings", []) or [])
+    
+    # Filter out HTTPX surface findings (now stored as ScanArtifacts, not Findings)
+    # Also filter out any remaining surface assets marked with category="surface"
+    findings = []
+    for f in all_findings:
+        # Skip HTTPX findings (they're now artifacts)
+        if getattr(f, "tool_name", "").lower() == "httpx":
+            continue
+        # Skip surface assets
+        category = getattr(f, "category", None)
+        if category == "surface":
+            continue
+        findings.append(f)
+    
+    # Load HTTPX surface artifacts from ScanArtifacts table
+    from app.models.scan_artifact import ScanArtifact
+    httpx_artifacts = db.query(ScanArtifact).filter(
+        ScanArtifact.scan_id == scan_id,
+        ScanArtifact.type == "httpx_surface"
+    ).all()
+    
+    # Store HTTPX artifacts in scan object for PDF generation
+    scan._httpx_artifacts = httpx_artifacts  # type: ignore
+    
     return scan, findings
 
 
@@ -306,12 +333,48 @@ def _build_status_pill(status: str) -> Table:
     return pill_table
 
 
-def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict, float]:
-    """Compute findings count, severity breakdown, and risk score from actual findings."""
-    import math
+def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict, float, int]:
+    """
+    Compute findings count, severity breakdown, risk score, and instances count.
     
-    findings_count = len(findings)
-    severity_counts = Counter(_severity_label(getattr(f, "severity", "info")) for f in findings)
+    Uses UNIQUE findings (not instances) for risk score calculation.
+    Applies cap: if max severity is MEDIUM and no HIGH/CRITICAL, cap at 5.9.
+    Excludes HTTPX surface assets (category="surface") from risk score and findings count.
+    
+    Returns:
+        Tuple of (unique_findings_count, severity_breakdown, risk_score, total_instances_count)
+    """
+    import math
+    import json
+    
+    # Filter out surface assets (HTTPX enumeration data, not vulnerabilities)
+    vulnerability_findings = []
+    for f in findings:
+        # Check category field
+        if getattr(f, "category", None) == "surface":
+            continue
+        # Check raw_data for surface asset flag
+        raw_data = getattr(f, "raw_data", None)
+        if raw_data:
+            try:
+                raw_data_dict = json.loads(raw_data) if isinstance(raw_data, str) else raw_data
+                if isinstance(raw_data_dict, dict) and raw_data_dict.get("is_surface_asset") is True:
+                    continue
+                if isinstance(raw_data_dict, dict) and raw_data_dict.get("exclude_from_risk") is True:
+                    continue
+            except:
+                pass
+        vulnerability_findings.append(f)
+    
+    # Count unique findings (not instances), excluding surface assets
+    unique_findings_count = len(vulnerability_findings)
+    
+    # Calculate total instances across all findings (excluding surface assets)
+    total_instances_count = sum(
+        getattr(f, "affected_count", 1) for f in vulnerability_findings
+    )
+    
+    severity_counts = Counter(_severity_label(getattr(f, "severity", "info")) for f in vulnerability_findings)
     breakdown = {sev: severity_counts.get(sev, 0) for sev in ["critical", "high", "medium", "low", "info"]}
     
     # Calculate risk score (0-10 scale)
@@ -327,16 +390,24 @@ def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict, float
     
     # Find max severity present
     max_severity_score = 0
+    max_severity_name = "info"
     for severity, count in breakdown.items():
         if count > 0:
-            max_severity_score = max(max_severity_score, max_severity_scores.get(severity, 0))
+            score = max_severity_scores.get(severity, 0)
+            if score > max_severity_score:
+                max_severity_score = score
+                max_severity_name = severity
     
-    # Count medium+ findings for log factor
+    # Count medium+ findings for log factor (use UNIQUE count, not instances)
     count_medium_high = breakdown["medium"] + breakdown["high"] + breakdown["critical"]
     log_factor = min(3.0, math.log2(1 + count_medium_high)) if count_medium_high > 0 else 0.0
     
     # Calculate base score
     base_score = max_severity_score + log_factor
+    
+    # Apply cap: if max severity is MEDIUM and no HIGH/CRITICAL, cap at 5.9
+    if max_severity_name == "medium" and breakdown["high"] == 0 and breakdown["critical"] == 0:
+        base_score = min(base_score, 5.9)
     
     # Clamp to 0-10 and round to 1 decimal
     risk_score = max(0.0, min(10.0, base_score))
@@ -346,7 +417,7 @@ def _compute_findings_metrics(findings: List[Finding]) -> tuple[int, dict, float
     if breakdown["medium"] > 0 and risk_score == 0:
         risk_score = 0.1
     
-    return findings_count, breakdown, risk_score
+    return unique_findings_count, breakdown, risk_score, total_instances_count
 
 
 def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> List:
@@ -387,7 +458,8 @@ def _build_cover_page(scan: ScanJob, findings: List[Finding], styles: dict) -> L
     
     # Metadata table (narrower, card-like)
     summary = getattr(scan, "summary", None)
-    findings_count, severity_breakdown, risk_score = _compute_findings_metrics(findings)
+    unique_findings_count, severity_breakdown, risk_score, total_instances_count = _compute_findings_metrics(findings)
+    findings_count = unique_findings_count  # For backward compatibility
     
     created_at = getattr(scan, "created_at", None)
     created_at_str = created_at.strftime("%Y-%m-%d %H:%M:%S UTC") if created_at else "N/A"
@@ -461,7 +533,8 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
     story = []
     
     summary = getattr(scan, "summary", None)
-    findings_count, severity_breakdown, risk_score = _compute_findings_metrics(findings)
+    unique_findings_count, severity_breakdown, risk_score, total_instances_count = _compute_findings_metrics(findings)
+    findings_count = unique_findings_count  # For backward compatibility
     
     # Section 1: Risk at a glance
     story.append(Paragraph("Risk at a Glance", styles["section_title"]))
@@ -555,20 +628,25 @@ def _build_executive_summary(scan: ScanJob, findings: List[Finding], styles: dic
                 f"This security assessment was conducted on {target_str} using {scan_level} scan level on {date_str}. "
             )
             
+            # Include instances count if different from unique findings
+            instances_note = ""
+            if total_instances_count > unique_findings_count:
+                instances_note = f" ({total_instances_count} total instances across {unique_findings_count} unique issues)"
+            
             if critical_count > 0:
                 exec_summary += (
-                    f"The scan identified {findings_count} finding(s) with {critical_count} critical, {high_count} high, "
+                    f"The scan identified {unique_findings_count} unique finding(s){instances_note} with {critical_count} critical, {high_count} high, "
                     f"and {medium_count} medium-severity issue(s). The overall risk score is {risk_score}/10. "
                     "Critical vulnerabilities require immediate attention."
                 )
             elif high_count > 0:
                 exec_summary += (
-                    f"The scan identified {findings_count} finding(s) with {high_count} high and {medium_count} medium-severity issue(s). "
+                    f"The scan identified {unique_findings_count} unique finding(s){instances_note} with {high_count} high and {medium_count} medium-severity issue(s). "
                     f"The overall risk score is {risk_score}/10. High-severity issues should be prioritized for remediation."
                 )
             else:
                 exec_summary += (
-                    f"The scan identified {findings_count} finding(s) with an overall risk score of {risk_score}/10. "
+                    f"The scan identified {unique_findings_count} unique finding(s){instances_note} with an overall risk score of {risk_score}/10. "
                     "Focus on hardening and best practices to further improve security posture."
                 )
     
@@ -1261,13 +1339,18 @@ def _build_web_attack_surface_overview(findings: List[Finding], styles: dict) ->
 
 
 def _build_top_exploitable_paths(findings: List[Finding], styles: dict) -> List:
-    """Build Top 5 Exploitable Paths section with URL, category, severity, and impact."""
+    """Build Top 5 Exploitable Paths section with URL, category, severity, and impact.
+    
+    Deduplicates findings by finding_key to ensure each unique issue appears only once.
+    Shows affected_count for grouped findings.
+    """
     story = []
     
     if not findings:
         return story
     
     import json
+    from xml.sax.saxutils import escape as xml_escape
     
     # Filter to Critical/High/Medium findings and sort by severity
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
@@ -1279,10 +1362,37 @@ def _build_top_exploitable_paths(findings: List[Finding], styles: dict) -> List:
     if not exploitable:
         return story
     
+    # Deduplicate by finding_key to ensure each unique issue appears only once
+    # This prevents CSP, headers, etc. from appearing multiple times
+    unique_findings = {}
+    for f in exploitable:
+        finding_key = getattr(f, "finding_key", None)
+        if finding_key:
+            # If we've seen this finding_key, keep the one with higher severity or more instances
+            if finding_key not in unique_findings:
+                unique_findings[finding_key] = f
+            else:
+                existing = unique_findings[finding_key]
+                existing_sev = severity_order.get(_severity_label(getattr(existing, "severity", "info")), 4)
+                new_sev = severity_order.get(_severity_label(getattr(f, "severity", "info")), 4)
+                existing_cvss = getattr(existing, "cvss_score", 0) or 0
+                new_cvss = getattr(f, "cvss_score", 0) or 0
+                # Prefer higher severity, or if same severity, higher CVSS
+                if new_sev < existing_sev or (new_sev == existing_sev and new_cvss > existing_cvss):
+                    unique_findings[finding_key] = f
+        else:
+            # Fallback: use title+tool as key for legacy findings without finding_key
+            fallback_key = f"{getattr(f, 'tool_name', '')}:{getattr(f, 'title', '')}"
+            if fallback_key not in unique_findings:
+                unique_findings[fallback_key] = f
+    
+    # Convert back to list and sort
+    deduplicated = list(unique_findings.values())
+    
     # PR-4D: Sort by severity (critical > high > medium), then by CVSS score (descending)
     # Use negative severity_order so lower values (critical=0) come first
     sorted_exploitable = sorted(
-        exploitable,
+        deduplicated,
         key=lambda f: (
             -severity_order.get(_severity_label(getattr(f, "severity", "info")), 4),  # Negate so critical comes first
             -(getattr(f, "cvss_score", 0) or 0),  # Negate so higher CVSS comes first
@@ -1295,7 +1405,20 @@ def _build_top_exploitable_paths(findings: List[Finding], styles: dict) -> List:
         sev = _severity_label(getattr(f, "severity", "info"))
         sev_color = SEVERITY_COLORS[sev]
         title = getattr(f, "title", "") or "(no title)"
+        
+        # Get URL from first instance if available, otherwise from finding.url
         url = getattr(f, "url", "") or "N/A"
+        instances = getattr(f, "instances", []) or []
+        affected_count = getattr(f, "affected_count", 1) or 1
+        
+        if instances and instances[0].url:
+            url = instances[0].url
+        elif not url or url == "N/A":
+            # Try to get from instances
+            if instances:
+                inst_url = getattr(instances[0], "url", None)
+                inst_path = getattr(instances[0], "path", None)
+                url = inst_url or inst_path or "N/A"
         
         # Extract category
         category = "Other"
@@ -1327,11 +1450,17 @@ def _build_top_exploitable_paths(findings: List[Finding], styles: dict) -> List:
         impact = impact_statements.get(category.lower(), "Security risk identified")
         
         # Build entry
-        entry_text = f'<b>{i}. {title}</b><br/>'
-        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">URL:</font> {url}<br/>'
-        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">Category:</font> {category} | '
+        entry_text = f'<b>{i}. {xml_escape(title)}</b>'
+        
+        # Add affected count if grouped finding
+        if affected_count > 1:
+            entry_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">(Affects {affected_count} URLs)</font>'
+        
+        entry_text += '<br/>'
+        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">URL:</font> {xml_escape(str(url))}<br/>'
+        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">Category:</font> {xml_escape(category)} | '
         entry_text += f'<font color="{sev_color.hexval()}"><b>Severity: {sev.upper()}</b></font><br/>'
-        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">Impact:</font> {impact}'
+        entry_text += f'<font color="{COLOR_TEXT_MUTED.hexval()}">Impact:</font> {xml_escape(impact)}'
         
         story.append(Paragraph(entry_text, styles["body"]))
         story.append(Spacer(1, 8))
@@ -1375,8 +1504,120 @@ def _build_findings_overview(findings: List[Finding], styles: dict, mode: str) -
     return story
 
 
-def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
-    """Build detailed findings section (full mode only) with severity badges."""
+def _build_surface_assets_section(httpx_artifacts: List, styles: dict) -> List:
+    """Build HTTP Surface & Tech Detection section from ScanArtifacts (separate from vulnerabilities)."""
+    story = []
+    import json
+    from xml.sax.saxutils import escape as xml_escape
+    
+    if not httpx_artifacts:
+        return story
+    
+    # Extract payload from first artifact (should only be one per scan)
+    artifact = httpx_artifacts[0] if httpx_artifacts else None
+    if not artifact or not hasattr(artifact, 'payload'):
+        return story
+    
+    payload = artifact.payload if isinstance(artifact.payload, dict) else json.loads(artifact.payload) if isinstance(artifact.payload, str) else {}
+    
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("HTTP Surface & Tech Detection", styles["section_title"]))
+    story.append(
+        Paragraph(
+            "The following endpoints were discovered during enumeration. These are informational assets, not security vulnerabilities.",
+            styles["small_muted"]
+        )
+    )
+    story.append(Spacer(1, 8))
+    
+    # Show in-scope non-404 endpoints (limit to 20)
+    in_scope_others = payload.get("in_scope", {}).get("other_endpoints", [])
+    if in_scope_others:
+        story.append(Paragraph("<b>In-Scope Endpoints</b>", styles["subsection_title"]))
+        for endpoint in in_scope_others[:20]:
+            url = endpoint.get("url", "N/A")
+            status_code = endpoint.get("status_code", 0)
+            title = endpoint.get("title", "")
+            tech = endpoint.get("tech", [])
+            
+            entry_text = f'<b>{xml_escape(url[:80])}</b>'
+            if status_code:
+                entry_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">[HTTP {status_code}]</font>'
+            if title:
+                entry_text += f'<br/><font color="{COLOR_TEXT_MUTED.hexval()}">Title: {xml_escape(title[:60])}</font>'
+            if tech:
+                tech_str = ", ".join(tech[:3]) if isinstance(tech, list) else str(tech)
+                entry_text += f'<br/><font color="{COLOR_TEXT_MUTED.hexval()}">Tech: {xml_escape(tech_str[:100])}</font>'
+            
+            story.append(Paragraph(entry_text, styles["body"]))
+            story.append(Spacer(1, 4))
+        
+        if len(in_scope_others) > 20:
+            story.append(
+                Paragraph(
+                    f'<font color="{COLOR_TEXT_MUTED.hexval()}">... and {len(in_scope_others) - 20} more endpoints</font>',
+                    styles["small_muted"]
+                )
+            )
+        story.append(Spacer(1, 8))
+    
+    # Show grouped in-scope 404s
+    in_scope_404_groups = payload.get("in_scope", {}).get("404_groups", [])
+    if in_scope_404_groups:
+        story.append(Paragraph("<b>404 Endpoints (In-Scope)</b>", styles["subsection_title"]))
+        for group in in_scope_404_groups[:10]:
+            count = group.get("count", 0)
+            normalized_title = group.get("normalized_title", "")
+            urls = group.get("urls", [])
+            
+            entry_text = f'<b>{count} endpoints with 404 status</b>'
+            if normalized_title:
+                entry_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">({xml_escape(normalized_title[:50])})</font>'
+            if urls:
+                entry_text += f'<br/><font color="{COLOR_TEXT_MUTED.hexval()}">Sample: {xml_escape(urls[0][:80])}</font>'
+                if len(urls) > 1:
+                    entry_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">... and {len(urls) - 1} more</font>'
+            
+            story.append(Paragraph(entry_text, styles["body"]))
+            story.append(Spacer(1, 4))
+        
+        if len(in_scope_404_groups) > 10:
+            story.append(
+                Paragraph(
+                    f'<font color="{COLOR_TEXT_MUTED.hexval()}">... and {len(in_scope_404_groups) - 10} more 404 groups</font>',
+                    styles["small_muted"]
+                )
+            )
+        story.append(Spacer(1, 8))
+    
+    # Show out-of-scope 404s (collapsed, one line)
+    out_of_scope_404_groups = payload.get("out_of_scope", {}).get("404_groups", [])
+    if out_of_scope_404_groups:
+        story.append(Paragraph("<b>External 404 Pages (Out-of-Scope)</b>", styles["subsection_title"]))
+        total_external_404s = sum(g.get("count", 0) for g in out_of_scope_404_groups)
+        sample_urls = []
+        for group in out_of_scope_404_groups[:3]:
+            sample_urls.extend(group.get("urls", [])[:5])
+        
+        entry_text = f'<font color="{COLOR_TEXT_MUTED.hexval()}"><i>External 404 pages discovered ({total_external_404s} URLs)</i></font>'
+        if sample_urls:
+            entry_text += f'<br/><font color="{COLOR_TEXT_MUTED.hexval()}">Sample: {xml_escape(sample_urls[0][:80])}</font>'
+        
+        story.append(Paragraph(entry_text, styles["small_muted"]))
+        story.append(Spacer(1, 4))
+    
+    return story
+
+
+def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = None) -> List:
+    """
+    Build detailed findings section (full mode only) with severity badges.
+    
+    Args:
+        findings: List of Finding objects (should have instances eager loaded)
+        styles: PDF paragraph styles
+        db: Database session (optional, used to fetch all instances if not already loaded)
+    """
     story = []
     
     if not findings:
@@ -1391,11 +1632,50 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
     
     story.append(Paragraph("Findings Detail", styles["section_title"]))
     
+    # CRITICAL: Deduplicate findings by finding_key to prevent ZAP duplicates
+    # This ensures each unique issue appears only once (grouped version preferred)
+    unique_findings_map = {}
+    for f in findings:
+        finding_key = getattr(f, "finding_key", None)
+        if finding_key:
+            # If we've seen this finding_key, prefer the one with higher affected_count (grouped)
+            if finding_key not in unique_findings_map:
+                unique_findings_map[finding_key] = f
+            else:
+                existing = unique_findings_map[finding_key]
+                existing_count = getattr(existing, "affected_count", 1) or 1
+                new_count = getattr(f, "affected_count", 1) or 1
+                # Prefer grouped version (higher affected_count)
+                if new_count > existing_count:
+                    unique_findings_map[finding_key] = f
+        else:
+            # For legacy findings without finding_key, use title+tool+plugin_id as fallback
+            # This catches ZAP duplicates that might not have finding_key set
+            tool = getattr(f, "tool_name", "") or ""
+            title = getattr(f, "title", "") or ""
+            plugin_id = getattr(f, "plugin_id", "") or ""
+            if tool.lower() == "zap" and plugin_id and title:
+                fallback_key = f"zap:{plugin_id}:{title[:100]}"
+                if fallback_key not in unique_findings_map:
+                    unique_findings_map[fallback_key] = f
+                else:
+                    existing = unique_findings_map[fallback_key]
+                    existing_count = getattr(existing, "affected_count", 1) or 1
+                    new_count = getattr(f, "affected_count", 1) or 1
+                    if new_count > existing_count:
+                        unique_findings_map[fallback_key] = f
+            else:
+                # For non-ZAP or missing plugin_id, include all (no dedup)
+                unique_findings_map[f"legacy:{id(f)}"] = f
+    
+    # Use deduplicated findings
+    deduplicated_findings = list(unique_findings_map.values())
+    
     # Group by severity
     severity_order = ["critical", "high", "medium", "low", "info"]
     findings_by_sev: dict[str, List[Finding]] = {s: [] for s in severity_order}
     
-    for f in findings:
+    for f in deduplicated_findings:
         sev = _severity_label(getattr(f, "severity", "info"))
         findings_by_sev.setdefault(sev, []).append(f)
     
@@ -1446,6 +1726,37 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
             if hasattr(status, "value"):
                 status = str(status.value)
             
+            # Get instances for grouped findings
+            instances = getattr(f, "instances", []) or []
+            affected_count = getattr(f, "affected_count", 1) or 1
+            mostly_static = False
+            
+            # If we have fewer instances than affected_count, fetch all from database
+            if db and affected_count > 1 and len(instances) < affected_count:
+                from app.models.finding import FindingInstance
+                finding_id = getattr(f, "id", None)
+                if finding_id:
+                    # Fetch all instances from database
+                    all_db_instances = (
+                        db.query(FindingInstance)
+                        .filter(FindingInstance.finding_id == finding_id)
+                        .order_by(
+                            FindingInstance.url.asc().nulls_last(),
+                            FindingInstance.path.asc().nulls_last()
+                        )
+                        .all()
+                    )
+                    if all_db_instances:
+                        instances = all_db_instances
+                        logger.info(
+                            f"PDF: Fetched {len(instances)} instances for finding {finding_id} "
+                            f"(affected_count={affected_count})"
+                        )
+            
+            if instances:
+                static_count = sum(1 for inst in instances if getattr(inst, "is_static_asset", False))
+                mostly_static = (static_count / len(instances)) > 0.8
+            
             # ZAP-specific metadata
             wasc_id = getattr(f, "wasc_id", None)
             plugin_id = getattr(f, "plugin_id", None)
@@ -1458,6 +1769,13 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
             escaped_title = xml_escape(title)
             sev_badge_text = f'<font color="{sev_text_color.hexval()}"><b>{sev.upper()}</b></font>'
             title_text = f'[{sev_badge_text}] {escaped_title}'
+            
+            # Add affected count if this is a grouped finding
+            if affected_count > 1:
+                title_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">(Affects {affected_count} URLs)</font>'
+                if mostly_static:
+                    title_text += f' <font color="{COLOR_TEXT_MUTED.hexval()}">[Mostly static assets]</font>'
+            
             story.append(Paragraph(title_text, styles["finding_title"]))
             
             # Metadata line
@@ -1499,25 +1817,211 @@ def _build_findings_detail(findings: List[Finding], styles: dict) -> List:
                 story.append(Paragraph("<b>Recommendation:</b>", styles["body"]))
                 story.append(Paragraph(xml_escape(str(recommendation)), styles["body"]))
             
-            # Location
-            location_parts = []
-            if url:
-                location_parts.append(f"URL: {url}")
-            if path:
-                location_parts.append(f"Path: {path}")
-            if line_number:
-                location_parts.append(f"Line: {line_number}")
-            
-            if location_parts:
+            # Affected URLs (for grouped findings) - Show ALL URLs
+            if affected_count > 1:
                 story.append(Spacer(1, 4))
+                
+                # CRITICAL: Always fetch ALL instances from database, don't rely on eager loading
+                # Eager loading might be limited or incomplete
+                all_instances = instances or []
+                finding_id = getattr(f, "id", None)
+                
+                # If we have fewer instances than affected_count, or if db is available, fetch all from database
+                if db and finding_id and (len(all_instances) < affected_count or len(all_instances) == 0):
+                    from app.models.finding import FindingInstance
+                    # Fetch ALL instances from database
+                    all_db_instances = (
+                        db.query(FindingInstance)
+                        .filter(FindingInstance.finding_id == finding_id)
+                        .order_by(
+                            FindingInstance.url.asc().nulls_last(),
+                            FindingInstance.path.asc().nulls_last(),
+                            FindingInstance.http_method.asc().nulls_last()
+                        )
+                        .all()
+                    )
+                    if all_db_instances:
+                        all_instances = all_db_instances
+                        logger.info(
+                            f"PDF: Fetched {len(all_instances)} instances from DB for finding {finding_id} "
+                            f"(affected_count={affected_count}, previously had {len(instances)})"
+                        )
+                
+                # Store instances for appendix if needed
+                if finding_id:
+                    # Store in finding object for appendix generation
+                    f._pdf_all_instances = all_instances  # type: ignore
+                    f._pdf_finding_id = finding_id  # type: ignore
+                
+                # Display all instances (or what we have)
+                actual_count = len(all_instances) if all_instances else 0
+                if actual_count > 0:
+                    # Show first 25 URLs in body, rest in appendix
+                    MAX_URLS_IN_BODY = 25
+                    urls_to_show = all_instances[:MAX_URLS_IN_BODY]
+                    remaining_count = len(all_instances) - MAX_URLS_IN_BODY if len(all_instances) > MAX_URLS_IN_BODY else 0
+                    
+                    story.append(Paragraph(f"<b>Affected URLs ({actual_count}):</b>", styles["body"]))
+                    
+                    for inst in urls_to_show:
+                        inst_url = getattr(inst, "url", "") or ""
+                        inst_path = getattr(inst, "path", "") or ""
+                        inst_method = getattr(inst, "http_method", "") or "GET"
+                        display_url = inst_url or inst_path or "N/A"
+                        if inst_method:
+                            display_url = f"{inst_method} {display_url}"
+                        
+                        # Wrap long URLs
+                        if len(display_url) > 100:
+                            # Split into multiple lines if very long
+                            story.append(
+                                Paragraph(
+                                    f'<font color="{COLOR_TEXT_MUTED.hexval()}">• {xml_escape(display_url[:100])}</font>',
+                                    styles["small_muted"]
+                                )
+                            )
+                            story.append(
+                                Paragraph(
+                                    f'<font color="{COLOR_TEXT_MUTED.hexval()}">  {xml_escape(display_url[100:])}</font>',
+                                    styles["small_muted"]
+                                )
+                            )
+                        else:
+                            story.append(
+                                Paragraph(
+                                    f'<font color="{COLOR_TEXT_MUTED.hexval()}">• {xml_escape(display_url)}</font>',
+                                    styles["small_muted"]
+                                )
+                            )
+                    
+                    if remaining_count > 0:
+                        story.append(Spacer(1, 4))
+                        story.append(
+                            Paragraph(
+                                f'<font color="{COLOR_TEXT_MUTED.hexval()}"><i>... and {remaining_count} more URL{"s" if remaining_count != 1 else ""} (see Appendix A for full list)</i></font>',
+                                styles["small_muted"]
+                            )
+                        )
+                elif affected_count > 0:
+                    # No instances loaded but affected_count > 0
+                    story.append(
+                        Paragraph(
+                            f'<b>Affected URLs ({affected_count}):</b>',
+                            styles["body"]
+                        )
+                    )
+                    story.append(
+                        Paragraph(
+                            f'<font color="{COLOR_TEXT_MUTED.hexval()}"><i>Instance data not available. This finding affects {affected_count} URL{"s" if affected_count != 1 else ""} but instances were not stored.</i></font>',
+                            styles["small_muted"]
+                        )
+                    )
+            else:
+                # Single location (legacy finding or single instance)
+                location_parts = []
+                if url:
+                    location_parts.append(f"URL: {url}")
+                if path:
+                    location_parts.append(f"Path: {path}")
+                if line_number:
+                    location_parts.append(f"Line: {line_number}")
+                
+                if location_parts:
+                    story.append(Spacer(1, 4))
+                    story.append(
+                        Paragraph(
+                            f'<b>Location:</b> <font color="{COLOR_TEXT_MUTED.hexval()}">{" · ".join(location_parts)}</font>',
+                            styles["small_muted"]
+                        )
+                    )
+            
+            story.append(Spacer(1, 12))
+    
+    return story
+
+
+def _build_appendix_affected_urls(findings: List[Finding], styles: dict) -> List:
+    """
+    Build Appendix A section listing all remaining affected URLs for findings
+    that have more than 25 URLs (first 25 shown in body, rest here).
+    """
+    story = []
+    from xml.sax.saxutils import escape as xml_escape
+    
+    # Collect findings that need appendix entries
+    findings_with_appendix = []
+    for f in findings:
+        finding_id = getattr(f, "_pdf_finding_id", None)
+        all_instances = getattr(f, "_pdf_all_instances", None)
+        affected_count = getattr(f, "affected_count", 1) or 1
+        
+        if finding_id and all_instances and len(all_instances) > 25:
+            findings_with_appendix.append({
+                "finding_id": finding_id,
+                "title": getattr(f, "title", "") or "(no title)",
+                "affected_count": affected_count,
+                "all_instances": all_instances,
+                "remaining_instances": all_instances[25:],  # Skip first 25
+            })
+    
+    if not findings_with_appendix:
+        return story
+    
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Appendix A — Full Affected URL Lists", styles["section_title"]))
+    story.append(
+        Paragraph(
+            "This appendix contains the complete list of affected URLs for findings with more than 25 URLs. "
+            "The first 25 URLs are shown in the main findings section.",
+            styles["small_muted"]
+        )
+    )
+    story.append(Spacer(1, 8))
+    
+    for idx, entry in enumerate(findings_with_appendix, 1):
+        title = xml_escape(entry["title"])
+        remaining_count = len(entry["remaining_instances"])
+        
+        story.append(Paragraph(f"<b>A.{idx}. {title}</b>", styles["subsection_title"]))
+        story.append(
+            Paragraph(
+                f'<font color="{COLOR_TEXT_MUTED.hexval()}">Remaining {remaining_count} of {entry["affected_count"]} affected URLs:</font>',
+                styles["small_muted"]
+            )
+        )
+        story.append(Spacer(1, 4))
+        
+        for inst in entry["remaining_instances"]:
+            inst_url = getattr(inst, "url", "") or ""
+            inst_path = getattr(inst, "path", "") or ""
+            inst_method = getattr(inst, "http_method", "") or "GET"
+            display_url = inst_url or inst_path or "N/A"
+            if inst_method:
+                display_url = f"{inst_method} {display_url}"
+            
+            # Wrap long URLs
+            if len(display_url) > 100:
                 story.append(
                     Paragraph(
-                        f'<b>Location:</b> <font color="{COLOR_TEXT_MUTED.hexval()}">{" · ".join(location_parts)}</font>',
+                        f'<font color="{COLOR_TEXT_MUTED.hexval()}">• {xml_escape(display_url[:100])}</font>',
                         styles["small_muted"]
                     )
                 )
-            
-            story.append(Spacer(1, 12))
+                story.append(
+                    Paragraph(
+                        f'<font color="{COLOR_TEXT_MUTED.hexval()}">  {xml_escape(display_url[100:])}</font>',
+                        styles["small_muted"]
+                    )
+                )
+            else:
+                story.append(
+                    Paragraph(
+                        f'<font color="{COLOR_TEXT_MUTED.hexval()}">• {xml_escape(display_url)}</font>',
+                        styles["small_muted"]
+                    )
+                )
+        
+        story.append(Spacer(1, 12))
     
     return story
 
@@ -1886,6 +2390,12 @@ def generate_scan_report_pdf(
     if stack_fp:
         story.extend(stack_fp)
 
+    # Surface Assets section (HTTPX enumeration data, separate from vulnerabilities)
+    if mode == "full" and hasattr(scan, "_httpx_artifacts") and scan._httpx_artifacts:
+        surface_section = _build_surface_assets_section(scan._httpx_artifacts, styles)
+        if surface_section:
+            story.extend(surface_section)
+    
     # Full mode only: Enumeration and Tech & Dependencies sections
     if mode == "full":
         # Fetch inventory data
@@ -1927,7 +2437,13 @@ def generate_scan_report_pdf(
     else:
         # Full mode: detailed findings on new page
         story.append(PageBreak())
-        story.extend(_build_findings_detail(findings, styles))
+        story.extend(_build_findings_detail(findings, styles, db=db))
+        
+        # Add Appendix A for findings with many URLs
+        appendix_story = _build_appendix_affected_urls(findings, styles)
+        if appendix_story:
+            story.append(PageBreak())
+            story.extend(appendix_story)
 
     # Build PDF with header/footer
     doc.build(story, onFirstPage=_header_footer, onLaterPages=_header_footer)

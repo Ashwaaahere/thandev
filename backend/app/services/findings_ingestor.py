@@ -367,6 +367,7 @@ def create_or_update_finding_with_normalizer(
     - Groups identical findings by finding_key
     - Creates/updates canonical Finding and appends FindingInstance
     - Handles severity normalization (de-noising)
+    - For ZAP findings, ensures no duplicates exist (merges if found)
     
     Args:
         db: Database session
@@ -379,6 +380,21 @@ def create_or_update_finding_with_normalizer(
         Tuple of (Finding, FindingInstance)
     """
     now = datetime.now(timezone.utc)
+    
+    # CRITICAL: For ZAP findings, ensure they always go through grouping
+    tool = finding_data.get("tool") or finding_data.get("tool_name", "")
+    if tool.lower() == "zap":
+        # Assert that ZAP findings have required fields for grouping
+        plugin_id = finding_data.get("plugin_id") or finding_data.get("raw_data", {})
+        if isinstance(plugin_id, str):
+            try:
+                import json
+                raw_data = json.loads(plugin_id) if plugin_id.startswith("{") else {}
+                plugin_id = raw_data.get("pluginId") if isinstance(raw_data, dict) else None
+            except:
+                pass
+        if not plugin_id:
+            logger.warning(f"ZAP finding missing plugin_id: {finding_data.get('title', 'Unknown')}")
     
     # Normalize and group finding
     canonical_data, instance_data = normalize_and_group_finding(
@@ -395,6 +411,56 @@ def create_or_update_finding_with_normalizer(
         Finding.scan_job_id == scan_job_id,
         Finding.finding_key == finding_key
     ).first()
+    
+    # CRITICAL FIX: For ZAP findings, also check for duplicates by plugin_id + title
+    # This prevents the same ZAP alert from appearing both grouped and ungrouped
+    if not existing_finding and canonical_tool.lower() == "zap":
+        plugin_id = canonical_data.get("plugin_id")
+        title = canonical_data.get("title", "")
+        if plugin_id and title:
+            # Check for any existing ZAP finding with same plugin_id and title in this scan
+            # that might have been created without grouping (missing finding_key or different key)
+            # Note: FindingInstance is already imported at the top of the file
+            duplicate_candidates = db.query(Finding).filter(
+                Finding.scan_job_id == scan_job_id,
+                Finding.tool_name == "zap",
+                Finding.plugin_id == plugin_id,
+                Finding.title == title[:500],  # Match first 500 chars
+            ).all()
+            
+            # If we find duplicates, merge them into the first one
+            if duplicate_candidates:
+                # Sort by affected_count (prefer grouped ones) and created_at
+                duplicate_candidates.sort(key=lambda f: (
+                    -(getattr(f, 'affected_count', 1) or 1),  # Higher affected_count first
+                    getattr(f, 'created_at', now)  # Older first
+                ))
+                
+                # Use the best candidate (highest affected_count, oldest)
+                existing_finding = duplicate_candidates[0]
+                
+                # Merge other duplicates into this one
+                for dup in duplicate_candidates[1:]:
+                    logger.warning(
+                        f"Merging duplicate ZAP finding: {dup.id} into {existing_finding.id} "
+                        f"(plugin_id={plugin_id}, title={title[:50]})"
+                    )
+                    # Move instances from duplicate to existing
+                    dup_instances = db.query(FindingInstance).filter(
+                        FindingInstance.finding_id == dup.id
+                    ).all()
+                    for inst in dup_instances:
+                        inst.finding_id = existing_finding.id
+                        db.add(inst)
+                    # Update affected_count
+                    existing_finding.affected_count = (existing_finding.affected_count or 1) + (dup.affected_count or 1)
+                    # Delete duplicate finding
+                    db.delete(dup)
+                
+                # Update finding_key if missing
+                if not existing_finding.finding_key:
+                    existing_finding.finding_key = finding_key
+                    existing_finding.dedup_key = finding_key
     
     if existing_finding:
         # Update existing finding
@@ -418,17 +484,52 @@ def create_or_update_finding_with_normalizer(
         if not existing_finding.rule_family and canonical_data.get("rule_family"):
             existing_finding.rule_family = canonical_data["rule_family"]
         
-        # Create new instance
+        # CRITICAL: Always create a new instance for each occurrence
+        # This ensures that every time this finding is encountered, an instance is stored
+        # IMPORTANT: Even if URL is None/empty, create the instance (some findings may not have URLs)
+        instance_url = instance_data.get("url")
+        instance_path = instance_data.get("path")
+        
+        # Log every instance creation for debugging (especially for high affected_count findings)
+        should_log = (
+            existing_finding.affected_count <= 5 or  # Always log first 5
+            existing_finding.affected_count % 10 == 0 or  # Log every 10th
+            existing_finding.affected_count > 100  # Always log if > 100 (rare cases)
+        )
+        
+        if should_log:
+            logger.info(
+                f"[INSTANCE-CREATE] Creating instance #{existing_finding.affected_count} for finding {existing_finding.id} "
+                f"(title={existing_finding.title[:50]}): url={instance_url[:100] if instance_url else 'N/A'}, "
+                f"path={instance_path[:100] if instance_path else 'N/A'}"
+            )
+        
         instance = FindingInstance(
             finding_id=existing_finding.id,
-            url=instance_data.get("url"),
-            path=instance_data.get("path"),
+            url=instance_url,
+            path=instance_path,
             http_method=instance_data.get("http_method"),
             parameter=instance_data.get("parameter"),
             evidence_snippet=instance_data.get("evidence_snippet"),
             is_static_asset=instance_data.get("is_static_asset", False),
         )
         db.add(instance)
+        
+        # Flush immediately to ensure instance is persisted (helps catch errors early)
+        try:
+            db.flush()
+            if should_log:
+                logger.info(
+                    f"[INSTANCE-CREATE] Successfully flushed instance #{existing_finding.affected_count} "
+                    f"for finding {existing_finding.id} (instance_id={instance.id})"
+                )
+        except Exception as e:
+            logger.error(
+                f"[INSTANCE-CREATE-ERROR] Failed to flush instance #{existing_finding.affected_count} "
+                f"for finding {existing_finding.id} (url={instance_url[:100] if instance_url else 'N/A'}): {e}",
+                exc_info=True
+            )
+            raise
         
         return existing_finding, instance
     else:
@@ -1611,16 +1712,18 @@ def ingest_httpx_findings(
     scan_job_id: str,
     httpx_results: List[Dict[str, Any]],
     tool_result_id: str | None = None,
-) -> List[Finding]:
+) -> List[Dict[str, Any]]:
     """
-    Ingest httpx findings into the database with aggregation to reduce noise.
+    Ingest httpx findings into the database as ScanArtifacts (not Finding records).
     
-    Implements aggregation to reduce noise:
-    - Prioritizes URLs with interesting keywords (admin, login, debug, etc.)
-    - Limits to max 200 individual findings per scan
-    - Creates a summary finding for remaining endpoints
+    HTTPX "HTTP surface" results are enumeration/asset discovery data, not vulnerabilities.
+    They are:
+    - Filtered by scope (out-of-scope domains excluded)
+    - Grouped by status code and normalized title (404s collapsed)
+    - Stored as ScanArtifact records with type="httpx_surface"
+    - NOT stored as Finding records (excluded from risk score and findings count)
     
-    Per-tool idempotency: deletes existing httpx findings for this scan_job before inserting.
+    Per-tool idempotency: deletes existing httpx artifacts for this scan_job before inserting.
     
     Args:
         db: Database session
@@ -1628,75 +1731,142 @@ def ingest_httpx_findings(
         httpx_results: List of finding dicts from parse_httpx_output
         
     Returns:
-        List of created Finding objects
+        List of created ScanArtifact IDs (for reference)
     """
+    from app.utils.scope import is_in_scope, normalize_host
+    from app.models.scan_artifact import ScanArtifact
+    from urllib.parse import urlparse
+    
     # Early return if no results
     if not httpx_results:
         return []
     
-    # Delete existing httpx findings for this scan job (per-tool idempotency)
-    deleted_count = db.query(Finding).filter(
+    # Delete existing httpx artifacts for this scan job (per-tool idempotency)
+    deleted_count = db.query(ScanArtifact).filter(
+        ScanArtifact.scan_id == scan_job_id,
+        ScanArtifact.type == "httpx_surface"
+    ).delete(synchronize_session=False)
+    if deleted_count > 0:
+        logger.info(f"Deleted {deleted_count} existing httpx artifacts for scan {scan_job_id}")
+    
+    # Also delete old HTTPX findings (migration cleanup)
+    deleted_findings = db.query(Finding).filter(
         Finding.scan_job_id == scan_job_id,
         Finding.tool_name == "httpx"
     ).delete(synchronize_session=False)
-    if deleted_count > 0:
-        logger.info(f"Deleted {deleted_count} existing httpx findings for scan {scan_job_id}")
+    if deleted_findings > 0:
+        logger.info(f"Deleted {deleted_findings} old httpx findings (migrated to artifacts) for scan {scan_job_id}")
     
-    # Aggregation parameters
-    MAX_INDIVIDUAL = 200
+    # Get scan target host for scope filtering
+    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_job_id).first()
+    scan_target_host = ""
+    if scan_job and scan_job.project:
+        target_url = getattr(scan_job.project, "target_url", "")
+        if target_url:
+            scan_target_host = normalize_host(target_url)
     
-    # Interesting keywords to prioritize
-    interesting_keywords = [
-        "admin", "login", "auth", "debug", "backup", "test",
-        "staging", "dev", "api", ".git", ".env", ".bak",
-        "config", "console", "manage", "dashboard",
-    ]
-    
-    def is_interesting(url: str) -> bool:
-        """Check if URL contains interesting keywords"""
-        if not url:
-            return False
-        url_lower = url.lower()
-        return any(keyword in url_lower for keyword in interesting_keywords)
-    
-    # Separate prioritized and others
-    prioritized = []
-    others = []
+    # Filter by scope and separate in-scope vs out-of-scope
+    in_scope_results = []
+    out_of_scope_results = []
     
     for finding_data in httpx_results:
         url = finding_data.get("url", "")
-        if is_interesting(url):
-            prioritized.append(finding_data)
+        if scan_target_host and is_in_scope(url, scan_target_host):
+            in_scope_results.append(finding_data)
+        elif not scan_target_host:
+            # If no target host, include all (backward compatibility)
+            in_scope_results.append(finding_data)
         else:
-            others.append(finding_data)
+            out_of_scope_results.append(finding_data)
     
-    # Sort prioritized by URL for consistency
-    prioritized.sort(key=lambda x: x.get("url", ""))
+    logger.info(f"HTTPX scope filtering: {len(in_scope_results)} in-scope, {len(out_of_scope_results)} out-of-scope")
     
-    # Take up to MAX_INDIVIDUAL total (prioritize interesting)
-    findings_to_create = prioritized[:MAX_INDIVIDUAL]
-    remaining_slots = MAX_INDIVIDUAL - len(findings_to_create)
-    if remaining_slots > 0:
-        findings_to_create.extend(others[:remaining_slots])
-        others = others[remaining_slots:]
+    # Group 404s by normalized title and status code
+    # Group key: (status_code, normalized_title, is_in_scope)
+    grouped_404s = {}  # key -> list of finding_data
+    other_results = []
     
-    # CRITICAL FIX: If we have very few results (<= 10), always show them individually
-    # This prevents single findings from being lost or only shown as summaries
-    if len(httpx_results) <= 10 and len(findings_to_create) < len(httpx_results):
-        # Add any remaining results that weren't included
-        all_results = prioritized + others
-        findings_to_create = all_results[:MAX_INDIVIDUAL]
-        others = all_results[MAX_INDIVIDUAL:] if len(all_results) > MAX_INDIVIDUAL else []
+    def normalize_title(title: str) -> str:
+        """Normalize page title for grouping (e.g., "Error 404 (Not Found)!!1" -> "error 404 not found")"""
+        if not title:
+            return ""
+        # Lowercase, remove special chars, normalize whitespace
+        normalized = title.lower()
+        # Remove common variations
+        normalized = normalized.replace("!!1", "").replace("!!", "")
+        # Remove extra whitespace
+        normalized = " ".join(normalized.split())
+        return normalized
     
-    findings = []
+    for finding_data in in_scope_results:
+        url = finding_data.get("url", "")
+        raw_data_str = finding_data.get("raw_data", "{}")
+        try:
+            raw_data_dict = json.loads(raw_data_str) if isinstance(raw_data_str, str) else raw_data_str
+        except:
+            raw_data_dict = {}
+        if not isinstance(raw_data_dict, dict):
+            raw_data_dict = {}
+        
+        status_code = raw_data_dict.get("status_code", finding_data.get("status_code", 0))
+        title = raw_data_dict.get("title", finding_data.get("title", ""))
+        
+        # Group 404s with similar titles
+        if status_code == 404:
+            normalized_title = normalize_title(title)
+            group_key = (404, normalized_title, True)
+            if group_key not in grouped_404s:
+                grouped_404s[group_key] = []
+            grouped_404s[group_key].append(finding_data)
+        else:
+            other_results.append(finding_data)
     
-    # Create individual findings for prioritized endpoints
-    for finding_data in findings_to_create:
+    # Group out-of-scope 404s separately
+    out_of_scope_404s = {}
+    for finding_data in out_of_scope_results:
+        raw_data_str = finding_data.get("raw_data", "{}")
+        try:
+            raw_data_dict = json.loads(raw_data_str) if isinstance(raw_data_str, str) else raw_data_str
+        except:
+            raw_data_dict = {}
+        if not isinstance(raw_data_dict, dict):
+            raw_data_dict = {}
+        
+        status_code = raw_data_dict.get("status_code", finding_data.get("status_code", 0))
+        title = raw_data_dict.get("title", finding_data.get("title", ""))
+        
+        if status_code == 404:
+            normalized_title = normalize_title(title)
+            group_key = (404, normalized_title, False)
+            if group_key not in out_of_scope_404s:
+                out_of_scope_404s[group_key] = []
+            out_of_scope_404s[group_key].append(finding_data)
+    
+    artifacts_created = []
+    
+    # Store HTTPX surface data as ScanArtifacts (not Findings)
+    # Structure: payload contains grouped surface data
+    surface_payload = {
+        "in_scope": {
+            "404_groups": [],
+            "other_endpoints": []
+        },
+        "out_of_scope": {
+            "404_groups": []
+        }
+    }
+    
+    # Create grouped artifacts for in-scope 404s
+    for (status_code, normalized_title, is_in_scope_flag), group_data in grouped_404s.items():
+        if len(group_data) == 1:
+            # Single 404, create individual finding
+            finding_data = group_data[0]
+        else:
+            # Multiple 404s, create grouped finding
+            finding_data = group_data[0]  # Use first as template
+        
         try:
             url = finding_data.get("url", "")
-            status_code = finding_data.get("status_code", 0)
-            
-            # Parse raw_data to extract additional info
             raw_data_str = finding_data.get("raw_data", "{}")
             try:
                 raw_data_dict = json.loads(raw_data_str) if isinstance(raw_data_str, str) else raw_data_str
@@ -1706,144 +1876,151 @@ def ingest_httpx_findings(
                 raw_data_dict = {}
             
             # Build title
-            title = f"HTTP surface: {url}"
-            if status_code:
-                title += f" (HTTP {status_code})"
+            if len(group_data) > 1:
+                title = f"HTTP surface: {len(group_data)} endpoints with 404 status"
+                if normalized_title:
+                    title += f" ({normalized_title[:50]})"
+            else:
+                title = f"HTTP surface: {url}"
+                if status_code:
+                    title += f" (HTTP {status_code})"
             title = title[:500]
             
-            # Build description from raw_data
+            # Build description
             description_parts = []
-            if status_code:
-                description_parts.append(f"HTTP Status: {status_code}")
-            
-            title_page = raw_data_dict.get("title", "")
-            if title_page:
-                description_parts.append(f"Page Title: {title_page}")
-            
-            tech = raw_data_dict.get("tech", [])
-            if tech:
-                if isinstance(tech, list):
-                    tech_str = ", ".join(tech[:5])  # Limit to 5 technologies
-                else:
-                    tech_str = str(tech)
-                description_parts.append(f"Technologies: {tech_str}")
-            
-            tls_version = raw_data_dict.get("tls_version", "")
-            if tls_version:
-                description_parts.append(f"TLS Version: {tls_version}")
+            if len(group_data) > 1:
+                description_parts.append(f"Found {len(group_data)} endpoints returning HTTP 404 status.")
+                if normalized_title:
+                    description_parts.append(f"Normalized title pattern: {normalized_title}")
+                description_parts.append("")
+                description_parts.append("Sample URLs:")
+                for i, fd in enumerate(group_data[:10], 1):
+                    sample_url = fd.get("url", "")
+                    if sample_url:
+                        description_parts.append(f"  {i}. {sample_url}")
+                if len(group_data) > 10:
+                    description_parts.append(f"  ... and {len(group_data) - 10} more")
+            else:
+                if status_code:
+                    description_parts.append(f"HTTP Status: {status_code}")
+                title_page = raw_data_dict.get("title", "")
+                if title_page:
+                    description_parts.append(f"Page Title: {title_page}")
             
             description = "\n".join(description_parts) if description_parts else f"HTTP surface discovered at {url}"
             
-            # Ensure categories in raw_data
+            # Mark as surface asset (exclude from risk score and findings count)
             raw_data_dict["categories"] = ["HTTP Surface"]
+            raw_data_dict["is_surface_asset"] = True
+            raw_data_dict["exclude_from_risk"] = True
+            raw_data_dict["exclude_from_findings_count"] = True
+            if len(group_data) > 1:
+                raw_data_dict["grouped_count"] = len(group_data)
+                raw_data_dict["grouped_urls"] = [fd.get("url", "") for fd in group_data[:20]]  # Store up to 20 URLs
             
-            finding = Finding(
-                scan_job_id=scan_job_id,
-                title=title,
-                description=description,
-                severity=Severity.INFO,
-                url=url[:2048] if url else None,
-                tool_name="httpx",
-                raw_data=json.dumps(raw_data_dict),
-                status=FindingStatus.OPEN,
-            )
-            
-            findings.append(finding)
-            db.add(finding)
+            # Store as artifact group data
+            group_entry = {
+                "status_code": status_code,
+                "normalized_title": normalized_title,
+                "count": len(group_data),
+                "urls": [fd.get("url", "") for fd in group_data[:20]],  # Store up to 20 URLs
+                "sample_data": group_data[0] if group_data else {}  # Store first item as sample
+            }
+            surface_payload["in_scope"]["404_groups"].append(group_entry)
             
         except Exception as e:
-            logger.warning(f"Failed to parse httpx finding: {e}", exc_info=True)
+            logger.warning(f"Failed to process grouped 404: {e}", exc_info=True)
             continue
     
-    # Create summary finding if there are remaining endpoints
-    if others:
+    # Store non-404 in-scope results (limit to 100 to reduce payload size)
+    MAX_INDIVIDUAL = 100
+    for finding_data in other_results[:MAX_INDIVIDUAL]:
         try:
-            # Get scan job to extract target URL/domain
-            scan_job = db.query(ScanJob).filter(ScanJob.id == scan_job_id).first()
-            root_domain = ""
-            if scan_job and scan_job.project:
-                target_url = getattr(scan_job.project, "target_url", "")
-                if target_url:
-                    parsed = urlparse(target_url)
-                    root_domain = parsed.netloc or parsed.path.split("/")[0] if parsed.path else ""
+            url = finding_data.get("url", "")
+            raw_data_str = finding_data.get("raw_data", "{}")
+            try:
+                raw_data_dict = json.loads(raw_data_str) if isinstance(raw_data_str, str) else raw_data_str
+            except:
+                raw_data_dict = {}
+            if not isinstance(raw_data_dict, dict):
+                raw_data_dict = {}
             
-            if not root_domain and httpx_results:
-                # Fallback: extract from first URL
-                first_url = httpx_results[0].get("url", "")
-                if first_url:
-                    parsed = urlparse(first_url)
-                    root_domain = parsed.netloc or ""
-            
-            # Count by status code
-            status_counts = {}
-            for finding_data in others:
-                raw_data_str = finding_data.get("raw_data", "{}")
-                try:
-                    raw_data_dict = json.loads(raw_data_str) if isinstance(raw_data_str, str) else raw_data_str
-                except:
-                    raw_data_dict = {}
-                status = raw_data_dict.get("status_code", finding_data.get("status_code", "unknown"))
-                status_counts[status] = status_counts.get(status, 0) + 1
-            
-            # Build summary description
-            description_lines = [
-                f"HTTP surface discovery identified {len(httpx_results)} total endpoints on {root_domain or 'target'}.",
-                f"Of these, {len(findings_to_create)} are shown individually (prioritized by interesting keywords).",
-                f"The remaining {len(others)} endpoints are summarized below.",
-                "",
-                "Status code breakdown for summarized endpoints:"
-            ]
-            for status, count in sorted(status_counts.items()):
-                description_lines.append(f"  - HTTP {status}: {count} endpoints")
-            
-            description_lines.extend([
-                "",
-                "These endpoints were discovered but not individually reported to reduce noise.",
-                "Review the full httpx output for complete endpoint list."
-            ])
-            
-            raw_data_summary = {
-                "summary": True,
-                "total_endpoints": len(httpx_results),
-                "summarized_endpoints": len(others),
-                "status_breakdown": status_counts,
-                "categories": ["HTTP Surface"]
+            # Store endpoint data
+            endpoint_entry = {
+                "url": url,
+                "status_code": raw_data_dict.get("status_code", finding_data.get("status_code", 0)),
+                "title": raw_data_dict.get("title", ""),
+                "tech": raw_data_dict.get("tech", []),
+                "tls_version": raw_data_dict.get("tls_version", ""),
             }
-            
-            summary_title = f"HTTP surface summary: {root_domain or 'target'} ({len(others)} additional endpoints)"
-            if len(summary_title) > 500:
-                summary_title = summary_title[:497] + "..."
-            
-            summary_finding = Finding(
-                scan_job_id=scan_job_id,
-                title=summary_title,
-                description="\n".join(description_lines),
-                severity=Severity.INFO,
-                url=None,
-                tool_name="httpx",
-                raw_data=json.dumps(raw_data_summary),
-                status=FindingStatus.OPEN,
-            )
-            
-            findings.append(summary_finding)
-            db.add(summary_finding)
+            surface_payload["in_scope"]["other_endpoints"].append(endpoint_entry)
             
         except Exception as e:
-            logger.warning(f"Failed to create httpx summary finding: {e}", exc_info=True)
+            logger.warning(f"Failed to process httpx endpoint: {e}", exc_info=True)
+            continue
     
+    # Store summary for remaining endpoints
+    remaining_count = len(other_results) - MAX_INDIVIDUAL if len(other_results) > MAX_INDIVIDUAL else 0
+    if remaining_count > 0:
+        surface_payload["in_scope"]["other_endpoints_summary"] = {
+            "total": len(other_results),
+            "shown": MAX_INDIVIDUAL,
+            "remaining": remaining_count
+        }
+    
+    # Store out-of-scope 404s as grouped artifacts
+    for (status_code, normalized_title, is_in_scope_flag), group_data in out_of_scope_404s.items():
+        try:
+            group_entry = {
+                "status_code": status_code,
+                "normalized_title": normalized_title,
+                "count": len(group_data),
+                "urls": [fd.get("url", "") for fd in group_data[:20]],  # Store up to 20 URLs
+                "sample_data": group_data[0] if group_data else {}
+            }
+            surface_payload["out_of_scope"]["404_groups"].append(group_entry)
+        except Exception as e:
+            logger.warning(f"Failed to process out-of-scope 404 group: {e}", exc_info=True)
+            continue
+    
+    # Add metadata to payload
+    surface_payload["metadata"] = {
+        "total_endpoints": len(httpx_results),
+        "in_scope_count": len(in_scope_results),
+        "out_of_scope_count": len(out_of_scope_results),
+        "in_scope_404_count": sum(len(g) for g in grouped_404s.values()),
+        "out_of_scope_404_count": sum(len(g) for g in out_of_scope_404s.values()),
+        "other_endpoints_count": len(other_results),
+    }
+    
+    # Create ScanArtifact for HTTPX surface data
     try:
-        db.flush()  # Make findings visible to queries before commit
-        db.commit()
+        artifact = ScanArtifact(
+            scan_id=scan_job_id,
+            type="httpx_surface",
+            payload=surface_payload
+        )
+        db.add(artifact)
+        db.flush()
+        artifacts_created.append(artifact.id)
         logger.info(
-            "Ingested %d httpx findings into DB for scan %s (%d individual + %d summary)",
-            len(findings), scan_job_id, len(findings_to_create), 1 if others else 0
+            f"Ingested HTTPX surface data as artifact for scan {scan_job_id}: "
+            f"{surface_payload['metadata']['in_scope_count']} in-scope, "
+            f"{surface_payload['metadata']['out_of_scope_count']} out-of-scope"
         )
     except Exception as e:
-        logger.error("Failed to commit httpx findings for scan %s: %s", scan_job_id, e, exc_info=True)
+        logger.error(f"Failed to create httpx surface artifact for scan {scan_job_id}: {e}", exc_info=True)
         db.rollback()
         raise
     
-    return findings
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to commit httpx artifacts for scan {scan_job_id}: {e}", exc_info=True)
+        db.rollback()
+        raise
+    
+    return artifacts_created
 
 
 def parse_ffuf_output(path: Path, baseline_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
