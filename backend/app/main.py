@@ -156,8 +156,9 @@ async def lifespan(app: FastAPI):
     try:
         import asyncio
         from app.services.scan_health_check import start_scan_health_check
-        # Start health check in background
-        asyncio.create_task(start_scan_health_check())
+        # Start health check in background - use get_event_loop() since we're in async context
+        loop = asyncio.get_event_loop()
+        loop.create_task(start_scan_health_check())
         logger.info("Started automatic scan health check service")
     except Exception as e:
         logger.error(f"Failed to start scan health check service: {e}", exc_info=True)

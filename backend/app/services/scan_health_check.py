@@ -124,15 +124,16 @@ def start_scan_health_check():
     
     if _health_check_task is None or _health_check_task.done():
         try:
-            # Get or create event loop
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-            
+            # Get event loop (should already exist in FastAPI context)
+            loop = asyncio.get_event_loop()
             _health_check_task = loop.create_task(check_and_fix_stuck_scans())
             logger.info("[SCAN-HEALTH] Started background health check task")
+        except RuntimeError:
+            # No event loop, create one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            _health_check_task = loop.create_task(check_and_fix_stuck_scans())
+            logger.info("[SCAN-HEALTH] Started background health check task (new event loop)")
         except Exception as e:
             logger.error(f"[SCAN-HEALTH] Failed to start health check task: {e}", exc_info=True)
     else:

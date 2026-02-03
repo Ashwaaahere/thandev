@@ -481,7 +481,7 @@ async def publish_scan_steps_to_runner(
                         task = asyncio.create_task(_publish_tools_wrapper())
                         logger.info(f"[PUBLISH-STEPS] Scheduled asyncio background task to publish tools after enumeration for scan {scan_job_id} (task={task})")
                     except Exception as task_error:
-                    logger.error(f"Failed to create background task for scan {scan_job_id}: {task_error}", exc_info=True)
+                        logger.error(f"Failed to create background task for scan {scan_job_id}: {task_error}", exc_info=True)
                     # Fallback: Check if enumeration is already complete and publish tools immediately
                     try:
                         from app.models.scan_tool_state import ScanToolState
