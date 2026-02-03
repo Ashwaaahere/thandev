@@ -86,12 +86,13 @@ COPY --chown=app:app --chmod=755 fix_alembic_version_column.py /app/fix_alembic_
 # Switch to non-root user
 USER app
 
-# Expose port
+# Expose port (default 8000, but can be overridden via PORT env var)
 EXPOSE 8000
 
-# Health check
+# Health check (uses PORT env var or defaults to 8000)
+# Note: Azure Container Apps will use its own health probes, this is for local Docker
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD sh -c 'curl -f http://localhost:${PORT:-8000}/health || exit 1'
 
 # Start the application via entrypoint script
 # Entrypoint handles: DB wait, then uvicorn

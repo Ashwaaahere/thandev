@@ -276,8 +276,30 @@ async def create_tool_result(
     """
     # CRITICAL: Read raw request body to capture meta field before Pydantic deserialization
     # We need to read the body manually because FastAPI consumes it for Pydantic
-    body_bytes = await request.body()
-    raw_body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+    try:
+        body_bytes = await request.body()
+        body_size_mb = len(body_bytes) / (1024 * 1024)
+        logger.info(
+            f"[TOOL-RESULT-RECEIVE] Received tool result POST: scan_id={scan_id}, "
+            f"body_size={body_size_mb:.2f}MB, content_length={request.headers.get('content-length', 'unknown')}"
+        )
+        
+        if body_size_mb > 50:  # Warn if payload is very large (>50MB)
+            logger.warning(
+                f"[TOOL-RESULT-RECEIVE] Large payload detected: {body_size_mb:.2f}MB for scan {scan_id}. "
+                f"This may cause performance issues."
+            )
+        
+        raw_body = json.loads(body_bytes.decode('utf-8')) if body_bytes else {}
+    except Exception as e:
+        logger.error(
+            f"[TOOL-RESULT-RECEIVE] Failed to read request body for scan {scan_id}: {e}",
+            exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to read request body: {str(e)}"
+        )
     
     # Log raw body for wappalyzer/retire to debug meta field
     if raw_body.get('tool_name') in ('wappalyzer', 'retire'):

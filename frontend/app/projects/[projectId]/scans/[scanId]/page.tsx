@@ -701,9 +701,9 @@ export default function ScanReportPage() {
     if (!session || !scanId) {
       console.log('loadAllInstances: Missing session or scanId', { session: !!session, scanId });
       loadingRef.current[findingId] = false;
-      return;
-    }
-    
+        return;
+      }
+      
     // Prevent duplicate calls using ref
     if (loadingRef.current[findingId]) {
       console.log('loadAllInstances: Already loading (ref check)', findingId);
@@ -749,21 +749,21 @@ export default function ScanReportPage() {
       // Use high limit to get all at once (API supports up to 20000)
       const maxLimit = 20000;
       const paginatedUrl = `/api/scans/${scanId}/findings/${findingId}/instances?limit=${maxLimit}&offset=0`;
-      const data = await thandevFetchJSON<{ 
-        items: FindingInstance[], 
-        total: number, 
-        affected_count?: number,
-        next_offset: number | null
-      }>(paginatedUrl, session);
-      
+        const data = await thandevFetchJSON<{ 
+          items: FindingInstance[], 
+          total: number, 
+          affected_count?: number,
+          next_offset: number | null
+        }>(paginatedUrl, session);
+        
       console.log('loadAllInstances: Received instances:', { 
-        total: data.total, 
+          total: data.total, 
         itemsReceived: data.items?.length || 0,
-        next_offset: data.next_offset,
-        affected_count: data.affected_count
-      });
-      
-      if (data.items && data.items.length > 0) {
+          next_offset: data.next_offset,
+          affected_count: data.affected_count
+        });
+        
+        if (data.items && data.items.length > 0) {
         allInstances = data.items;
         
         // If there are more instances than the limit, fetch remaining pages

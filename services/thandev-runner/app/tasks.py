@@ -663,7 +663,7 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             
             if result and output_file and not output_file.exists():
                 # Write file if we have output OR if tool should always have a file (nuclei/zap)
-                output_text = result.get("output") or ""
+                    output_text = result.get("output") or ""
                 if output_text or should_have_file:
                     try:
                         output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -677,8 +677,8 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             logger.info(f"[FALLBACK-ZAP-EMPTY] Writing empty array for zap")
                         output_file.write_text(output_text, encoding="utf-8")
                         logger.info(f"[FALLBACK-WRITE] Wrote output to {output_file} (size={len(output_text)}, should_have_file={should_have_file})")
-                    except Exception as e:
-                        logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
+                except Exception as e:
+                    logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
             
             if output_file and output_file.exists():
                 try:
@@ -967,8 +967,17 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         except Exception as e:
                             logger.warning(f"Failed to emit completed event: {e}")
                     else:
-                        logger.warning(
-                            f"Failed to POST tool result to backend for scan={scan_job_id}, step={step_id}, tool={tool_name}"
+                        logger.error(
+                            f"Failed to POST tool result to backend for scan={scan_job_id}, step={step_id}, tool={tool_name}. "
+                            f"Findings will not be saved. This is a critical error."
+                        )
+                        
+                        # CRITICAL: If posting fails, we should retry or at least log the findings count
+                        # For now, log detailed error information
+                        logger.error(
+                            f"[TOOL-RESULT-POST-FAILED] Scan={scan_job_id}, Tool={tool_name}, "
+                            f"Findings={len(findings)}, Step={step_id}. "
+                            f"Backend may be unreachable or payload too large."
                         )
                         
                         # Emit failed event

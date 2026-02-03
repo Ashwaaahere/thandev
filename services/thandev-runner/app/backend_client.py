@@ -31,6 +31,43 @@ REQUEST_TIMEOUT = 60.0  # seconds
 # Connection timeout for initial connection (separate from request timeout)
 CONNECT_TIMEOUT = 10.0  # seconds
 
+# Shared HTTP client for connection pooling and keep-alive
+_http_client: Optional[httpx.AsyncClient] = None
+_client_lock = asyncio.Lock()
+
+async def get_http_client() -> httpx.AsyncClient:
+    """Get or create shared HTTP client with connection pooling"""
+    global _http_client
+    if _http_client is None:
+        async with _client_lock:
+            # Double-check after acquiring lock
+            if _http_client is None:
+                # Use connection pooling with keep-alive for better performance
+                limits = httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=30.0)
+                timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
+                _http_client = httpx.AsyncClient(
+                    timeout=timeout,
+                    limits=limits,
+                    http2=True,  # Use HTTP/2 for better performance
+                )
+    return _http_client
+
+async def test_backend_connectivity() -> bool:
+    """Test backend connectivity by calling health endpoint"""
+    if not settings.BACKEND_URL:
+        return False
+    
+    try:
+        endpoint = f"{settings.BACKEND_URL}/health"
+        client = await get_http_client()
+        resp = await client.get(endpoint, timeout=5.0)
+        resp.raise_for_status()
+        logger.info(f"Backend connectivity test successful: {endpoint}")
+        return True
+    except Exception as e:
+        logger.warning(f"Backend connectivity test failed: {e}")
+        return False
+
 
 async def get_scan_status(scan_job_id: str) -> Optional[Dict[str, Any]]:
     """
@@ -239,7 +276,7 @@ async def post_tool_result(
             "exit_code": execution_result.get("exit_code"),
             "execution_time": execution_result.get("execution_time"),
             "success": bool(success_value),
-            "output": execution_result.get("output", "")[:10000] if execution_result.get("output") else None,  # Truncate
+            "output": execution_result.get("output", "")[:50000] if execution_result.get("output") else None,  # Truncate to 50KB (was 10KB)
             "command": execution_result.get("command"),
             "error_message": execution_result.get("error") or execution_result.get("error_message"),
             "timed_out": timed_out_value,
@@ -259,12 +296,36 @@ async def post_tool_result(
     if settings.RUNNER_API_TOKEN:
         headers["Authorization"] = f"Bearer {settings.RUNNER_API_TOKEN}"
     
+    # Calculate payload size for logging
+    import json as json_module
+    payload_size = len(json_module.dumps(payload))
+    payload_size_mb = payload_size / (1024 * 1024)
+    
+    logger.info(
+        f"[TOOL-RESULT-POST] Attempting to POST tool result: "
+        f"scan={scan_job_id}, tool={tool_name}, findings={len(findings)}, "
+        f"payload_size={payload_size_mb:.2f}MB, endpoint={endpoint}"
+    )
+    
     # Retry loop with exponential backoff + jitter
     last_exception = None
     for attempt in range(MAX_RETRIES):
         try:
-            timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            # Use longer timeout for large payloads (ZAP can have large results)
+            timeout_seconds = REQUEST_TIMEOUT
+            if payload_size_mb > 5:  # If payload > 5MB, use longer timeout
+                timeout_seconds = REQUEST_TIMEOUT * 2  # Double timeout for large payloads
+                logger.info(f"[TOOL-RESULT-POST] Large payload detected ({payload_size_mb:.2f}MB), using extended timeout: {timeout_seconds}s")
+            
+            # Use shared client with connection pooling for better reliability
+            client = await get_http_client()
+            custom_client = None
+            # Update timeout for this specific request if needed
+            if timeout_seconds != REQUEST_TIMEOUT:
+                custom_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT))
+                client = custom_client
+            
+            try:
                 response = await client.post(
                     endpoint,
                     json=payload,
@@ -274,10 +335,15 @@ async def post_tool_result(
                 
                 logger.info(
                     f"Posted tool result to backend (status code {response.status_code}): "
-                    f"scan={scan_job_id}, step={step_id}, tool={tool_name}, tool_run_id={tool_run_id}, findings={len(findings)}"
+                    f"scan={scan_job_id}, step={step_id}, tool={tool_name}, tool_run_id={tool_run_id}, "
+                    f"findings={len(findings)}, payload_size={payload_size_mb:.2f}MB"
                 )
                 
                 return True
+            finally:
+                # Only close if we created a custom client for this request
+                if custom_client:
+                    await custom_client.aclose()
                 
         except httpx.HTTPStatusError as e:
             last_exception = e
@@ -299,16 +365,33 @@ async def post_tool_result(
                 
         except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
             last_exception = e
+            error_details = {
+                "error_type": type(e).__name__,
+                "error_message": str(e),
+                "endpoint": endpoint,
+                "backend_url": settings.BACKEND_URL,
+                "payload_size_mb": f"{payload_size_mb:.2f}",
+                "attempt": attempt + 1,
+                "max_retries": MAX_RETRIES
+            }
+            
             if attempt < MAX_RETRIES - 1:
                 delay = _calculate_retry_delay(attempt)
                 logger.warning(
                     f"Network error during tool result POST (attempt {attempt + 1}/{MAX_RETRIES}): {type(e).__name__}: {e}. "
-                    f"Endpoint: {endpoint}, BACKEND_URL: {settings.BACKEND_URL}. Retrying in {delay:.2f}s..."
+                    f"Endpoint: {endpoint}, BACKEND_URL: {settings.BACKEND_URL}, "
+                    f"Payload size: {payload_size_mb:.2f}MB. Retrying in {delay:.2f}s...",
+                    extra=error_details
                 )
                 await asyncio.sleep(delay)
                 continue
             else:
-                logger.error(f"Network error during tool result POST after {MAX_RETRIES} attempts: {e}")
+                logger.error(
+                    f"Network error during tool result POST after {MAX_RETRIES} attempts: {e}. "
+                    f"Payload size: {payload_size_mb:.2f}MB, Endpoint: {endpoint}",
+                    exc_info=True,
+                    extra=error_details
+                )
                 return False
                 
         except Exception as e:
@@ -317,9 +400,22 @@ async def post_tool_result(
             return False
     
     # If we get here, all retries failed
+    error_summary = {
+        "scan_job_id": scan_job_id,
+        "tool_name": tool_name,
+        "step_id": step_id,
+        "endpoint": endpoint,
+        "backend_url": settings.BACKEND_URL,
+        "payload_size_mb": f"{payload_size_mb:.2f}",
+        "findings_count": len(findings),
+        "last_error_type": type(last_exception).__name__ if last_exception else "Unknown",
+        "last_error": str(last_exception) if last_exception else "Unknown error"
+    }
     logger.error(
         f"Failed to POST tool result to backend after {MAX_RETRIES} attempts. "
-        f"Last error: {last_exception}"
+        f"Last error: {last_exception}. Payload size: {payload_size_mb:.2f}MB",
+        extra=error_summary,
+        exc_info=True
     )
     return False
 
@@ -454,7 +550,7 @@ async def post_scan_events(scan_id: str, events: List[Dict[str, Any]]) -> bool:
 
 async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
     """
-    Post scan asset inventory to backend
+    Post scan asset inventory to backend with retry logic
     
     Args:
         scan_id: Scan job ID
@@ -464,6 +560,7 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
         True if successful, False otherwise
     """
     if not settings.BACKEND_URL:
+        logger.warning(f"Cannot post inventory for scan {scan_id}: BACKEND_URL not configured")
         return False
     
     endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_id}/inventory"
@@ -473,16 +570,87 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
     
     payload = {"inventory": inventory}
     
-    try:
-        timeout = httpx.Timeout(REQUEST_TIMEOUT, connect=CONNECT_TIMEOUT)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, headers=headers, json=payload)
-            resp.raise_for_status()
-            logger.info(f"Posted asset inventory for scan {scan_id}")
-            return True
-    except Exception as e:
-        logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
-        return False
+    # Calculate payload size
+    import json as json_module
+    payload_size = len(json_module.dumps(payload))
+    payload_size_mb = payload_size / (1024 * 1024)
+    
+    logger.info(
+        f"[INVENTORY-POST] Posting inventory for scan {scan_id}: "
+        f"payload_size={payload_size_mb:.2f}MB, endpoint={endpoint}"
+    )
+    
+    # Use retry logic similar to tool results
+    last_exception = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            timeout_seconds = REQUEST_TIMEOUT
+            if payload_size_mb > 5:
+                timeout_seconds = REQUEST_TIMEOUT * 2
+                logger.info(f"[INVENTORY-POST] Large payload ({payload_size_mb:.2f}MB), using extended timeout: {timeout_seconds}s")
+            
+            # Use shared client with connection pooling
+            client = await get_http_client()
+            custom_client = None
+            if timeout_seconds != REQUEST_TIMEOUT:
+                custom_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT))
+                client = custom_client
+            
+            try:
+                resp = await client.post(endpoint, headers=headers, json=payload)
+                resp.raise_for_status()
+                logger.info(
+                    f"Posted asset inventory for scan {scan_id}: "
+                    f"payload_size={payload_size_mb:.2f}MB, status={resp.status_code}"
+                )
+                return True
+            finally:
+                if custom_client:
+                    await custom_client.aclose()
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.NetworkError) as e:
+            last_exception = e
+            if attempt < MAX_RETRIES - 1:
+                delay = _calculate_retry_delay(attempt)
+                logger.warning(
+                    f"Network error during inventory POST (attempt {attempt + 1}/{MAX_RETRIES}): "
+                    f"{type(e).__name__}: {e}. Retrying in {delay:.2f}s..."
+                )
+                await asyncio.sleep(delay)
+                continue
+            else:
+                logger.error(
+                    f"Network error during inventory POST after {MAX_RETRIES} attempts: {e}. "
+                    f"Payload size: {payload_size_mb:.2f}MB"
+                )
+                return False
+        except httpx.HTTPStatusError as e:
+            last_exception = e
+            if e.response.status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES - 1:
+                delay = _calculate_retry_delay(attempt)
+                logger.warning(
+                    f"Backend returned retryable status {e.response.status_code} for inventory POST "
+                    f"(attempt {attempt + 1}/{MAX_RETRIES}). Retrying in {delay:.2f}s..."
+                )
+                await asyncio.sleep(delay)
+                continue
+            else:
+                logger.error(
+                    f"Backend returned error status {e.response.status_code} for inventory POST: {e.response.text}"
+                )
+                return False
+        except Exception as e:
+            last_exception = e
+            logger.error(f"Failed to post scan inventory for {scan_id}: {e}", exc_info=True)
+            if attempt < MAX_RETRIES - 1:
+                delay = _calculate_retry_delay(attempt)
+                await asyncio.sleep(delay)
+                continue
+            return False
+    
+    logger.error(
+        f"Failed to post inventory after {MAX_RETRIES} attempts. Last error: {last_exception}"
+    )
+    return False
 
 
 async def get_scan_artifact(scan_id: str, artifact_name: str) -> Optional[Dict[str, Any]]:

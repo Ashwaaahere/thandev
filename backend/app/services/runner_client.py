@@ -377,7 +377,27 @@ async def publish_scan_steps_to_runner(
         scan_level_str = scan_level.value if hasattr(scan_level, 'value') else str(scan_level)
         logger.info(f"[ENUM-CHECK] scan_job_id={scan_job_id}, scan_level={scan_level}, scan_level_str={scan_level_str}, type={type(scan_level)}")
         
+        # Check if enumeration is already completed - if so, skip enumeration and publish tools directly
+        enumeration_already_complete = False
         if scan_level_str in ['pro', 'advanced']:
+            from app.models.scan_tool_state import ScanToolState
+            from app.core.database import SessionLocal
+            db_check = SessionLocal()
+            try:
+                enum_state = db_check.query(ScanToolState).filter(
+                    ScanToolState.scan_id == scan_job_id,
+                    ScanToolState.tool == "enumeration"
+                ).order_by(ScanToolState.updated_at.desc()).first()
+                
+                if enum_state and enum_state.stage == "completed":
+                    logger.info(f"[ENUM-CHECK] Enumeration already completed for scan {scan_job_id}, skipping enumeration step and publishing tools directly")
+                    enumeration_already_complete = True
+            except Exception as check_error:
+                logger.warning(f"[ENUM-CHECK] Error checking enumeration status: {check_error}")
+            finally:
+                db_check.close()
+        
+        if scan_level_str in ['pro', 'advanced'] and not enumeration_already_complete:
             logger.info(f"Publishing enumeration step for {scan_level_str} scan {scan_job_id}")
             enumeration_step_id = await publish_step_request(
                 session_id=scan_job_id,
@@ -431,11 +451,63 @@ async def publish_scan_steps_to_runner(
                                 exc_info=True
                             )
                 
-                asyncio.create_task(_publish_tools_wrapper())
-                logger.info(f"Scheduled background task to publish tools after enumeration for scan {scan_job_id}")
+                # Use asyncio.create_task to run in background
+                # Note: This requires the event loop to be running
+                try:
+                    task = asyncio.create_task(_publish_tools_wrapper())
+                    logger.info(f"Scheduled background task to publish tools after enumeration for scan {scan_job_id} (task={task})")
+                except Exception as task_error:
+                    logger.error(f"Failed to create background task for scan {scan_job_id}: {task_error}", exc_info=True)
+                    # Fallback: Check if enumeration is already complete and publish tools immediately
+                    try:
+                        from app.models.scan_tool_state import ScanToolState
+                        from app.core.database import SessionLocal
+                        db = SessionLocal()
+                        try:
+                            tool_state = db.query(ScanToolState).filter(
+                                ScanToolState.scan_id == scan_job_id,
+                                ScanToolState.tool == "enumeration"
+                            ).order_by(ScanToolState.updated_at.desc()).first()
+                            
+                            if tool_state and tool_state.stage in ["completed", "failed"]:
+                                logger.info(f"[ENUM-WAIT] Enumeration already {tool_state.stage} for scan {scan_job_id}, publishing tools immediately")
+                                # Publish tools immediately since enumeration is done
+                                await _publish_tools_after_enumeration(
+                                    scan_job_id=scan_job_id,
+                                    target_url=target_url,
+                                    scan_level=scan_level,
+                                    tools=tools,
+                                    org_id=org_id,
+                                    project_id=project_id,
+                                    enumeration_step_id=enumeration_step_id,
+                                )
+                            else:
+                                logger.warning(f"[ENUM-WAIT] Enumeration not complete yet for scan {scan_job_id}, will wait in background task")
+                        finally:
+                            db.close()
+                    except Exception as fallback_error:
+                        logger.error(f"[ENUM-WAIT] Fallback publishing failed for scan {scan_job_id}: {fallback_error}", exc_info=True)
+                
                 return True  # Return early - tools will be published by background task
             else:
                 logger.warning(f"Failed to publish enumeration step for scan {scan_job_id}, continuing with regular tools")
+        elif enumeration_already_complete:
+            # Enumeration is already complete, publish tools immediately without waiting
+            logger.info(f"[ENUM-CHECK] Enumeration already complete for scan {scan_job_id}, publishing tools immediately")
+            try:
+                await _publish_tools_after_enumeration(
+                    scan_job_id=scan_job_id,
+                    target_url=target_url,
+                    scan_level=scan_level,
+                    tools=tools,
+                    org_id=org_id,
+                    project_id=project_id,
+                    enumeration_step_id="already-complete",  # Dummy ID since enumeration is done
+                )
+                return True
+            except Exception as immediate_error:
+                logger.error(f"[ENUM-CHECK] Failed to publish tools immediately for scan {scan_job_id}: {immediate_error}", exc_info=True)
+                # Fall through to regular tool publishing
         
         # Publish step request for each enabled tool (only for basic scans or if enumeration failed)
         published_count = 0

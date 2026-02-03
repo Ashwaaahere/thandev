@@ -1259,9 +1259,27 @@ async def quick_scan(
         logger.warning(f"Quick scan 4xx: status={e.status_code} detail={detail_str}")
         raise
     except Exception as e:
-        # Log unexpected errors before re-raising
-        logger.exception(f"Quick scan crashed: {type(e).__name__}: {str(e)}")
-        raise
+        # Log unexpected errors before re-raising with full context
+        error_type = type(e).__name__
+        error_msg = str(e) if str(e) else repr(e)
+        logger.error(
+            f"[QUICK-SCAN-ERROR] Quick scan crashed: {error_type}: {error_msg}",
+            exc_info=True,
+            extra={
+                "error_type": error_type,
+                "error_message": error_msg,
+                "error_repr": repr(e),
+            }
+        )
+        # Re-raise as HTTPException to return proper error response
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "code": "SCAN_CREATION_FAILED",
+                "message": f"Failed to create scan: {error_msg}",
+                "error_type": error_type,
+            }
+        )
 
 
 @router.get("/{scan_id}/artifacts", response_model=ScanArtifactsResponse)
