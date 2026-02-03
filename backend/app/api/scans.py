@@ -718,6 +718,7 @@ async def create_scan(
 @router.post("/quick", response_model=QuickScanResponse, status_code=status.HTTP_201_CREATED)
 async def quick_scan(
     payload: QuickScanRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(require_tenant),
     current_user: User = Depends(get_current_user),
