@@ -734,7 +734,7 @@ async def quick_scan(
     from datetime import datetime, timezone
     
     # Log incoming payload for debugging (sanitized)
-    logger.info(f"Quick scan request: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
+    logger.info(f"[QUICK-SCAN-ENTRY] Quick scan request received: project_id={payload.project_id}, target_url={'***' if payload.target_url else None}, scan_level={payload.scan_level}")
     
     # Defensive check: ensure current_user and user_id are valid BEFORE any processing
     if not current_user or not current_user.id:
