@@ -123,8 +123,18 @@ def start_scan_health_check():
     global _health_check_task
     
     if _health_check_task is None or _health_check_task.done():
-        _health_check_task = asyncio.create_task(check_and_fix_stuck_scans())
-        logger.info("[SCAN-HEALTH] Started background health check task")
+        try:
+            # Get or create event loop
+            try:
+                loop = asyncio.get_event_loop()
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            
+            _health_check_task = loop.create_task(check_and_fix_stuck_scans())
+            logger.info("[SCAN-HEALTH] Started background health check task")
+        except Exception as e:
+            logger.error(f"[SCAN-HEALTH] Failed to start health check task: {e}", exc_info=True)
     else:
         logger.info("[SCAN-HEALTH] Health check task already running")
 
