@@ -307,6 +307,7 @@ async def publish_scan_steps_to_runner(
     scan_level: ScanLevel,
     org_id: Optional[str] = None,
     project_id: Optional[str] = None,
+    background_tasks: Optional["BackgroundTasks"] = None,
 ) -> bool:
     """
     Publish all scan steps to Runner via Redis streams.
