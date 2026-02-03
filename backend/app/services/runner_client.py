@@ -528,7 +528,9 @@ async def publish_scan_steps_to_runner(
                 # Fall through to regular tool publishing
         
         # Publish step request for each enabled tool (only for basic scans or if enumeration failed)
+        logger.info(f"[PUBLISH-STEPS] Publishing {len(tools)} tools for scan {scan_job_id} (basic scan or enumeration skipped)")
         published_count = 0
+        failed_count = 0
         for tool_config in tools:
             if not tool_config.get("enabled", True):
                 continue
@@ -592,11 +594,25 @@ async def publish_scan_steps_to_runner(
             if tool_step_id:
                 published_count += 1
                 if enumeration_step_id:
-                    logger.info(f"Published {tool_id} step {tool_step_id} with dependency on enumeration {enumeration_step_id}")
+                    logger.info(f"[PUBLISH-STEPS] Published {tool_id} step {tool_step_id} with dependency on enumeration {enumeration_step_id}")
+                else:
+                    logger.info(f"[PUBLISH-STEPS] Published {tool_id} step {tool_step_id} for scan {scan_job_id}")
+            else:
+                failed_count += 1
+                logger.error(f"[PUBLISH-STEPS] Failed to publish {tool_id} for scan {scan_job_id} (publish_step_request returned None)")
         
+        total_attempted = published_count + failed_count
         logger.info(
-            f"Published {published_count} step requests to Runner for scan {scan_job_id}"
+            f"[PUBLISH-STEPS] Completed publishing tools for scan {scan_job_id}: "
+            f"published={published_count}, failed={failed_count}, total={total_attempted}, "
+            f"enumeration={enumeration_step_id or 'skipped'}"
         )
+        
+        if failed_count > 0:
+            logger.warning(
+                f"[PUBLISH-STEPS] Some tools failed to publish for scan {scan_job_id}: "
+                f"{failed_count} failed out of {total_attempted} total"
+            )
         
         # #region agent log
         log_data = {
