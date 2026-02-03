@@ -272,9 +272,13 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 
                 # Upload inventory
                 if scan_job_id:
-                    await post_scan_inventory(scan_job_id, inventory)
+                    inventory_posted = await post_scan_inventory(scan_job_id, inventory)
                     urls_found = inventory.get("discovery", {}).get("merged", {}).get("all_urls_count", 0)
-                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="completed", message=f"Discovered {urls_found} URLs", progress=1.0, meta={"urls_found": urls_found})
+                    if inventory_posted:
+                        logger.info(f"[ENUM] Successfully posted inventory for scan {scan_job_id} ({urls_found} URLs)")
+                    else:
+                        logger.error(f"[ENUM] FAILED to post inventory for scan {scan_job_id} ({urls_found} URLs). Enumeration data will not be visible in UI.")
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="completed", message=f"Discovered {urls_found} URLs", progress=1.0, meta={"urls_found": urls_found, "inventory_posted": inventory_posted})
                 
                 # Don't call publish_step_result for enumeration - it's not a NATS-based tool
                 logger.info(f"[ENUM] Enumeration completed successfully for scan {scan_job_id}")
