@@ -322,6 +322,24 @@ async def publish_scan_steps_to_runner(
     Returns:
         True if all steps published successfully, False otherwise
     """
+    logger.info(
+        f"[PUBLISH-STEPS] Starting to publish scan steps: "
+        f"scan_job_id={scan_job_id}, target_url={target_url}, scan_level={scan_level}, "
+        f"org_id={org_id}, project_id={project_id}"
+    )
+    
+    # Test Redis connectivity first
+    try:
+        redis_client = get_redis_client()
+        redis_client.ping()
+        logger.info(f"[PUBLISH-STEPS] Redis connectivity test passed for scan {scan_job_id}")
+    except Exception as redis_error:
+        logger.error(
+            f"[PUBLISH-STEPS] Redis connectivity test FAILED for scan {scan_job_id}: {redis_error}",
+            exc_info=True
+        )
+        return False
+    
     try:
         # #region agent log
         log_data = {
