@@ -513,6 +513,46 @@ async def publish_scan_steps_to_runner(
                         logger.error(f"[ENUM-WAIT] Fallback publishing failed for scan {scan_job_id}: {fallback_error}", exc_info=True)
                 
                 logger.info(f"[PUBLISH-STEPS] Enumeration step published for scan {scan_job_id}, tools will be published by background task after enumeration completes")
+                
+                # CRITICAL: Verify enumeration step was actually published to Redis
+                try:
+                    messages = redis_client.xrevrange('scan_step_requests', count=10)
+                    enum_found = False
+                    for msg_id, data in messages:
+                        if (scan_job_id.lower() in str(data.get('scan_job_id', '')).lower() and 
+                            data.get('tool_id', '').lower() == 'enumeration'):
+                            enum_found = True
+                            logger.info(f"[PUBLISH-STEPS] Verified: Enumeration step for scan {scan_job_id} found in Redis (message {msg_id})")
+                            break
+                    
+                    if not enum_found:
+                        logger.error(
+                            f"[PUBLISH-STEPS] CRITICAL: Enumeration step for scan {scan_job_id} NOT found in Redis! "
+                            f"Publishing failed silently. Retrying..."
+                        )
+                        # Retry enumeration step
+                        retry_enum_id = await publish_step_request(
+                            session_id=scan_job_id,
+                            tool_id="enumeration",
+                            mode_id="full",
+                            params={"scan_level": scan_level_str, "block_other_tools": True},
+                            target_ref=target_url,
+                            depends_on=[],
+                            reason=f"Asset discovery for {scan_level_str} scan (Katana + GAU + Arjun) - RETRY",
+                            org_id=org_id,
+                            project_id=project_id,
+                            scan_job_id=scan_job_id,
+                        )
+                        if retry_enum_id:
+                            logger.info(f"[PUBLISH-STEPS] Retry enumeration step published: {retry_enum_id}")
+                            return True
+                        else:
+                            logger.error(f"[PUBLISH-STEPS] Retry enumeration step failed for scan {scan_job_id}")
+                            return False
+                except Exception as verify_error:
+                    logger.error(f"[PUBLISH-STEPS] Error verifying enumeration step in Redis: {verify_error}", exc_info=True)
+                    # Don't fail if verification fails, but log it
+                
                 # Return True to indicate enumeration step was published successfully
                 # Tools will be published by background task after enumeration completes
                 return True  # Return early - tools will be published by background task

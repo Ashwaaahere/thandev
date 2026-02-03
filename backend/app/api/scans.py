@@ -1230,6 +1230,45 @@ async def quick_scan(
                     db.commit()
                     db.refresh(scan_job)
                     logger.info(f"[QUICK-SCAN] Quick scan {scan_job.id} started via Runner (steps published to Redis streams)")
+                    
+                    # CRITICAL: Verify steps were actually published by checking Redis
+                    try:
+                        from app.core.redis_client import get_redis_client
+                        redis_client = get_redis_client()
+                        # Check if any messages for this scan exist in Redis
+                        messages = redis_client.xrevrange('scan_step_requests', count=100)
+                        scan_found = False
+                        for msg_id, data in messages:
+                            if scan_job.id.lower() in str(data.get('scan_job_id', '')).lower():
+                                scan_found = True
+                                logger.info(f"[QUICK-SCAN] Verified: Scan {scan_job.id} found in Redis stream (message {msg_id})")
+                                break
+                        
+                        if not scan_found:
+                            logger.error(
+                                f"[QUICK-SCAN] CRITICAL: publish_scan_steps_to_runner returned success=True "
+                                f"but scan {scan_job.id} NOT found in Redis stream! "
+                                f"This indicates a publishing failure. Retrying..."
+                            )
+                            # Retry publishing immediately
+                            retry_success = await publish_scan_steps_to_runner(
+                                scan_job_id=scan_job.id,
+                                target_url=project.target_url,
+                                scan_level=payload.scan_level,
+                                org_id=tenant.id,
+                                project_id=project.id,
+                                background_tasks=background_tasks,
+                            )
+                            if retry_success:
+                                logger.info(f"[QUICK-SCAN] Retry publishing succeeded for scan {scan_job.id}")
+                            else:
+                                logger.error(f"[QUICK-SCAN] Retry publishing failed for scan {scan_job.id}")
+                                scan_job.status = ScanStatus.FAILED
+                                scan_job.error_message = "Failed to publish scan steps to Redis (retry also failed)"
+                                db.commit()
+                    except Exception as verify_error:
+                        logger.error(f"[QUICK-SCAN] Error verifying Redis publication for scan {scan_job.id}: {verify_error}", exc_info=True)
+                        # Don't fail the scan if verification fails, but log it
                 else:
                     error_msg = "Failed to publish scan steps to Runner. Make sure Runner service is running and Redis is accessible."
                     logger.error(f"[QUICK-SCAN] {error_msg} for scan {scan_job.id}")
@@ -1342,9 +1381,17 @@ async def quick_scan(
         # CRITICAL: Before returning, ensure scan has steps published or is properly failed
         # If scan is RUNNING but has no tool states, something went wrong
         from app.models.scan_tool_state import ScanToolState
+        from app.models.finding import ToolResult
         tool_state_count = db.query(ScanToolState).filter(ScanToolState.scan_id == scan_job.id).count()
+        tool_result_count = db.query(ToolResult).filter(ToolResult.scan_job_id == scan_job.id).count()
         
-        if scan_job.status == ScanStatus.RUNNING and tool_state_count == 0:
+        logger.info(
+            f"[QUICK-SCAN] Pre-return check for scan {scan_job.id}: "
+            f"status={scan_job.status}, tool_states={tool_state_count}, tool_results={tool_result_count}"
+        )
+        
+        # Check if scan is RUNNING but has no tool states or results - this means publishing failed
+        if scan_job.status == ScanStatus.RUNNING and tool_state_count == 0 and tool_result_count == 0:
             logger.error(
                 f"[QUICK-SCAN] CRITICAL: Scan {scan_job.id} is RUNNING but has no tool states! "
                 f"This indicates steps were not published. Attempting emergency fallback to Runner."
@@ -1373,7 +1420,7 @@ async def quick_scan(
                 scan_job.status = ScanStatus.FAILED
                 scan_job.error_message = f"Emergency fallback failed: {str(emergency_error)}"
                 db.commit()
-        
+    
         # Always return a response (Brain path or Runner path)
         logger.info(f"[QUICK-SCAN] Returning response for scan {scan_job.id}, status={scan_job.status}, tool_states={tool_state_count}")
         return QuickScanResponse(
