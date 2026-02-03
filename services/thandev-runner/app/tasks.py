@@ -677,8 +677,8 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             logger.info(f"[FALLBACK-ZAP-EMPTY] Writing empty array for zap")
                         output_file.write_text(output_text, encoding="utf-8")
                         logger.info(f"[FALLBACK-WRITE] Wrote output to {output_file} (size={len(output_text)}, should_have_file={should_have_file})")
-                except Exception as e:
-                    logger.warning(f"[FALLBACK-WRITE-ERROR] Failed to write output: {e}")
+                    except Exception as e:
+                        logger.error(f"[FALLBACK-WRITE] Failed to write output file: {e}", exc_info=True)
             
             if output_file and output_file.exists():
                 try:

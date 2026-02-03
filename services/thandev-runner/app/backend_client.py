@@ -596,7 +596,7 @@ async def post_scan_inventory(scan_id: str, inventory: Dict[str, Any]) -> bool:
                 custom_client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_seconds, connect=CONNECT_TIMEOUT))
                 client = custom_client
             
-            try:
+        try:
             resp = await client.post(endpoint, headers=headers, json=payload)
             resp.raise_for_status()
                 logger.info(
