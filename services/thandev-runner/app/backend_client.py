@@ -340,6 +340,17 @@ async def post_tool_result(
                 )
                 
                 return True
+            except httpx.HTTPStatusError as e:
+                # Log detailed error response before re-raising
+                error_text = e.response.text if e.response else "No response text"
+                logger.error(
+                    f"[TOOL-RESULT-POST-HTTP-ERROR] Backend returned status {e.response.status_code} for tool result POST: {error_text}, "
+                    f"scan={scan_job_id}, tool={tool_name}, endpoint={endpoint}, "
+                    f"payload_keys={list(payload.keys()) if isinstance(payload, dict) else 'not dict'}, "
+                    f"findings_count={len(findings)}"
+                )
+                # Re-raise to be handled by outer exception handler
+                raise
             finally:
                 # Only close if we created a custom client for this request
                 if custom_client:
