@@ -619,10 +619,28 @@ async def publish_scan_steps_to_runner(
             pass
         # #endregion
         
+        total_attempted = published_count + failed_count if 'failed_count' in locals() else published_count
+        failed_count = failed_count if 'failed_count' in locals() else 0
+        
+        logger.info(
+            f"[PUBLISH-STEPS] Completed publishing tools for scan {scan_job_id}: "
+            f"published={published_count}, failed={failed_count}, total={total_attempted}, "
+            f"enumeration={enumeration_step_id or 'skipped'}"
+        )
+        
+        if failed_count > 0:
+            logger.warning(
+                f"[PUBLISH-STEPS] Some tools failed to publish for scan {scan_job_id}: "
+                f"{failed_count} failed out of {total_attempted} total"
+            )
+        
         return published_count > 0
         
     except Exception as e:
-        logger.error(f"Failed to publish scan steps to Runner: {e}", exc_info=True)
+        logger.error(
+            f"[PUBLISH-STEPS] Exception publishing scan steps to Runner for scan {scan_job_id}: {e}",
+            exc_info=True
+        )
         
         # #region agent log
         log_data = {
