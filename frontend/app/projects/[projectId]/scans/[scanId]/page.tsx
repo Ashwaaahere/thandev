@@ -3508,8 +3508,8 @@ export default function ScanReportPage() {
                         </span>
                       </div>
                       <div className="space-y-4">
-                        {/* HTTPX */}
-                        {inventory.discovery?.httpx && (
+                        {/* HTTPX - Always show if inventory exists, even if empty */}
+                        {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
@@ -3519,21 +3519,26 @@ export default function ScanReportPage() {
                               </div>
                               <div>
                                 <div className="font-medium" style={{ color: 'var(--fg)' }}>HTTPX (Tech Detection)</div>
-                                {inventory.discovery.httpx.final_url && (
+                                {inventory.discovery.httpx?.final_url && (
                                   <div className="text-xs truncate max-w-md" style={{ color: 'var(--muted)' }}>
                                     {inventory.discovery.httpx.final_url}
+                                  </div>
+                                )}
+                                {inventory.discovery.httpx?.error && (
+                                  <div className="text-xs" style={{ color: 'var(--error)' }}>
+                                    {inventory.discovery.httpx.error}
                                   </div>
                                 )}
                               </div>
                             </div>
                             <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                              {inventory.discovery.httpx.tech?.length || 0} technologies
+                              {inventory.discovery.httpx?.tech?.length || 0} technologies
                             </span>
                           </div>
                         )}
                         
-                        {/* Katana */}
-                        {inventory.discovery?.katana && (
+                        {/* Katana - Always show if inventory exists */}
+                        {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
@@ -3541,16 +3546,23 @@ export default function ScanReportPage() {
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
                               </div>
+                              <div>
                               <div className="font-medium" style={{ color: 'var(--fg)' }}>Katana (Live Crawl)</div>
+                                {inventory.discovery.katana?.error && (
+                                  <div className="text-xs" style={{ color: 'var(--error)' }}>
+                                    {inventory.discovery.katana.error}
+                                  </div>
+                                )}
+                              </div>
                             </div>
                             <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: '#10b981', color: '#ffffff' }}>
-                              {inventory.discovery.katana.urls_count || inventory.discovery.katana.urls?.length || 0} URLs
+                              {inventory.discovery.katana?.urls_count || inventory.discovery.katana?.urls?.length || 0} URLs
                             </span>
                           </div>
                         )}
                         
-                        {/* GAU */}
-                        {inventory.discovery?.gau && (
+                        {/* GAU - Always show if inventory exists */}
+                        {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
@@ -3561,13 +3573,13 @@ export default function ScanReportPage() {
                               <div className="font-medium" style={{ color: 'var(--fg)' }}>GAU (Historical URLs)</div>
                             </div>
                             <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: '#a855f7', color: '#ffffff' }}>
-                              {inventory.discovery.gau.urls_count || inventory.discovery.gau.urls?.length || 0} URLs
+                              {inventory.discovery.gau?.urls_count || inventory.discovery.gau?.urls?.length || 0} URLs
                             </span>
                           </div>
                         )}
                         
-                        {/* Arjun */}
-                        {inventory.discovery?.arjun && (
+                        {/* Arjun - Always show if inventory exists */}
+                        {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
@@ -3596,7 +3608,7 @@ export default function ScanReportPage() {
                               </div>
                             </div>
                             <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
-                              {Object.keys(inventory.discovery.arjun.params_by_url || {}).length || 0} URLs with params
+                              {Object.keys(inventory.discovery.arjun?.params_by_url || {}).length || 0} URLs with params
                             </span>
                           </div>
                         )}

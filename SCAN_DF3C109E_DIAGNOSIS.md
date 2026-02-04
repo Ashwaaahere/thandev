@@ -192,3 +192,4 @@ ORDER BY count DESC;
 
 If scan is COMPLETED but shows 0 findings, this might actually be correct if the target has no vulnerabilities!
 
+

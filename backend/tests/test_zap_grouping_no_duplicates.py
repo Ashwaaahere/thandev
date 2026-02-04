@@ -210,3 +210,4 @@ def test_httpx_surface_artifact_grouping(db_session: Session, test_project: Proj
     # Verify: Risk score should not be affected by HTTPX artifacts
     # (This is tested implicitly - if HTTPX were in Findings, they would affect risk score)
 
+

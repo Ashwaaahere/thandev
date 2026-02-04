@@ -114,3 +114,4 @@ def test_risk_score_instances_count():
     assert breakdown["medium"] == 3
 
 
+

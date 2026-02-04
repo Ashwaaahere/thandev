@@ -189,3 +189,4 @@ def test_favicon_static():
     assert adjusted_severity == Severity.INFO
 
 
+

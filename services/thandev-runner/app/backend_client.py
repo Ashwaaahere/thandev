@@ -48,7 +48,7 @@ async def get_http_client() -> httpx.AsyncClient:
                 _http_client = httpx.AsyncClient(
                     timeout=timeout,
                     limits=limits,
-                    http2=True,  # Use HTTP/2 for better performance
+                    http2=False,  # Disable HTTP/2 to avoid h2 dependency requirement
                 )
     return _http_client
 

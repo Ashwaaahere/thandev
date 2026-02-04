@@ -34,7 +34,7 @@ class AssetInventory:
             "final_url": None,
         }
         self.discovery = {
-            "httpx": {},
+            "httpx": {"tech": [], "status": 0, "final_url": None},
             "katana": {"urls_count": 0, "urls": []},
             "gau": {"urls_count": 0, "urls": []},
             "merged": {
@@ -102,21 +102,35 @@ async def run_httpx(target_url: str) -> Dict[str, Any]:
             timeout=30,
         )
         
-        if result.returncode != 0:
-            logger.warning(f"[HTTPX] Failed with exit code {result.returncode}")
-            return {"status": 0, "error": result.stderr}
-        
-        # Parse JSON output
+        # Parse JSON output (httpx may return non-zero exit code but still have valid output)
         output = result.stdout.strip()
-        if not output:
-            return {"status": 0, "error": "No output from httpx"}
+        stderr_output = result.stderr.strip()
         
-        data = json.loads(output)
+        if not output:
+            logger.warning(f"[HTTPX] No output from httpx (exit={result.returncode}, stderr={stderr_output[:200]})")
+            # Try to extract error from stderr
+            error_msg = stderr_output if stderr_output else "No output from httpx"
+            return {"status": 0, "error": error_msg, "tech": [], "final_url": target_url}
+        
+        try:
+            data = json.loads(output)
+        except json.JSONDecodeError as e:
+            logger.warning(f"[HTTPX] Failed to parse JSON output: {e}, output={output[:200]}")
+            return {"status": 0, "error": f"Invalid JSON output: {str(e)}", "tech": [], "final_url": target_url}
+        
+        # If exit code is non-zero but we have data, log warning but continue
+        if result.returncode != 0:
+            logger.warning(f"[HTTPX] Non-zero exit code {result.returncode} but got output, continuing anyway")
+        
+        # Ensure tech is always a list (httpx may return None or missing field)
+        tech_list = data.get("tech", [])
+        if not isinstance(tech_list, list):
+            tech_list = []
         
         return {
             "status": data.get("status_code", 0),
             "title": data.get("title", ""),
-            "tech": data.get("tech", []),
+            "tech": tech_list,
             "tls": data.get("tls", {}),
             "final_url": data.get("url", target_url),
         }
@@ -246,11 +260,23 @@ async def run_gau(hostname: str, max_urls: int = 500) -> List[str]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=60,  # 1 minute max
+            timeout=120,  # 2 minutes max (GAU can take longer for some targets)
         )
         
         if result.returncode != 0:
-            logger.warning(f"[GAU] Failed with exit code {result.returncode}")
+            logger.warning(f"[GAU] Failed with exit code {result.returncode}, stderr: {result.stderr[:200] if result.stderr else 'None'}")
+            # Even if exit code is non-zero, try to parse any URLs we got
+            if result.stdout:
+                urls = []
+                for line in result.stdout.strip().split('\n'):
+                    line = line.strip()
+                    if line and line.startswith('http'):
+                        urls.append(line)
+                        if len(urls) >= max_urls:
+                            break
+                if urls:
+                    logger.info(f"[GAU] Found {len(urls)} URLs despite non-zero exit code")
+                    return urls
             return []
         
         # Parse URLs from output
@@ -266,7 +292,19 @@ async def run_gau(hostname: str, max_urls: int = 500) -> List[str]:
         return urls
         
     except subprocess.TimeoutExpired:
-        logger.warning(f"[GAU] Timeout after 60s")
+        logger.warning(f"[GAU] Timeout after 120s - GAU may need more time for some targets")
+        # Try to parse any URLs we got before timeout
+        if hasattr(result, 'stdout') and result.stdout:
+            urls = []
+            for line in result.stdout.strip().split('\n'):
+                line = line.strip()
+                if line and line.startswith('http'):
+                    urls.append(line)
+                    if len(urls) >= max_urls:
+                        break
+            if urls:
+                logger.info(f"[GAU] Found {len(urls)} URLs before timeout")
+                return urls
         return []
     except Exception as e:
         logger.error(f"[GAU] Error: {e}", exc_info=True)
@@ -545,7 +583,11 @@ async def run_enumeration(
     # Step 1: HTTPX - Get canonical URL and tech
     await emit_event("httpx", "running", "Detecting technologies and canonical URL...")
     httpx_result = await run_httpx(target_url)
-    inventory.discovery["httpx"] = httpx_result
+    # Ensure tech is always a list and merge with existing structure
+    if "tech" not in httpx_result or not isinstance(httpx_result.get("tech"), list):
+        httpx_result["tech"] = []
+    # Merge result into existing httpx structure (preserves initialized structure)
+    inventory.discovery["httpx"].update(httpx_result)
     
     # Update scope with final URL
     final_url = httpx_result.get("final_url", target_url)

@@ -187,6 +187,9 @@ async def process_step_request(message: Dict[str, Any]) -> None:
     start_time = time.time()
     execution_time = 0.0
     
+    # Track if enumeration completed (for proper ACK handling)
+    enumeration_completed = False
+    
     try:
         logger.info(
             f"Processing step {step_id} (tool_id={tool_id}, mode_id={mode_id}, "
@@ -282,6 +285,9 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                 
                 # Don't call publish_step_result for enumeration - it's not a NATS-based tool
                 logger.info(f"[ENUM] Enumeration completed successfully for scan {scan_job_id}")
+                # Enumeration completes here - finally block will handle ACK and slot release
+                execution_time = time.time() - start_time
+                enumeration_completed = True
                 return
             except Exception as e:
                 logger.error(f"[ENUM] Failed: {e}", exc_info=True)
@@ -289,6 +295,8 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="failed", message=f"Enumeration failed: {str(e)[:100]}", progress=0.0)
                 result = {"success": False, "error": str(e), "findings": []}
                 await publish_step_result(step_id, StepResult(success=False, result=result))
+                execution_time = time.time() - start_time
+                enumeration_completed = True
                 return
 
         # Preflight connectivity check for HTTP/TLS tools.

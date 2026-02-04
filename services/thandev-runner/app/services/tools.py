@@ -1568,7 +1568,7 @@ class ToolExecutor:
         """
         # Check if ProjectDiscovery httpx is installed
         # Note: Python httpx library also has a CLI, so we need to verify it's the right one
-        # Python httpx errors on -u flag, ProjectDiscovery httpx supports it
+        # Python httpx errors on -version flag, ProjectDiscovery httpx supports it
         httpx_binary = None
         
         # Try common locations for ProjectDiscovery httpx
@@ -1584,25 +1584,44 @@ class ToolExecutor:
         ]
         
         for binary_path in possible_paths:
+            # First check if file exists (for absolute paths)
+            if binary_path != "httpx" and not os.path.exists(binary_path):
+                continue
+            
             try:
-                test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
+                # Use -version flag instead of network request - faster and more reliable
+                # ProjectDiscovery httpx supports -version, Python httpx does not
+                test_cmd = [binary_path, "-version"]
                 test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
-                    timeout=5,
+                    timeout=3,  # Reduced timeout since -version is instant
                     text=True
                 )
-                # Python httpx will error with "No such option: -u" or "required dependencies"
-                # ProjectDiscovery httpx will either succeed or fail with different error
+                # Python httpx will error with "No such option: -version" or similar
+                # ProjectDiscovery httpx will output version info
                 stderr_lower = test_result.stderr.lower()
-                if ("no such option" not in stderr_lower and 
+                stdout_lower = test_result.stdout.lower()
+                
+                # Check if it's ProjectDiscovery httpx (has version output or no "no such option" error)
+                is_projectdiscovery = (
+                    "projectdiscovery" in stdout_lower or
+                    "projectdiscovery" in stderr_lower or
+                    ("no such option" not in stderr_lower and 
                     "error: no such option" not in stderr_lower and
                     "required dependencies" not in stderr_lower and
-                    "could not run" not in stderr_lower):
+                     "could not run" not in stderr_lower and
+                     test_result.returncode == 0)
+                )
+                
+                if is_projectdiscovery:
                     httpx_binary = binary_path
                     logger.info(f"Detected ProjectDiscovery httpx binary at: {binary_path}")
                     break
             except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                logger.debug(f"httpx detection test timed out for {binary_path}")
                 continue
             except Exception as e:
                 logger.debug(f"httpx detection test failed for {binary_path}: {e}")
@@ -2379,6 +2398,12 @@ class ToolExecutor:
                     f"URLs scanned: {len(all_urls)}"
                 )
             
+            # Log stderr if present (dalfox may output errors/warnings to stderr)
+            if result.stderr and result.stderr.strip():
+                logger.warning(
+                    f"Dalfox scan {scan_job_id}: stderr output: {result.stderr[:1000]}"
+                )
+            
             logger.info(
                 "Dalfox scan completed",
                 extra={
@@ -2392,6 +2417,14 @@ class ToolExecutor:
                     "stderr_preview": result.stderr[:500] if result.stderr else None,
                 }
             )
+            
+            # If stdout is empty or just "[]", log a warning with more details
+            if not result.stdout or result.stdout.strip() in ["", "[]"]:
+                logger.warning(
+                    f"Dalfox scan {scan_job_id}: No output from dalfox. "
+                    f"URLs provided: {len(all_urls)}, exit_code: {exit_code}, "
+                    f"stderr: {result.stderr[:500] if result.stderr else 'None'}"
+                )
             
             # Rest of the processing logic remains the same...
             is_error = False
@@ -2768,6 +2801,14 @@ class ToolExecutor:
         except Exception as cert_config_error:
             logger.debug(f"Failed to configure ZAP certificate validation (API may not exist): {cert_config_error}")
         
+        # CRITICAL: Configure ZAP's local proxy to not use system proxy settings
+        # This ensures ZAP can make direct connections without proxy interference
+        try:
+            await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/network/action/setUseProxyChain/?useProxyChain=false&apikey=", timeout=10)
+            logger.info("Configured ZAP to disable proxy chain for direct connections")
+        except Exception as proxy_config_error:
+            logger.debug(f"Failed to configure ZAP proxy chain (non-critical): {proxy_config_error}")
+        
         # CRITICAL: Access the target URL through ZAP proxy BEFORE spidering
         # This ensures the URL is in ZAP's scan tree and passive scanners can analyze it
         # ZAP only adds URLs to scan tree when they're accessed through the proxy
@@ -2776,8 +2817,9 @@ class ToolExecutor:
         proxy_accessed = False
         for proxy_port in proxy_ports_to_try:
             try:
-                # With host network mode, use localhost instead of zap hostname
-                if "localhost" in zap_api_url or "127.0.0.1" in zap_api_url:
+                # With host network mode, ZAP is accessible via localhost
+                # If zap_api_url contains "zap:" (Docker hostname), use localhost instead
+                if "zap:" in zap_api_url or "localhost" in zap_api_url or "127.0.0.1" in zap_api_url:
                     proxy_url = f"http://localhost:{proxy_port}"
                 else:
                     proxy_url = zap_api_url.replace("/JSON", "").replace(":8090", f":{proxy_port}")
@@ -2859,7 +2901,40 @@ class ToolExecutor:
                 continue  # Try next port
         
         if not proxy_accessed:
-            logger.warning(f"Could not access URL via ZAP proxy on any port (tried {proxy_ports_to_try}) - will try spider")
+            logger.warning(f"Could not access URL via ZAP proxy on any port (tried {proxy_ports_to_try}) - will try direct accessUrl API")
+            # CRITICAL: If proxy access fails, try using accessUrl API directly to add URL to scan tree
+            # This works even if ZAP container cannot reach the URL (runner can reach it and proxy through ZAP)
+            try:
+                logger.info(f"Attempting to add {target_url} to ZAP scan tree using accessUrl API...")
+                access_response = await asyncio.to_thread(
+                    http_session.get,
+                    f"{zap_api_url}/JSON/core/action/accessUrl/?url={target_url}&followRedirects=true&apikey=",
+                    timeout=30
+                )
+                access_result = access_response.json()
+                if access_result.get("Result") == "OK":
+                    logger.info(f"Successfully added {target_url} to ZAP scan tree via accessUrl API")
+                    # Also try base URL
+                    from urllib.parse import urlparse
+                    target_parsed = urlparse(target_url)
+                    if target_parsed.path and target_parsed.path != "/":
+                        base_url = f"{target_parsed.scheme}://{target_parsed.netloc}/"
+                        try:
+                            base_access_response = await asyncio.to_thread(
+                                http_session.get,
+                                f"{zap_api_url}/JSON/core/action/accessUrl/?url={base_url}&followRedirects=true&apikey=",
+                                timeout=30
+                            )
+                            base_access_result = base_access_response.json()
+                            if base_access_result.get("Result") == "OK":
+                                logger.info(f"Successfully added base URL {base_url} to ZAP scan tree via accessUrl API")
+                        except Exception as base_access_error:
+                            logger.debug(f"Failed to add base URL via accessUrl API: {base_access_error}")
+                    await asyncio.sleep(2)  # Give ZAP time to process
+                else:
+                    logger.warning(f"accessUrl API returned: {access_result}")
+            except Exception as access_error:
+                logger.warning(f"Failed to add URL to scan tree via accessUrl API: {access_error}. Will try spider, but it may also fail if ZAP cannot reach the URL.")
             # Continue - spider will discover URLs (but won't add them to scan tree without proxy)
         
         # Seed ZAP with inventory URLs (if available)
@@ -3309,11 +3384,48 @@ class ToolExecutor:
                     logger.warning(f"ZAP Active Scan failed with code {error_code}: {error_msg}")
                     # If URL still not found, the spider may not have completed or URL format is wrong
                     if error_code == "url_not_found":
-                        # Try using just the base URL without path
+                        # CRITICAL: URL not in scan tree - this usually means ZAP container cannot reach the URL
+                        # Try to manually add URLs to scan tree using accessUrl API (runner can reach URLs even if ZAP container cannot)
                         from urllib.parse import urlparse
                         parsed = urlparse(target_url)
                         base_url = f"{parsed.scheme}://{parsed.netloc}"
-                        logger.warning(f"URL not in scan tree, trying base URL: {base_url}")
+                        logger.warning(f"URL not in scan tree, attempting to manually add URLs via accessUrl API...")
+                        
+                        # Try adding target URL and base URL to scan tree
+                        urls_added = False
+                        try:
+                            # Try adding target URL
+                            logger.info(f"Attempting to add target URL {target_url} to ZAP scan tree via accessUrl API...")
+                            target_access_response = await asyncio.to_thread(
+                                http_session.get,
+                                f"{zap_api_url}/JSON/core/action/accessUrl/?url={target_url}&followRedirects=true&apikey=",
+                                timeout=30
+                            )
+                            target_access_result = target_access_response.json()
+                            if target_access_result.get("Result") == "OK":
+                                logger.info(f"Successfully added target URL {target_url} to scan tree via accessUrl API")
+                                urls_added = True
+                            
+                            # Try adding base URL
+                            logger.info(f"Attempting to add base URL {base_url} to ZAP scan tree via accessUrl API...")
+                            base_access_response = await asyncio.to_thread(
+                                http_session.get,
+                                f"{zap_api_url}/JSON/core/action/accessUrl/?url={base_url}&followRedirects=true&apikey=",
+                                timeout=30
+                            )
+                            base_access_result = base_access_response.json()
+                            if base_access_result.get("Result") == "OK":
+                                logger.info(f"Successfully added base URL {base_url} to scan tree via accessUrl API")
+                                urls_added = True
+                            
+                            if urls_added:
+                                await asyncio.sleep(3)  # Give ZAP time to process URLs
+                                logger.info("URLs added to scan tree, retrying active scan...")
+                        except Exception as manual_add_error:
+                            logger.warning(f"Failed to manually add URLs to scan tree: {manual_add_error}")
+                        
+                        # Now try starting active scan with base URL
+                        logger.warning(f"Trying base URL for active scan: {base_url}")
                         base_scan_url = f"{zap_api_url}/JSON/ascan/action/scan/?url={base_url}&apikey="
                         base_scan_response = await asyncio.to_thread(http_session.get, base_scan_url, timeout=timeout_seconds)
                         base_scan_result = base_scan_response.json()
@@ -3322,8 +3434,18 @@ class ToolExecutor:
                             active_scan_id = base_scan_result.get("scan")
                             logger.info(f"Started ZAP Active Scan using base URL: {base_url}, scanId: {active_scan_id}")
                         else:
-                            logger.error(f"Failed to start ZAP Active Scan with base URL: {base_scan_result}")
-                            raise ValueError(f"Failed to start ZAP Active Scan: {error_msg} (code: {error_code}). URL may not be accessible or spider didn't complete.")
+                            # If base URL also fails, try the original target URL one more time (it might have been added)
+                            logger.warning(f"Base URL scan also failed ({base_scan_result}), trying original target URL again...")
+                            retry_scan_url = f"{zap_api_url}/JSON/ascan/action/scan/?url={target_url}&apikey="
+                            retry_scan_response = await asyncio.to_thread(http_session.get, retry_scan_url, timeout=timeout_seconds)
+                            retry_scan_result = retry_scan_response.json()
+                            if retry_scan_result.get("code") == "OK":
+                                active_scan_id = retry_scan_result.get("scan")
+                                logger.info(f"Started ZAP Active Scan using target URL (after manual add): {target_url}, scanId: {active_scan_id}")
+                            else:
+                                logger.error(f"Failed to start ZAP Active Scan with both base URL and target URL after manual URL addition")
+                                logger.error(f"Base URL response: {base_scan_result}, Target URL response: {retry_scan_result}")
+                                raise ValueError(f"Failed to start ZAP Active Scan: {error_msg} (code: {error_code}). URL may not be accessible. ZAP container cannot reach the target URL, and manual URL addition via accessUrl API also failed.")
                     else:
                         logger.error(f"ZAP Active Scan failed: {error_msg} (code: {error_code})")
                         raise ValueError(f"Failed to start ZAP Active Scan: {error_msg} (code: {error_code})")
@@ -3411,15 +3533,44 @@ class ToolExecutor:
             
             while True:
                 poll_count += 1
-                status_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/status/?scanId={active_scan_id}&apikey=", timeout=10)
-                status_result = status_response.json()
-                status_percent = int(status_result.get("status", "0"))
+                # Retry logic for ZAP API calls (ZAP may restart or be temporarily unavailable)
+                max_api_retries = 3
+                api_retry_delay = 2
+                status_percent = 0
+                current_scan = None
+                
+                for api_retry in range(max_api_retries):
+                    try:
+                        status_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/status/?scanId={active_scan_id}&apikey=", timeout=10)
+                        status_response.raise_for_status()
+                        status_result = status_response.json()
+                        status_percent = int(status_result.get("status", "0"))
+                        break  # Success, exit retry loop
+                    except Exception as status_error:
+                        if api_retry < max_api_retries - 1:
+                            logger.warning(f"ZAP API status call failed (attempt {api_retry + 1}/{max_api_retries}): {status_error}. Retrying in {api_retry_delay}s...")
+                            await asyncio.sleep(api_retry_delay)
+                        else:
+                            logger.error(f"ZAP API status call failed after {max_api_retries} attempts: {status_error}")
+                            # Continue with status_percent = 0, will check scan details below
                 
                 # Also check scan details to see if it's actually running
                 try:
-                    scans_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
-                    scans_data = scans_response.json().get("scans", [])
-                    current_scan = next((s for s in scans_data if s.get("id") == str(active_scan_id)), None)
+                    for api_retry in range(max_api_retries):
+                        try:
+                            scans_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
+                            scans_response.raise_for_status()
+                            scans_data = scans_response.json().get("scans", [])
+                            current_scan = next((s for s in scans_data if s.get("id") == str(active_scan_id)), None)
+                            break  # Success, exit retry loop
+                        except Exception as scans_error:
+                            if api_retry < max_api_retries - 1:
+                                logger.warning(f"ZAP API scans call failed (attempt {api_retry + 1}/{max_api_retries}): {scans_error}. Retrying in {api_retry_delay}s...")
+                                await asyncio.sleep(api_retry_delay)
+                            else:
+                                logger.error(f"ZAP API scans call failed after {max_api_retries} attempts: {scans_error}")
+                                raise  # Re-raise to be caught by outer except
+                    
                     if current_scan:
                         req_count = int(current_scan.get("reqCount", "0"))
                         alert_count = int(current_scan.get("alertCount", "0"))
@@ -3428,7 +3579,18 @@ class ToolExecutor:
                         if poll_count == 1 or poll_count % 5 == 0 or req_count > 0:
                             logger.info(f"ZAP Active Scan status (poll {poll_count}): {status_percent}%, state={state}, reqCount={req_count}, alertCount={alert_count}")
                         
-                        # If scan is finished but made no requests, this is suspicious
+                        # CRITICAL: If scan is FINISHED, break the loop even if status_percent is not 100%
+                        # ZAP's status API can be unreliable, but the scan state is accurate
+                        if state == "FINISHED":
+                            if req_count == 0:
+                                logger.warning(f"ZAP Active Scan finished with 0 requests - ZAP cannot access URLs (network issue)")
+                            else:
+                                logger.info(f"ZAP Active Scan finished: {req_count} requests, {alert_count} alerts")
+                            # Break the loop - scan is done
+                            status_percent = 100  # Set to 100 to trigger the break below
+                            break
+                        
+                        # If scan is finished but made no requests, this is suspicious (legacy check for first poll)
                         if state == "FINISHED" and req_count == 0 and poll_count == 1:
                             logger.warning(f"ZAP Active Scan finished immediately with 0 requests - scan may not have run properly")
                     else:
@@ -4431,7 +4593,7 @@ class ToolExecutor:
         """
         # Check if ProjectDiscovery httpx is installed
         # Note: Python httpx library also has a CLI, so we need to verify it's the right one
-        # Python httpx errors on -u flag, ProjectDiscovery httpx supports it
+        # Python httpx errors on -version flag, ProjectDiscovery httpx supports it
         httpx_binary = None
         
         # Try common locations for ProjectDiscovery httpx
@@ -4447,25 +4609,44 @@ class ToolExecutor:
         ]
         
         for binary_path in possible_paths:
+            # First check if file exists (for absolute paths)
+            if binary_path != "httpx" and not os.path.exists(binary_path):
+                continue
+            
             try:
-                test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
+                # Use -version flag instead of network request - faster and more reliable
+                # ProjectDiscovery httpx supports -version, Python httpx does not
+                test_cmd = [binary_path, "-version"]
                 test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
-                    timeout=5,
+                    timeout=3,  # Reduced timeout since -version is instant
                     text=True
                 )
-                # Python httpx will error with "No such option: -u" or "required dependencies"
-                # ProjectDiscovery httpx will either succeed or fail with different error
+                # Python httpx will error with "No such option: -version" or similar
+                # ProjectDiscovery httpx will output version info
                 stderr_lower = test_result.stderr.lower()
-                if ("no such option" not in stderr_lower and 
+                stdout_lower = test_result.stdout.lower()
+                
+                # Check if it's ProjectDiscovery httpx (has version output or no "no such option" error)
+                is_projectdiscovery = (
+                    "projectdiscovery" in stdout_lower or
+                    "projectdiscovery" in stderr_lower or
+                    ("no such option" not in stderr_lower and 
                     "error: no such option" not in stderr_lower and
                     "required dependencies" not in stderr_lower and
-                    "could not run" not in stderr_lower):
+                     "could not run" not in stderr_lower and
+                     test_result.returncode == 0)
+                )
+                
+                if is_projectdiscovery:
                     httpx_binary = binary_path
                     logger.info(f"Detected ProjectDiscovery httpx binary at: {binary_path}")
                     break
             except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                logger.debug(f"httpx detection test timed out for {binary_path}")
                 continue
             except Exception as e:
                 logger.debug(f"httpx detection test failed for {binary_path}: {e}")
@@ -5016,7 +5197,7 @@ class ToolExecutor:
         """
         # Check if ProjectDiscovery httpx is installed
         # Note: Python httpx library also has a CLI, so we need to verify it's the right one
-        # Python httpx errors on -u flag, ProjectDiscovery httpx supports it
+        # Python httpx errors on -version flag, ProjectDiscovery httpx supports it
         httpx_binary = None
         
         # Try common locations for ProjectDiscovery httpx
@@ -5032,25 +5213,44 @@ class ToolExecutor:
         ]
         
         for binary_path in possible_paths:
+            # First check if file exists (for absolute paths)
+            if binary_path != "httpx" and not os.path.exists(binary_path):
+                continue
+            
             try:
-                test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
+                # Use -version flag instead of network request - faster and more reliable
+                # ProjectDiscovery httpx supports -version, Python httpx does not
+                test_cmd = [binary_path, "-version"]
                 test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
-                    timeout=5,
+                    timeout=3,  # Reduced timeout since -version is instant
                     text=True
                 )
-                # Python httpx will error with "No such option: -u" or "required dependencies"
-                # ProjectDiscovery httpx will either succeed or fail with different error
+                # Python httpx will error with "No such option: -version" or similar
+                # ProjectDiscovery httpx will output version info
                 stderr_lower = test_result.stderr.lower()
-                if ("no such option" not in stderr_lower and 
+                stdout_lower = test_result.stdout.lower()
+                
+                # Check if it's ProjectDiscovery httpx (has version output or no "no such option" error)
+                is_projectdiscovery = (
+                    "projectdiscovery" in stdout_lower or
+                    "projectdiscovery" in stderr_lower or
+                    ("no such option" not in stderr_lower and 
                     "error: no such option" not in stderr_lower and
                     "required dependencies" not in stderr_lower and
-                    "could not run" not in stderr_lower):
+                     "could not run" not in stderr_lower and
+                     test_result.returncode == 0)
+                )
+                
+                if is_projectdiscovery:
                     httpx_binary = binary_path
                     logger.info(f"Detected ProjectDiscovery httpx binary at: {binary_path}")
                     break
             except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                logger.debug(f"httpx detection test timed out for {binary_path}")
                 continue
             except Exception as e:
                 logger.debug(f"httpx detection test failed for {binary_path}: {e}")
@@ -5592,7 +5792,7 @@ class ToolExecutor:
         """
         # Check if ProjectDiscovery httpx is installed
         # Note: Python httpx library also has a CLI, so we need to verify it's the right one
-        # Python httpx errors on -u flag, ProjectDiscovery httpx supports it
+        # Python httpx errors on -version flag, ProjectDiscovery httpx supports it
         httpx_binary = None
         
         # Try common locations for ProjectDiscovery httpx
@@ -5608,25 +5808,44 @@ class ToolExecutor:
         ]
         
         for binary_path in possible_paths:
+            # First check if file exists (for absolute paths)
+            if binary_path != "httpx" and not os.path.exists(binary_path):
+                continue
+            
             try:
-                test_cmd = [binary_path, "-u", "https://example.com", "-silent", "-json"]
+                # Use -version flag instead of network request - faster and more reliable
+                # ProjectDiscovery httpx supports -version, Python httpx does not
+                test_cmd = [binary_path, "-version"]
                 test_result = await asyncio.to_thread(subprocess.run,
                     test_cmd,
                     capture_output=True,
-                    timeout=5,
+                    timeout=3,  # Reduced timeout since -version is instant
                     text=True
                 )
-                # Python httpx will error with "No such option: -u" or "required dependencies"
-                # ProjectDiscovery httpx will either succeed or fail with different error
+                # Python httpx will error with "No such option: -version" or similar
+                # ProjectDiscovery httpx will output version info
                 stderr_lower = test_result.stderr.lower()
-                if ("no such option" not in stderr_lower and 
+                stdout_lower = test_result.stdout.lower()
+                
+                # Check if it's ProjectDiscovery httpx (has version output or no "no such option" error)
+                is_projectdiscovery = (
+                    "projectdiscovery" in stdout_lower or
+                    "projectdiscovery" in stderr_lower or
+                    ("no such option" not in stderr_lower and 
                     "error: no such option" not in stderr_lower and
                     "required dependencies" not in stderr_lower and
-                    "could not run" not in stderr_lower):
+                     "could not run" not in stderr_lower and
+                     test_result.returncode == 0)
+                )
+                
+                if is_projectdiscovery:
                     httpx_binary = binary_path
                     logger.info(f"Detected ProjectDiscovery httpx binary at: {binary_path}")
                     break
             except FileNotFoundError:
+                continue
+            except subprocess.TimeoutExpired:
+                logger.debug(f"httpx detection test timed out for {binary_path}")
                 continue
             except Exception as e:
                 logger.debug(f"httpx detection test failed for {binary_path}: {e}")

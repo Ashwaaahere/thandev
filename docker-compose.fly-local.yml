@@ -88,7 +88,9 @@ services:
     ports:
       - "8090:8090"
       - "8080:8080" # Expose proxy port so runner can access URLs through ZAP
-    command: [ "zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "api.disablekey=true", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true", "-config", "api.addrs.addr.enabled=true" ]
+    command: [ "zap.sh", "-daemon", "-host", "0.0.0.0", "-port", "8090", "-config", "api.disablekey=true", "-config", "api.addrs.addr.name=.*", "-config", "api.addrs.addr.regex=true", "-config", "api.addrs.addr.enabled=true", "-config", "proxy.ip=0.0.0.0", "-config", "proxy.port=8080" ]
+    environment:
+      - JAVA_OPTS=-Dsun.net.useSystemProxies=false -Djava.net.useSystemProxies=false -Dnetworkaddress.cache.ttl=30 -Dnetworkaddress.cache.negative.ttl=10 -Djava.net.preferIPv4Stack=true
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8090/JSON/core/view/version/" ]
       interval: 10s

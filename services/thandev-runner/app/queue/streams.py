@@ -114,7 +114,7 @@ async def consume_step_requests(
     consumer_name: str,
     count: int = 10,
     block_ms: int = 1000,
-    check_pending: bool = False,
+    check_pending: bool = True,  # Default to True to always check for stuck messages
 ) -> List[Dict[str, Any]]:
     """
     Consume step requests from the stream using a consumer group.
@@ -223,8 +223,9 @@ async def consume_step_requests(
                             pending_info = []
                     
                     if pending_info and isinstance(pending_info, list):
-                        # Claim pending messages that are older than 60 seconds
-                        min_idle_time = 60000  # 60 seconds in milliseconds
+                        # Claim pending messages that are older than 10 seconds
+                        # Reduced from 60s to 10s to prevent enumeration steps from getting stuck
+                        min_idle_time = 10000  # 10 seconds in milliseconds
                         message_ids: list[str] = []
                         for p in pending_info:
                             # Newer redis-py: list of dicts with message_id
