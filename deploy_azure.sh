@@ -65,28 +65,28 @@ echo ""
 # Update Container Apps
 echo -e "${YELLOW}🔄 Updating Azure Container Apps...${NC}"
 
-# Update backend
-echo -e "${YELLOW}  Updating $BACKEND_APP...${NC}"
+# Update backend (container name: thandev-backend)
+echo -e "${YELLOW}  Updating $BACKEND_APP container...${NC}"
 az containerapp update \
     --name $BACKEND_APP \
     --resource-group $RESOURCE_GROUP \
-    --image $ACR_NAME.azurecr.io/thandev-backend:latest \
-    --query "properties.runningStatus" \
-    --output table
+    --container-name thandev-backend \
+    --image $ACR_NAME.azurecr.io/thandev-backend:latest
 
-echo -e "${GREEN}✅ $BACKEND_APP updated${NC}"
+BACKEND_STATUS=$(az containerapp show --name $BACKEND_APP --resource-group $RESOURCE_GROUP --query "properties.runningStatus" -o tsv)
+echo -e "${GREEN}✅ $BACKEND_APP updated (Status: $BACKEND_STATUS)${NC}"
 echo ""
 
-# Update runner
-echo -e "${YELLOW}  Updating $RUNNER_APP...${NC}"
+# Update runner (container name: thandev-runner, ZAP sidecar is separate)
+echo -e "${YELLOW}  Updating $RUNNER_APP container...${NC}"
 az containerapp update \
     --name $RUNNER_APP \
     --resource-group $RESOURCE_GROUP \
-    --image $ACR_NAME.azurecr.io/thandev-runner:latest \
-    --query "properties.runningStatus" \
-    --output table
+    --container-name thandev-runner \
+    --image $ACR_NAME.azurecr.io/thandev-runner:latest
 
-echo -e "${GREEN}✅ $RUNNER_APP updated${NC}"
+RUNNER_STATUS=$(az containerapp show --name $RUNNER_APP --resource-group $RESOURCE_GROUP --query "properties.runningStatus" -o tsv)
+echo -e "${GREEN}✅ $RUNNER_APP updated (Status: $RUNNER_STATUS)${NC}"
 echo ""
 
 # Wait for deployments to complete
