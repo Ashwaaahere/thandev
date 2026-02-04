@@ -658,14 +658,6 @@ async def process_step_request(message: Dict[str, Any]) -> None:
             # Parse findings if we have an output file
             # CRITICAL: Always try to parse if file exists, regardless of other conditions
             # Also try to parse if we have output in result but file doesn't exist yet (write it first)
-            # #region agent log
-            try:
-                with open("/home/ashwath/thandev/.cursor/debug.log", "a") as f:
-                    import json as json_lib
-                    import time
-                    f.write(json_lib.dumps({"sessionId":"zap-debug","runId":"run1","hypothesisId":"H2,H3","location":"tasks.py:509","message":"Before file existence check","data":{"step_id":step_id,"tool_name":tool_name,"output_file":str(output_file) if output_file else None,"output_file_exists":output_file.exists() if output_file else False,"output_file_size":output_file.stat().st_size if output_file and output_file.exists() else 0},"timestamp":int(time.time()*1000)})+"\n")
-            except: pass
-            # #endregion
             
             # CRITICAL FIX: If we have output in result but file doesn't exist, write it now before parsing
             # Also handle nuclei/zap which should always have a file even if output is empty
