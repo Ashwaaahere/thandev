@@ -601,9 +601,24 @@ async def create_scan(
         # Fall through to Runner path below
     
     # Default path: Use Runner via Redis streams (when brain is disabled or not required)
-    if not settings.BRAIN_SERVICE_ENABLED or (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id):
+    # CRITICAL: Always publish to runner if:
+    # 1. Brain is disabled, OR
+    # 2. Brain is not required (BRAIN_REQUIRED=False) and no active brain session
+    # This ensures scans don't get stuck if brain session creation fails or brain service is unavailable
+    should_use_runner = (
+        not settings.BRAIN_SERVICE_ENABLED or 
+        (not settings.BRAIN_REQUIRED and not scan_job.brain_session_id)
+    )
+    
+    if should_use_runner:
         # Use Runner via Redis streams
-        logger.info(f"Publishing scan steps to Runner for scan {scan_job.id}")
+        logger.info(
+            f"Publishing scan steps to Runner for scan {scan_job.id} "
+            f"(brain_enabled={settings.BRAIN_SERVICE_ENABLED}, "
+            f"brain_required={settings.BRAIN_REQUIRED}, "
+            f"brain_session_id={scan_job.brain_session_id}, "
+            f"status={scan_job.status.value if hasattr(scan_job.status, 'value') else scan_job.status})"
+        )
         try:
             from app.services.runner_client import publish_scan_steps_to_runner
             
