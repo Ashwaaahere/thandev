@@ -27,9 +27,11 @@ INITIAL_RETRY_DELAY = 1.0  # seconds
 MAX_RETRY_DELAY = 60.0  # seconds
 RETRY_EXPONENT = 2.0
 RETRYABLE_STATUS_CODES = {429, 502, 503, 504}  # Rate limit, Bad Gateway, Service Unavailable, Gateway Timeout
-REQUEST_TIMEOUT = 60.0  # seconds
+REQUEST_TIMEOUT = 180.0  # seconds (increased from 60s to handle large finding batches)
 # Connection timeout for initial connection (separate from request timeout)
 CONNECT_TIMEOUT = 10.0  # seconds
+# Max findings per POST request (batching to prevent backend timeout)
+FINDINGS_BATCH_SIZE = 100
 
 # Shared HTTP client for connection pooling and keep-alive
 _http_client: Optional[httpx.AsyncClient] = None
@@ -230,6 +232,8 @@ async def post_tool_result(
     POST tool result and findings to backend API with retry logic.
     
     This endpoint is idempotent - using tool_run_id as unique key prevents duplicates.
+    Large finding sets (>FINDINGS_BATCH_SIZE) are automatically split into batches
+    to prevent backend timeout/OOM.
     
     Args:
         scan_job_id: Scan job ID
@@ -251,6 +255,78 @@ async def post_tool_result(
     if not tool_run_id:
         tool_run_id = str(uuid.uuid4())
     
+    # BATCH: Split large finding sets into manageable chunks
+    # This prevents backend timeout when processing 600-800+ findings
+    if len(findings) > FINDINGS_BATCH_SIZE:
+        logger.info(
+            f"[BATCH-POST] Large finding set ({len(findings)}) for {tool_name}, "
+            f"splitting into batches of {FINDINGS_BATCH_SIZE}"
+        )
+        batches = [findings[i:i + FINDINGS_BATCH_SIZE] for i in range(0, len(findings), FINDINGS_BATCH_SIZE)]
+        all_ok = True
+        total_findings_sent = 0
+        for batch_idx, batch in enumerate(batches):
+            # Each batch gets a unique tool_run_id to avoid idempotency conflicts
+            batch_run_id = tool_run_id if batch_idx == 0 else f"{tool_run_id}-b{batch_idx}"
+            # Only first batch carries full execution metadata
+            batch_exec = execution_result if batch_idx == 0 else {
+                "success": True,
+                "exit_code": 0,
+                "execution_time": 0,
+            }
+            ok = await _post_tool_result_impl(
+                scan_job_id=scan_job_id,
+                step_id=step_id,
+                tool_name=tool_name,
+                tool_id=tool_id,
+                findings=batch,
+                execution_result=batch_exec,
+                tool_run_id=batch_run_id,
+            )
+            if ok:
+                total_findings_sent += len(batch)
+                logger.info(
+                    f"[BATCH-POST] Batch {batch_idx + 1}/{len(batches)} OK "
+                    f"({len(batch)} findings, {total_findings_sent}/{len(findings)} total)"
+                )
+            else:
+                logger.error(
+                    f"[BATCH-POST] Batch {batch_idx + 1}/{len(batches)} FAILED "
+                    f"({len(batch)} findings)"
+                )
+                all_ok = False
+        
+        logger.info(
+            f"[BATCH-POST] Completed: {total_findings_sent}/{len(findings)} findings "
+            f"uploaded in {len(batches)} batches for {tool_name} (scan {scan_job_id})"
+        )
+        return all_ok
+    
+    # Single request for small finding sets
+    return await _post_tool_result_impl(
+        scan_job_id=scan_job_id,
+        step_id=step_id,
+        tool_name=tool_name,
+        tool_id=tool_id,
+        findings=findings,
+        execution_result=execution_result,
+        tool_run_id=tool_run_id,
+    )
+
+
+async def _post_tool_result_impl(
+    scan_job_id: str,
+    step_id: str,
+    tool_name: str,
+    tool_id: str,
+    findings: List[Dict[str, Any]],
+    execution_result: Optional[Dict[str, Any]] = None,
+    tool_run_id: Optional[str] = None,
+) -> bool:
+    """
+    Internal implementation: POST a single tool result batch to backend.
+    Called directly for small finding sets, or per-batch for large ones.
+    """
     # Changed from /api/internal/... to /api/runner/... to avoid Fly.io proxy blocking
     endpoint = f"{settings.BACKEND_URL}/api/runner/scans/{scan_job_id}/tool-results"
     

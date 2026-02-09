@@ -479,8 +479,24 @@ async def create_tool_result(
             raise ValueError(f"Unsupported payload hash version: {version}")
     
     # Compute payload hash for this request (current version)
-    payload_hash_v2 = _compute_payload_hash(tool_result, version=2)
-    payload_hash_v1 = _compute_payload_hash(tool_result, version=1)  # For backward compatibility
+    # PERF: Skip expensive payload hash for large batches (>50 findings)
+    # The hash sorts + JSON-serializes ALL findings twice, which is extremely slow
+    # for 600-800+ findings. tool_run_id alone provides sufficient idempotency.
+    findings_count = len(tool_result.findings) if tool_result.findings else 0
+    if findings_count > 50:
+        # Use lightweight hash based on tool_run_id + count (O(1) instead of O(n log n))
+        lightweight_hash = hashlib.sha256(
+            f"{tool_result.tool_run_id}:{tool_result.tool_name}:{findings_count}".encode()
+        ).hexdigest()
+        payload_hash_v2 = lightweight_hash
+        payload_hash_v1 = lightweight_hash
+        logger.info(
+            f"[PERF] Skipping expensive payload hash for large batch: "
+            f"{findings_count} findings for {tool_result.tool_name} (scan {scan_id})"
+        )
+    else:
+        payload_hash_v2 = _compute_payload_hash(tool_result, version=2)
+        payload_hash_v1 = _compute_payload_hash(tool_result, version=1)  # For backward compatibility
     
     # Check for existing tool result with same tool_run_id (idempotency)
     existing_result = None
