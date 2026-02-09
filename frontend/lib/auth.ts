@@ -42,11 +42,17 @@ const isUuid = (value?: string | null) => !!value && UUID_REGEX.test(String(valu
 const githubClientId = process.env.GITHUB_CLIENT_ID || process.env.GITHUB_ID
 const githubClientSecret = process.env.GITHUB_CLIENT_SECRET || process.env.GITHUB_SECRET
 const isDevelopment = process.env.NODE_ENV === 'development'
-const backendApiBase =
+// Backend API base URL for server-side bootstrap calls
+// Priority: explicit server env → NEXT_PUBLIC variants → hardcoded production URL → localhost
+const backendApiBase = (
   process.env.BACKEND_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_BASE ||
-  'http://localhost:8000'
+  (process.env.NODE_ENV === 'production' ? 'https://thandev-backend.fly.dev' : 'http://localhost:8000')
+).replace(/\/$/, '')
+
+// Log resolved backend URL (always, for debugging bootstrap issues)
+console.log('[Auth Config] Resolved backendApiBase:', backendApiBase)
 
 // Debug logging in development
 if (isDevelopment) {
@@ -235,6 +241,8 @@ export const authOptions: NextAuthOptions = {
           // Fetch with timeout to prevent hanging
           const controller = new AbortController()
           const timeoutId = setTimeout(() => controller.abort(), 8000) // 8 second timeout
+          
+          console.log(`[Auth] Bootstrap calling: ${backendApiBase}/api/auth/bootstrap for user ${externalUserId}`)
           
           try {
             const res = await fetch(`${backendApiBase}/api/auth/bootstrap`, {
