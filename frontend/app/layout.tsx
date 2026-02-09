@@ -111,8 +111,8 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Comprehensive structured data using @graph format
-  // This replaces SoftwareApplication (which requires aggregateRating/review) with proper schema types
+  // Structured data without Product/Review schemas to avoid Google Search Console errors
+  // Product schema requires aggregateRating/reviews which we don't have in beta
   const structuredData = [
     {
       "@type": "Organization",
@@ -147,38 +147,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       }
     },
     {
-      "@type": "LandingPage",
+      "@type": "WebPage",
       "@id": "https://thandev.io/#webpage",
       "url": "https://thandev.io/",
       "name": "Thandev - Cybersecurity Intelligence Platform",
-      "description": "Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional surface scanning.",
+      "description": "Real-time cybersecurity intelligence platform with live threat monitoring, vulnerability tracking, security news aggregation, and professional security scanning for developers and security teams.",
       "isPartOf": {
         "@id": "https://thandev.io/#website",
       },
       "about": {
-        "@id": "https://thandev.io/#product",
-      },
-    },
-    {
-      "@type": "Product",
-      "@id": "https://thandev.io/#product",
-      "name": "Thandev",
-      "description": "Cybersecurity intelligence platform providing real-time threat monitoring, vulnerability tracking, CVE database access, exploit monitoring, and professional security surface scanning for developers and security teams.",
-      "category": "Cybersecurity",
-      "image": "https://thandev.io/og-image.png",
-      "brand": {
-        "@type": "Brand",
-        "name": "Thandev",
         "@id": "https://thandev.io/#organization",
       },
-      "offers": {
-        "@type": "Offer",
-        "price": "0",
-        "priceCurrency": "USD",
-        "availability": "https://schema.org/PreOrder",
-        "url": "https://thandev.io/private-beta",
-        "description": "Beta access available - request early access or sign in with GitHub",
-        "priceValidUntil": "2026-12-31"
+      "primaryImageOfPage": {
+        "@type": "ImageObject",
+        "url": "https://thandev.io/og-image.png",
+        "width": 1200,
+        "height": 630
       }
     },
   ];
