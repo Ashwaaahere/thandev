@@ -184,7 +184,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   ];
 
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" className="dark" style={{ colorScheme: 'dark' }} suppressHydrationWarning>
       <head>
         {/* Essential SEO Meta Tags */}
         <meta charSet="utf-8" />
@@ -229,9 +229,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         {/* Manifest */}
         <link rel="manifest" href="/manifest.json" />
         
-        {/* Theme color for mobile browsers */}
-        <meta name="theme-color" content="#6366f1" media="(prefers-color-scheme: light)" />
-        <meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)" />
+        {/* Theme color for mobile browsers - dark theme only */}
+        <meta name="theme-color" content="#0a0a0a" />
         <meta name="msapplication-TileColor" content="#6366f1" />
         <meta name="msapplication-config" content="/browserconfig.xml" />
         
@@ -244,19 +243,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
         
         {/* Canonical URLs are set per-page via metadata, not globally */}
-        {/* theme init: light/dark before first paint */}
+        {/* Force dark theme before first paint */}
         <script
           dangerouslySetInnerHTML={{
             __html: `
           (function(){
             try {
-              var t = localStorage.getItem('theme');
-              if(!t){
-                t = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-              }
-              var r = document.documentElement;
-              r.classList.toggle('dark', t === 'dark');
-              r.classList.toggle('light', t === 'light');
+              document.documentElement.classList.add('dark');
+              document.documentElement.classList.remove('light');
+              document.documentElement.style.colorScheme = 'dark';
             } catch (e) {}
           })();`,
           }}
