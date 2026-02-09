@@ -1668,14 +1668,14 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
             elif tool.lower() == "nuclei" and template_id:
                 # Nuclei: group by template_id (same vulnerability = same finding)
                 fallback_key = f"nuclei:{template_id}:{title[:100]}"
-                if fallback_key not in unique_findings_map:
-                    unique_findings_map[fallback_key] = f
-                else:
+                if fallback_key in unique_findings_map:
                     existing = unique_findings_map[fallback_key]
                     existing_count = getattr(existing, "affected_count", 1) or 1
                     new_count = getattr(f, "affected_count", 1) or 1
                     if new_count > existing_count:
                         unique_findings_map[fallback_key] = f
+                else:
+                    unique_findings_map[fallback_key] = f
             elif tool.lower() == "dalfox" and title:
                 # Dalfox: group by title (same XSS type = same finding)
                 fallback_key = f"dalfox:{title[:100]}"

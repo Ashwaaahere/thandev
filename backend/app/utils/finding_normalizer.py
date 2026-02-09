@@ -722,6 +722,16 @@ def normalize_and_group_finding(
     rule_id = finding_data.get("rule_id") or finding_data.get("template_id")
     title = finding_data.get("title") or finding_data.get("name") or "Security Finding"
     
+    # For nuclei: extract URL from raw_data if finding_data.url is missing
+    # Nuclei parser stores the URL in raw_data.matched-at or raw_data.host
+    if not url and tool_lower == "nuclei" and isinstance(raw_data, dict):
+        url = (
+            raw_data.get("matched-at")
+            or raw_data.get("matched_at")
+            or raw_data.get("host")
+            or ""
+        )
+    
     # Normalize URL and extract host
     normalized_url = normalize_url(url, strip_query_for_static=True)
     parsed = None
@@ -785,7 +795,17 @@ def normalize_and_group_finding(
         grouping_scope = "host"
     
     # Compute evidence signature
-    evidence_sig = compute_evidence_signature(finding_data, raw_data)
+    # For nuclei with host-level grouping, use a simplified signature that only
+    # includes template_id and title. This prevents URL-specific evidence (headers,
+    # cookies, etc.) from fragmenting what should be a single grouped finding.
+    # e.g. "Nginx version detect" should collapse into ONE finding per host.
+    if tool_lower == "nuclei" and grouping_scope == "host":
+        sig_parts = [f"title:{title}"]
+        if rule_id:
+            sig_parts.append(f"rule:{rule_id}")
+        evidence_sig = "|".join(sig_parts)
+    else:
+        evidence_sig = compute_evidence_signature(finding_data, raw_data)
     
     # Determine path bucket based on grouping scope
     if grouping_scope == "host":
@@ -873,9 +893,11 @@ def normalize_and_group_finding(
     }
     
     # Build instance
+    # Use the (possibly nuclei-enriched) url for the instance, not the original empty one
+    instance_url = url or normalized_url
     instance = {
-        "url": url,
-        "path": path,
+        "url": instance_url,
+        "path": path or (parsed.path if parsed else ""),
         "http_method": finding_data.get("http_method") or finding_data.get("method"),
         "parameter": parameter,
         "evidence_snippet": finding_data.get("evidence", "")[:200],  # Truncate for storage

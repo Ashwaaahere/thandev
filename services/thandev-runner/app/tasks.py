@@ -284,24 +284,24 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                     return
                 
                 try:
-                    # Emit running event
+                # Emit running event
+                if scan_job_id:
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="running", message=f"Running asset discovery for {scan_level} scan", progress=0.1)
+                
+                # Run enumeration - callback receives phase, tool, stage, message, progress, meta
+                async def enum_cb(phase: str, tool: str, stage: str, message: str, progress: float = None, meta: dict = None):
                     if scan_job_id:
-                        await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="running", message=f"Running asset discovery for {scan_level} scan", progress=0.1)
-                    
-                    # Run enumeration - callback receives phase, tool, stage, message, progress, meta
-                    async def enum_cb(phase: str, tool: str, stage: str, message: str, progress: float = None, meta: dict = None):
-                        if scan_job_id:
-                            await emit_scan_event(scan_id=scan_job_id, phase=phase, tool=tool, stage=stage, message=message, progress=progress, meta=meta)
-                    
+                        await emit_scan_event(scan_id=scan_job_id, phase=phase, tool=tool, stage=stage, message=message, progress=progress, meta=meta)
+                
                     # Add overall timeout for enumeration (15 minutes)
                     logger.info(f"[ENUM] Running enumeration with 15 minute timeout for scan {scan_job_id}")
                     inventory = await asyncio.wait_for(
                         run_enumeration(target_url=target_ref, scan_level=scan_level, emit_event_callback=enum_cb),
                         timeout=900.0  # 15 minutes
                     )
-                    
-                    # Upload inventory
-                    if scan_job_id:
+                
+                # Upload inventory
+                if scan_job_id:
                         logger.info(f"[ENUM] Posting inventory for scan {scan_job_id} with 60s timeout...")
                         try:
                             inventory_posted = await asyncio.wait_for(
@@ -312,18 +312,18 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                             logger.error(f"[ENUM] Inventory POST timed out after 60s for scan {scan_job_id}")
                             inventory_posted = False
                         
-                        urls_found = inventory.get("discovery", {}).get("merged", {}).get("all_urls_count", 0)
-                        if inventory_posted:
-                            logger.info(f"[ENUM] Successfully posted inventory for scan {scan_job_id} ({urls_found} URLs)")
-                        else:
-                            logger.error(f"[ENUM] FAILED to post inventory for scan {scan_job_id} ({urls_found} URLs). Enumeration data will not be visible in UI.")
-                        await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="completed", message=f"Discovered {urls_found} URLs", progress=1.0, meta={"urls_found": urls_found, "inventory_posted": inventory_posted})
-                    
-                    # Don't call publish_step_result for enumeration - it's not a NATS-based tool
-                    logger.info(f"[ENUM] Enumeration completed successfully for scan {scan_job_id}")
-                    # Mark step as completed to prevent retries
-                    await mark_step_completed(session_id, step_id)
-                    # Enumeration completes here - finally block will handle ACK and slot release
+                    urls_found = inventory.get("discovery", {}).get("merged", {}).get("all_urls_count", 0)
+                    if inventory_posted:
+                        logger.info(f"[ENUM] Successfully posted inventory for scan {scan_job_id} ({urls_found} URLs)")
+                    else:
+                        logger.error(f"[ENUM] FAILED to post inventory for scan {scan_job_id} ({urls_found} URLs). Enumeration data will not be visible in UI.")
+                    await emit_scan_event(scan_id=scan_job_id, phase="enumerate", tool="enumeration", stage="completed", message=f"Discovered {urls_found} URLs", progress=1.0, meta={"urls_found": urls_found, "inventory_posted": inventory_posted})
+                
+                # Don't call publish_step_result for enumeration - it's not a NATS-based tool
+                logger.info(f"[ENUM] Enumeration completed successfully for scan {scan_job_id}")
+                # Mark step as completed to prevent retries
+                await mark_step_completed(session_id, step_id)
+                # Enumeration completes here - finally block will handle ACK and slot release
                     execution_time = time.time() - start_time
                     enumeration_completed = True
                     return

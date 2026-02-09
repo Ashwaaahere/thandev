@@ -618,10 +618,11 @@ async def publish_scan_steps_to_runner(
             params = tool_config.get("params", {})
             # CRITICAL: Add scan_level to params so tools can use it (especially for inventory waiting)
             params["scan_level"] = scan_level_str
-            # CRITICAL: Add timeout_seconds from scan_timeouts configuration
-            timeout_seconds = get_tool_timeout(scan_level_str, tool_id)
+            # Use tool_matrix's timeout_seconds if specified, otherwise fall back to scan_timeouts
+            # This allows per-mode timeout overrides (e.g., ZAP active_scan vs ajax_spider)
+            timeout_seconds = tool_config.get("timeout_seconds") or get_tool_timeout(scan_level_str, tool_id)
             params["timeout_seconds"] = timeout_seconds
-            logger.info(f"Added timeout_seconds={timeout_seconds}s for {tool_id} in {scan_level_str} scan")
+            logger.info(f"Added timeout_seconds={timeout_seconds}s for {tool_id} ({mode_id}) in {scan_level_str} scan")
             reason = f"Scan level {scan_level.value} requires {tool_id}"
             
             # For Pro/Advanced scans, tools depend on enumeration completing first

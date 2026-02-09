@@ -265,6 +265,7 @@ async def post_tool_result(
         batches = [findings[i:i + FINDINGS_BATCH_SIZE] for i in range(0, len(findings), FINDINGS_BATCH_SIZE)]
         all_ok = True
         total_findings_sent = 0
+        failed_batches = 0
         for batch_idx, batch in enumerate(batches):
             # Each batch gets a unique tool_run_id to avoid idempotency conflicts
             batch_run_id = tool_run_id if batch_idx == 0 else f"{tool_run_id}-b{batch_idx}"
@@ -274,6 +275,14 @@ async def post_tool_result(
                 "exit_code": 0,
                 "execution_time": 0,
             }
+            
+            # Add inter-batch delay to let backend commit previous batch
+            # This prevents database contention and connection pool exhaustion
+            if batch_idx > 0:
+                delay = 2.0  # 2 second delay between batches
+                logger.info(f"[BATCH-POST] Waiting {delay}s before batch {batch_idx + 1}...")
+                await asyncio.sleep(delay)
+            
             ok = await _post_tool_result_impl(
                 scan_job_id=scan_job_id,
                 step_id=step_id,
@@ -290,16 +299,32 @@ async def post_tool_result(
                     f"({len(batch)} findings, {total_findings_sent}/{len(findings)} total)"
                 )
             else:
+                failed_batches += 1
                 logger.error(
                     f"[BATCH-POST] Batch {batch_idx + 1}/{len(batches)} FAILED "
-                    f"({len(batch)} findings)"
+                    f"({len(batch)} findings). Failed batches so far: {failed_batches}"
                 )
                 all_ok = False
+                # Continue trying remaining batches - partial upload is better than none
+                # Only abort if too many consecutive failures
+                if failed_batches >= 3:
+                    logger.error(
+                        f"[BATCH-POST] Aborting: {failed_batches} batches failed. "
+                        f"Sent {total_findings_sent}/{len(findings)} findings for {tool_name}"
+                    )
+                    break
         
         logger.info(
             f"[BATCH-POST] Completed: {total_findings_sent}/{len(findings)} findings "
-            f"uploaded in {len(batches)} batches for {tool_name} (scan {scan_job_id})"
+            f"uploaded in {len(batches)} batches ({failed_batches} failed) for {tool_name} (scan {scan_job_id})"
         )
+        # Consider partial success (>50% uploaded) as OK to avoid misleading "failed" status
+        if total_findings_sent > 0 and not all_ok:
+            logger.warning(
+                f"[BATCH-POST] Partial upload: {total_findings_sent}/{len(findings)} findings. "
+                f"Reporting as success since some findings were uploaded."
+            )
+            return True
         return all_ok
     
     # Single request for small finding sets

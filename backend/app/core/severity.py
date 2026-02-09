@@ -257,18 +257,18 @@ def nuclei_to_severity(template_meta: Dict[str, Any]) -> Severity:
     tags = info.get("tags", [])
     if not tags:
         tags = template_meta.get("tags", [])
-    
+
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",")]
-    
+
     if isinstance(tags, list):
         tags_lower = [str(t).lower() for t in tags]
-        
+
         # Critical patterns
         critical_tags = ["rce", "remote-code-execution", "sqli", "sql-injection", "auth-bypass", "authentication-bypass"]
         if any(tag in tags_lower for tag in critical_tags):
             return Severity.CRITICAL
-        
+
         # High patterns
         high_tags = ["lfi", "rfi", "ssrf", "xxe", "exposed-panel", "creds", "credentials", "cmdi", "command-injection"]
         if any(tag in tags_lower for tag in high_tags):

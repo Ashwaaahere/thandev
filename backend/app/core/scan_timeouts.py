@@ -31,7 +31,7 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
             "nmap": 3300,  # 55 minutes
             "ffuf": 3300,  # 55 minutes
             "sslscan": 600,  # 10 minutes
-            "zap": 3300,  # 55 minutes
+            "zap": 1800,  # 30 minutes (aligned with brain timeouts)
             "dalfox": 3300,  # 55 minutes (increased to allow full scan duration)
             "sqlmap": 3300,  # 55 minutes (increased to allow full scan duration)
         }
@@ -46,7 +46,7 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
             "sslscan": 600,  # 10 minutes
             "dalfox": 5000,  # ~83 minutes (increased to allow full scan duration)
             "sqlmap": 5000,  # ~83 minutes (increased to allow full scan duration)
-            "zap": 5000,  # ~83 minutes
+            "zap": 2700,  # 45 minutes (aligned with brain timeouts)
         }
     }
 }
