@@ -2253,22 +2253,70 @@ async def get_scan(
                     if tool_name not in tool_statuses_dict or (tr.created_at and tool_statuses_dict[tool_name].created_at < tr.created_at):
                         tool_statuses_dict[tool_name] = tr
                 
-                # Check if all tools are in terminal states
-                # Also check completed_at as fallback if status is None
+                # Check if all EXPECTED tools (from tool_matrix) are in terminal states
+                # CRITICAL: We must compare against expected tools, not just posted tools
+                # Otherwise, tools that never posted results (e.g., crashed nuclei) are invisible
+                from app.core.tool_matrix import get_tools_for_level
+                from app.models.scan import ScanLevel
+                from app.models.scan_tool_state import ScanToolState
+                
                 all_tools_done = True
-                if tool_statuses_dict:
-                    for tool_name, tr in tool_statuses_dict.items():
-                        # If status is set, check it's in a terminal state
-                        if tr.status:
-                            if tr.status not in [
-                            ToolExecutionStatus.COMPLETED,
-                            ToolExecutionStatus.FAILED,
-                            ToolExecutionStatus.SKIPPED,
-                            ToolExecutionStatus.TIMED_OUT
-                        ]:
+                expected_tool_keys = set()
+                
+                try:
+                    scan_level_enum = ScanLevel(scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else scan_job.scan_level)
+                    expected_tools = get_tools_for_level(scan_level_enum)
+                    expected_tool_keys = {tool_config["key"] for tool_config in expected_tools if tool_config.get("enabled", True)}
+                except Exception as matrix_err:
+                    logger.warning(f"Failed to get expected tools from matrix for scan {scan_id}: {matrix_err}")
+                
+                if expected_tool_keys and tool_statuses_dict:
+                    # Check if all expected tools have posted results in terminal states
+                    for expected_key in expected_tool_keys:
+                        if expected_key not in tool_statuses_dict:
+                            # Tool hasn't posted results yet - check scan_tool_states for running tools
+                            running_state = db.query(ScanToolState).filter(
+                                ScanToolState.scan_id == scan_id,
+                                ScanToolState.tool == expected_key,
+                                ScanToolState.stage.in_(["running", "starting", "queued", "parsing", "uploading"])
+                            ).first()
+                            if running_state:
+                                # Tool is still running - NOT done
+                                logger.info(
+                                    f"Expected tool '{expected_key}' still running for scan {scan_id} "
+                                    f"(stage={running_state.stage}), not marking as complete"
+                                )
                                 all_tools_done = False
                                 break
-                        # If status is None but completed_at is set, consider it done
+                            # Tool never started and never posted - consider it missing
+                            # Only allow completion if scan has been running > 45 min (safety timeout)
+                            all_tools_done = False
+                            break
+                        else:
+                            tr = tool_statuses_dict[expected_key]
+                            if tr.status and tr.status not in [
+                                ToolExecutionStatus.COMPLETED,
+                                ToolExecutionStatus.FAILED,
+                                ToolExecutionStatus.SKIPPED,
+                                ToolExecutionStatus.TIMED_OUT
+                            ]:
+                                all_tools_done = False
+                                break
+                            elif not tr.status and tr.completed_at is None:
+                                all_tools_done = False
+                                break
+                elif tool_statuses_dict:
+                    # Fallback: no expected tools from matrix, check posted tools only
+                    for tool_name, tr in tool_statuses_dict.items():
+                        if tr.status:
+                            if tr.status not in [
+                                ToolExecutionStatus.COMPLETED,
+                                ToolExecutionStatus.FAILED,
+                                ToolExecutionStatus.SKIPPED,
+                                ToolExecutionStatus.TIMED_OUT
+                            ]:
+                                all_tools_done = False
+                                break
                         elif tr.completed_at is None:
                             all_tools_done = False
                             break
@@ -2278,10 +2326,12 @@ async def get_scan(
                 logger.debug(
                     "Tool completion check",
                     extra={
-                            "scan_id": scan_id,
+                        "scan_id": scan_id,
                         "brain_status": brain_status.value if isinstance(brain_status, SessionStatus) else (str(brain_status) if brain_status is not None else "none"),
-                            "all_tools_done": all_tools_done,
+                        "all_tools_done": all_tools_done,
                         "tool_count": len(tool_statuses_dict),
+                        "expected_tools": list(expected_tool_keys) if expected_tool_keys else "none",
+                        "posted_tools": list(tool_statuses_dict.keys()),
                     }
                 )
                 
@@ -2359,11 +2409,52 @@ async def get_scan(
             if tool_name not in tool_statuses_dict or (tr.created_at and tool_statuses_dict[tool_name].created_at < tr.created_at):
                 tool_statuses_dict[tool_name] = tr
         
-        # Check if all tools are in terminal states
+        # Check if all EXPECTED tools are in terminal states
+        # CRITICAL: Compare against tool_matrix to detect missing tools
+        from app.core.tool_matrix import get_tools_for_level
+        from app.models.scan import ScanLevel
+        from app.models.scan_tool_state import ScanToolState
+        
         all_tools_done = True
-        if tool_statuses_dict:
+        expected_tool_keys = set()
+        
+        try:
+            scan_level_enum = ScanLevel(scan_job.scan_level.value if hasattr(scan_job.scan_level, 'value') else scan_job.scan_level)
+            expected_tools_list = get_tools_for_level(scan_level_enum)
+            expected_tool_keys = {tc["key"] for tc in expected_tools_list if tc.get("enabled", True)}
+        except Exception:
+            pass
+        
+        if expected_tool_keys and tool_statuses_dict:
+            for expected_key in expected_tool_keys:
+                if expected_key not in tool_statuses_dict:
+                    # Check scan_tool_states for still-running tools
+                    running_state = db.query(ScanToolState).filter(
+                        ScanToolState.scan_id == scan_id,
+                        ScanToolState.tool == expected_key,
+                        ScanToolState.stage.in_(["running", "starting", "queued", "parsing", "uploading"])
+                    ).first()
+                    if running_state:
+                        all_tools_done = False
+                        break
+                    all_tools_done = False
+                    break
+                else:
+                    tr = tool_statuses_dict[expected_key]
+                    if tr.status and tr.status not in [
+                        ToolExecutionStatus.COMPLETED,
+                        ToolExecutionStatus.FAILED,
+                        ToolExecutionStatus.SKIPPED,
+                        ToolExecutionStatus.TIMED_OUT
+                    ]:
+                        all_tools_done = False
+                        break
+                    elif not tr.status and tr.completed_at is None:
+                        all_tools_done = False
+                        break
+        elif tool_statuses_dict:
+            # Fallback: check posted tools only
             for tool_name, tr in tool_statuses_dict.items():
-                # If status is set, check it's in a terminal state
                 if tr.status:
                     if tr.status not in [
                         ToolExecutionStatus.COMPLETED,
@@ -2373,7 +2464,6 @@ async def get_scan(
                     ]:
                         all_tools_done = False
                         break
-                # If status is None but completed_at is set, consider it done
                 elif tr.completed_at is None:
                     all_tools_done = False
                     break

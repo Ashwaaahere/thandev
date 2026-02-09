@@ -948,8 +948,19 @@ def _check_and_update_scan_completion(scan_job: ScanJob, db: Session) -> None:
         expected_tool_keys = {tr.tool_name for tr in tool_results}
     
     # If we couldn't determine expected tools, use tools that have started
+    # BUT also check scan_tool_states for tools that are still running
     if not expected_tool_keys:
         expected_tool_keys = {tr.tool_name for tr in tool_results}
+        # CRITICAL: Also check scan_tool_states for tools that are running but haven't posted results
+        try:
+            running_tool_states = db.query(ScanToolState).filter(
+                ScanToolState.scan_id == scan_job.id,
+                ScanToolState.stage.in_(["running", "starting", "queued", "parsing", "uploading"])
+            ).all()
+            for ts in running_tool_states:
+                expected_tool_keys.add(ts.tool)
+        except Exception as ts_err:
+            logger.warning(f"Failed to check scan_tool_states for running tools: {ts_err}")
     
     # Get latest status for each tool (in case there are multiple runs)
     tool_statuses_dict = {}
@@ -971,7 +982,20 @@ def _check_and_update_scan_completion(scan_job: ScanJob, db: Session) -> None:
     all_tools_done = True
     for tool_key in expected_tool_keys:
         if tool_key not in tool_statuses_dict:
-            # Tool hasn't started yet
+            # Tool hasn't posted results yet - check if it's still running in scan_tool_states
+            try:
+                running_state = db.query(ScanToolState).filter(
+                    ScanToolState.scan_id == scan_job.id,
+                    ScanToolState.tool == tool_key,
+                    ScanToolState.stage.in_(["running", "starting", "queued", "parsing", "uploading"])
+                ).first()
+                if running_state:
+                    logger.info(
+                        f"Expected tool '{tool_key}' still running for scan {scan_job.id} "
+                        f"(stage={running_state.stage}), not marking as complete"
+                    )
+            except Exception:
+                pass
             all_tools_done = False
             break
         tool_result = tool_statuses_dict[tool_key]
