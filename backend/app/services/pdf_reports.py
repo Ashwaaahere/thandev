@@ -1649,11 +1649,12 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
                 if new_count > existing_count:
                     unique_findings_map[finding_key] = f
         else:
-            # For legacy findings without finding_key, use title+tool+plugin_id as fallback
-            # This catches ZAP duplicates that might not have finding_key set
+            # For legacy findings without finding_key, use title+tool+plugin_id/template_id as fallback
+            # This catches ZAP/Nuclei duplicates that might not have finding_key set
             tool = getattr(f, "tool_name", "") or ""
             title = getattr(f, "title", "") or ""
             plugin_id = getattr(f, "plugin_id", "") or ""
+            template_id = getattr(f, "template_id", "") or ""
             if tool.lower() == "zap" and plugin_id and title:
                 fallback_key = f"zap:{plugin_id}:{title[:100]}"
                 if fallback_key not in unique_findings_map:
@@ -1664,8 +1665,30 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
                     new_count = getattr(f, "affected_count", 1) or 1
                     if new_count > existing_count:
                         unique_findings_map[fallback_key] = f
+            elif tool.lower() == "nuclei" and template_id:
+                # Nuclei: group by template_id (same vulnerability = same finding)
+                fallback_key = f"nuclei:{template_id}:{title[:100]}"
+                if fallback_key not in unique_findings_map:
+                    unique_findings_map[fallback_key] = f
+                else:
+                    existing = unique_findings_map[fallback_key]
+                    existing_count = getattr(existing, "affected_count", 1) or 1
+                    new_count = getattr(f, "affected_count", 1) or 1
+                    if new_count > existing_count:
+                        unique_findings_map[fallback_key] = f
+            elif tool.lower() == "dalfox" and title:
+                # Dalfox: group by title (same XSS type = same finding)
+                fallback_key = f"dalfox:{title[:100]}"
+                if fallback_key not in unique_findings_map:
+                    unique_findings_map[fallback_key] = f
+                else:
+                    existing = unique_findings_map[fallback_key]
+                    existing_count = getattr(existing, "affected_count", 1) or 1
+                    new_count = getattr(f, "affected_count", 1) or 1
+                    if new_count > existing_count:
+                        unique_findings_map[fallback_key] = f
             else:
-                # For non-ZAP or missing plugin_id, include all (no dedup)
+                # For other tools or missing identifiers, include all (no dedup)
                 unique_findings_map[f"legacy:{id(f)}"] = f
     
     # Use deduplicated findings

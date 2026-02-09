@@ -56,6 +56,8 @@ class FindingListItem(BaseModel):
     ai_confidence: Optional[float] = None  # Confidence score (0.0-1.0)
     # Raw data preview (trimmed for UI consumption)
     raw_data_preview: Optional[dict] = None  # Selected keys from raw_data (payload, dbms, template_id, etc.)
+    # Grouping fields (for deduplicated findings)
+    affected_count: Optional[int] = None  # Number of instances/URLs affected (1 = single finding)
     # Legacy fields (kept for backward compatibility)
     first_seen: Optional[datetime] = None  # Alias for first_seen_at
     last_seen: Optional[datetime] = None  # Alias for last_seen_at
@@ -116,6 +118,8 @@ class FindingDetailResponse(BaseModel):
     ai_model: Optional[str] = None  # AI model used (e.g., "gpt-4o-mini")
     ai_confidence: Optional[float] = None  # Confidence score (0.0-1.0)
     raw_data: Optional[dict] = None  # Full raw_data as JSON object (for power users)
+    # Grouping fields
+    affected_count: Optional[int] = None  # Number of instances/URLs affected (1 = single finding)
     first_seen: Optional[datetime] = None
     last_seen: Optional[datetime] = None
 

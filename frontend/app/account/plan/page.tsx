@@ -11,7 +11,7 @@ import { useState, useEffect } from 'react';
 
 // API base URL configuration
 const API_BASE =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+  process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
 // Plan types (same as scans page)
 type TenantPlanUsage = {

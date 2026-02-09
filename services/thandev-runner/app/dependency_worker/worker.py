@@ -102,13 +102,23 @@ async def process_dependency_job(message: Dict[str, Any]) -> None:
     job_type = data.get("job_type", "")
     scan_id = data.get("scan_id", "")
     target_url = data.get("target_url", "")
-    callback_url = data.get("callback_url", "")
-    backend_url = data.get("backend_url", settings.BACKEND_URL)
+    
+    # IMPORTANT: Use runner's BACKEND_URL (from secrets) instead of job's callback_url
+    # The job's callback_url may have incorrect localhost URL from backend
+    # This matches how the main runner tools communicate with backend
+    if settings.BACKEND_URL:
+        callback_url = f"{settings.BACKEND_URL}/api/runner/callback"
+        backend_url = settings.BACKEND_URL
+    else:
+        # Fallback to job payload if settings not available
+        callback_url = data.get("callback_url", "")
+        backend_url = data.get("backend_url", "http://localhost:8000")
+    
     repo_info_str = data.get("repo", "")
     
     logger.info(
         f"Processing dependency scan job: scan_id={scan_id}, job_type={job_type}, "
-        f"target_url={target_url}"
+        f"target_url={target_url}, callback_url={callback_url}, backend_url={backend_url}"
     )
     
     try:

@@ -65,7 +65,7 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
 
     try {
       // Construct WebSocket URL - connect to backend, not Next.js dev server
-      const backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const backendUrl = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
       const wsProtocol = backendUrl.startsWith('https') ? 'wss:' : 'ws:';
       const wsHost = backendUrl.replace(/^https?:\/\//, '');
       const wsUrl = `${wsProtocol}//${wsHost}/ws/scans/${scanId}`;

@@ -89,33 +89,58 @@ async def check_step_idempotency(session_id: str, step_id: str) -> bool:
     """
     Check if a step has already been processed (idempotency check).
     
-    Uses Redis SET with expiration to track processed steps.
+    Uses Redis to track step status:
+    - "processing": Step is currently being processed (short TTL, prevents concurrent execution)
+    - "completed": Step completed successfully (long TTL, prevents retries)
     
     Args:
         session_id: Session ID
         step_id: Step ID
         
     Returns:
-        True if step was already processed, False if new
+        True if step was already completed, False if new or can retry
     """
     redis_client = get_redis_client()
     # Use composite key: session_id:step_id for uniqueness
     key = f"step:processed:{session_id}:{step_id}"
     
     try:
-        # Try to set key with NX (only if not exists)
-        # Returns True if key was set (new step), False if already exists
-        was_set = redis_client.set(key, "1", nx=True, ex=86400)  # 24 hour TTL
+        # Check if step was already completed
+        existing_status = redis_client.get(key)
+        if existing_status:
+            status = existing_status.decode('utf-8') if isinstance(existing_status, bytes) else existing_status
+            if status == "completed":
+                logger.warning(
+                    f"Step {step_id} for session {session_id} was already completed, "
+                    f"skipping duplicate"
+                )
+                return True
+            elif status == "processing":
+                # Step is currently processing - check if it's stale
+                # TTL returns remaining seconds until expiration
+                # If TTL is low (< 5 minutes), the key was set a while ago and might be stale
+                ttl = redis_client.ttl(key)
+                if ttl > 0 and ttl < 300:  # Less than 5 minutes remaining = processing for 25+ minutes
+                    # Key is stale (been processing for 25+ minutes), allow retry
+                    logger.warning(
+                        f"Step {step_id} for session {session_id} was marked as processing but appears stale "
+                        f"(TTL={ttl}s), allowing retry"
+                    )
+                    redis_client.delete(key)
+                    return False
+                else:
+                    # Step is actively processing (recently set or still has significant TTL), skip
+                    logger.info(
+                        f"Step {step_id} for session {session_id} is currently processing "
+                        f"(TTL={ttl}s), skipping duplicate"
+                    )
+                    return True
         
-        if was_set:
-            logger.debug(f"Step {step_id} for session {session_id} is new (not duplicate)")
-            return False
-        else:
-            logger.warning(
-                f"Step {step_id} for session {session_id} was already processed, "
-                f"skipping duplicate"
-            )
-            return True
+        # No existing key or stale processing key - mark as processing and allow execution
+        # Use shorter TTL for processing (30 minutes) to allow retry if step crashes
+        redis_client.set(key, "processing", ex=1800)  # 30 minute TTL
+        logger.debug(f"Step {step_id} for session {session_id} is new, marking as processing")
+        return False
             
     except RedisError as e:
         logger.error(
@@ -123,4 +148,28 @@ async def check_step_idempotency(session_id: str, step_id: str) -> bool:
         )
         # On error, allow execution (fail open, but log warning)
         return False
+
+
+async def mark_step_completed(session_id: str, step_id: str) -> None:
+    """
+    Mark a step as completed successfully.
+    
+    This should be called after a step completes successfully to prevent retries.
+    
+    Args:
+        session_id: Session ID
+        step_id: Step ID
+    """
+    redis_client = get_redis_client()
+    key = f"step:processed:{session_id}:{step_id}"
+    
+    try:
+        # Update key to "completed" with longer TTL (24 hours)
+        redis_client.set(key, "completed", ex=86400)  # 24 hour TTL
+        logger.debug(f"Marked step {step_id} for session {session_id} as completed")
+    except RedisError as e:
+        logger.error(
+            f"Failed to mark step {step_id} as completed: {e}", exc_info=True
+        )
+        # Non-fatal error, continue
 

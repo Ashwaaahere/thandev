@@ -162,35 +162,63 @@ async def run_katana(target_url: str, depth: int = 3, max_urls: int = 500) -> Tu
         parsed = urlparse(target_url)
         hostname = parsed.hostname or parsed.netloc
         
-        # Prefer plain mode first (more reliable in containerized envs)
-        base_cmd = [
+        # CLOUD OPTIMIZATION: Skip headless mode entirely in containerized/cloud environments
+        # Headless mode requires Chrome and is resource-intensive, causing timeouts on Fly.io
+        # Non-headless mode is faster and more reliable in containers
+        import os
+        is_cloud = os.getenv("FLY_APP_NAME") or os.getenv("KUBERNETES_SERVICE_HOST") or os.getenv("ENVIRONMENT") == "production"
+        
+        # Non-headless command (fast, reliable, works in containers)
+        base_cmd_fast = [
             "katana",
             "-u", target_url,
             "-d", str(depth),
             "-kf", "all",            # Known files
             "-silent",
             "-no-color",
+            "-c", "50",               # Concurrency for faster crawling
+            "-rate-limit", "15",      # Rate limit: 15 requests per second
         ]
         
-        # Try plain mode; if it yields zero URLs, fallback to headless/system-chrome
-        def run_cmd(cmd):
+        # Headless command (only used locally for JS-heavy sites)
+        base_cmd_headless = [
+            "katana",
+            "-u", target_url,
+            "-d", str(depth),
+            "-kf", "all",            # Known files
+            "-headless",              # Use headless mode for better results
+            "-no-sandbox",            # Required in containers
+            "-silent",
+            "-no-color",
+            "-c", "30",               # Lower concurrency for headless
+            "-rate-limit", "10",      # Rate limit: 10 requests per second
+        ]
+        
+        def run_cmd(cmd, timeout_sec=180):
             return subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120,  # 2 minutes max
+                timeout=timeout_sec,
             )
         
-        logger.debug(f"[KATANA] CMD(primary): {' '.join(base_cmd)}")
-        result = run_cmd(base_cmd)
+        # In cloud environments, use fast non-headless mode only
+        if is_cloud:
+            logger.info(f"[KATANA] Cloud environment detected, using fast non-headless mode")
+            result = run_cmd(base_cmd_fast, timeout_sec=120)  # 2 minutes in cloud
+        else:
+            # Local: Try headless mode first, fallback to non-headless
+            logger.debug(f"[KATANA] Trying headless mode: {' '.join(base_cmd_headless)}")
+            result = run_cmd(base_cmd_headless)
+            
+            # If headless fails with Chrome error, try fallback mode
+            if result.returncode != 0 and result.stderr and ("chrome" in result.stderr.lower() or "chromium" in result.stderr.lower() or "browser" in result.stderr.lower()):
+                logger.warning(f"[KATANA] Headless mode failed (likely Chrome unavailable), trying fallback mode. Error: {result.stderr[:200]}")
+                result = run_cmd(base_cmd_fast)
+                if result.returncode == 0:
+                    logger.info(f"[KATANA] Fallback mode succeeded (non-headless)")
         
-        if result.returncode != 0 and not urls:
-            stdout_preview = (result.stdout or "").strip()[:400]
-            stderr_preview = (result.stderr or "").strip()[:400]
-            msg = f"exit={result.returncode}; stdout='{stdout_preview}' stderr='{stderr_preview}'"
-            logger.warning(f"[KATANA] Failed: {msg}")
-            return [], msg
-        
+        # Initialize urls before parsing
         urls = []
         def parse_urls(text):
             out = []
@@ -204,29 +232,21 @@ async def run_katana(target_url: str, depth: int = 3, max_urls: int = 500) -> Tu
         
         urls = parse_urls(result.stdout or "")
         
-        # Fallback to headless if no URLs found
-        if result.returncode == 0 and urls:
-            logger.info(f"[KATANA] Found {len(urls)} URLs (plain mode)")
+        # Log detailed results
+        if result.returncode == 0:
+            logger.info(f"[KATANA] Found {len(urls)} URLs (exit={result.returncode})")
+            if len(urls) == 0:
+                logger.warning(f"[KATANA] No URLs found. stdout preview: {(result.stdout or '')[:200]}")
             return urls, None
-        
-        logger.info(f"[KATANA] Plain mode yielded {len(urls)} URLs (exit={result.returncode}); trying headless fallback")
-        headless_cmd = base_cmd + ["-headless", "-system-chrome", "-no-sandbox"]
-        logger.debug(f"[KATANA] CMD(fallback): {' '.join(headless_cmd)}")
-        result_fallback = run_cmd(headless_cmd)
-        urls = parse_urls(result_fallback.stdout or "")
-        
-        if result_fallback.returncode != 0:
-            stdout_preview = (result_fallback.stdout or "").strip()[:400]
-            stderr_preview = (result_fallback.stderr or "").strip()[:400]
-            msg = f"exit={result_fallback.returncode}; stdout='{stdout_preview}' stderr='{stderr_preview}'"
-            logger.warning(f"[KATANA] Fallback failed: {msg}")
-            return urls, msg if not urls else None
-        
-        logger.info(f"[KATANA] Found {len(urls)} URLs (headless fallback)")
-        return urls, None
+        else:
+            stdout_preview = (result.stdout or "").strip()[:400]
+            stderr_preview = (result.stderr or "").strip()[:400]
+            logger.warning(f"[KATANA] Exit code {result.returncode}, found {len(urls)} URLs. stdout='{stdout_preview}' stderr='{stderr_preview}'")
+            # Return URLs even if exit code is non-zero (Katana may find URLs but exit with warning)
+            return urls, None if urls else f"exit={result.returncode}; stderr='{stderr_preview[:200]}'"
         
     except subprocess.TimeoutExpired:
-        msg = "[KATANA] Timeout after 120s"
+        msg = "[KATANA] Timeout after 180s"
         logger.warning(msg)
         return [], msg
     except Exception as e:
@@ -291,20 +311,10 @@ async def run_gau(hostname: str, max_urls: int = 500) -> List[str]:
         logger.info(f"[GAU] Found {len(urls)} URLs")
         return urls
         
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as e:
         logger.warning(f"[GAU] Timeout after 120s - GAU may need more time for some targets")
-        # Try to parse any URLs we got before timeout
-        if hasattr(result, 'stdout') and result.stdout:
-            urls = []
-            for line in result.stdout.strip().split('\n'):
-                line = line.strip()
-                if line and line.startswith('http'):
-                    urls.append(line)
-                    if len(urls) >= max_urls:
-                        break
-            if urls:
-                logger.info(f"[GAU] Found {len(urls)} URLs before timeout")
-                return urls
+        # TimeoutExpired doesn't have stdout, so we can't recover partial results
+        # Return empty list - this is expected for some targets
         return []
     except Exception as e:
         logger.error(f"[GAU] Error: {e}", exc_info=True)
@@ -640,6 +650,12 @@ async def run_enumeration(
     for category in ["auth", "api", "admin"]:
         arjun_targets.extend(merged["interesting"][category][:10])
     
+    # If no param URLs or interesting endpoints, use all URLs (up to limit)
+    # Arjun can discover parameters on any URL, not just ones that already have params
+    if not arjun_targets and merged["all_urls"]:
+        logger.info(f"[ARJUN] No param URLs or interesting endpoints found, using all URLs for parameter discovery")
+        arjun_targets = merged["all_urls"][:max_arjun_targets]
+    
     # Deduplicate and limit
     arjun_targets = list(set(arjun_targets))[:max_arjun_targets]
     
@@ -651,7 +667,7 @@ async def run_enumeration(
         params_found = len(arjun_result["params_by_url"])
         await emit_event("arjun", "completed", f"Found parameters on {params_found} URLs", progress=1.0, meta={"params_found": params_found})
     else:
-        await emit_event("arjun", "skipped", "No suitable targets for parameter discovery")
+        await emit_event("arjun", "skipped", "No URLs available for parameter discovery")
     
     # Finalize
     inventory.timestamps["ended_at"] = datetime.now(timezone.utc).isoformat()

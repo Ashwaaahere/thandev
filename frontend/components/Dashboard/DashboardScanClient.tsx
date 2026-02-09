@@ -10,7 +10,7 @@ import { thandevFetchJSON } from '@/lib/thandevApi';
 import { formatDateTime } from '@/lib/formatDate';
 
 // API base URL
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
 export interface ScanResult {
   id: string;

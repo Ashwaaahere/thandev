@@ -202,9 +202,11 @@ def nuclei_to_severity(template_meta: Dict[str, Any]) -> Severity:
     Compute severity for Nuclei findings.
     
     Priority:
-    1. Use template severity if provided
-    2. Infer from tags (rce, sqli, lfi, ssrf, auth-bypass, exposed-panel, creds) -> High/Critical
-    3. Default to Info
+    1. Use info.severity as SOURCE OF TRUTH if present (even if "info")
+    2. Use top-level severity field if info.severity missing
+    3. Infer from CVSS score if present
+    4. Infer from tags (rce, sqli, lfi, ssrf, auth-bypass, exposed-panel, creds) -> High/Critical
+    5. Default to Info
     
     Args:
         template_meta: Nuclei template metadata (info dict or full finding)
@@ -212,37 +214,67 @@ def nuclei_to_severity(template_meta: Dict[str, Any]) -> Severity:
     Returns:
         Severity enum
     """
-    # Extract severity from template
-    if isinstance(template_meta, dict):
-        info = template_meta.get("info", {})
-        if isinstance(info, dict):
-            severity_str = info.get("severity", "").lower()
-            if severity_str:
-                normalized = normalize_severity(severity_str)
-                if normalized != Severity.INFO:
-                    return normalized
-        
-        # Check tags for high-severity patterns
-        tags = info.get("tags", []) if isinstance(info, dict) else []
-        if not tags:
-            tags = template_meta.get("tags", [])
-        
-        if isinstance(tags, str):
-            tags = [t.strip() for t in tags.split(",")]
-        
-        if isinstance(tags, list):
-            tags_lower = [str(t).lower() for t in tags]
-            
-            # Critical patterns
-            critical_tags = ["rce", "remote-code-execution", "sqli", "sql-injection", "auth-bypass", "authentication-bypass"]
-            if any(tag in tags_lower for tag in critical_tags):
-                return Severity.CRITICAL
-            
-            # High patterns
-            high_tags = ["lfi", "rfi", "ssrf", "xxe", "exposed-panel", "creds", "credentials", "cmdi", "command-injection"]
-            if any(tag in tags_lower for tag in high_tags):
-                return Severity.HIGH
+    if not isinstance(template_meta, dict):
+        return Severity.INFO
     
+    info = template_meta.get("info", {})
+    if not isinstance(info, dict):
+        info = {}
+    
+    # 1. Use info.severity as primary source of truth (even if it maps to INFO)
+    severity_str = info.get("severity", "").lower().strip() if isinstance(info.get("severity"), str) else ""
+    if severity_str and severity_str in ("critical", "high", "medium", "low", "info", "informational"):
+        return normalize_severity(severity_str)
+    
+    # 2. Fallback: check top-level severity field (from runner parser)
+    top_level_severity = template_meta.get("severity", "")
+    if isinstance(top_level_severity, str):
+        top_level_severity = top_level_severity.lower().strip()
+        if top_level_severity and top_level_severity in ("critical", "high", "medium", "low", "info", "informational"):
+            return normalize_severity(top_level_severity)
+    
+    # 3. Fallback: infer from CVSS score if present
+    classification = info.get("classification", {})
+    if isinstance(classification, dict):
+        cvss_score = classification.get("cvss-score")
+        if cvss_score is not None:
+            try:
+                cvss = float(cvss_score)
+                if cvss >= 9.0:
+                    return Severity.CRITICAL
+                elif cvss >= 7.0:
+                    return Severity.HIGH
+                elif cvss >= 4.0:
+                    return Severity.MEDIUM
+                elif cvss >= 0.1:
+                    return Severity.LOW
+                else:
+                    return Severity.INFO
+            except (ValueError, TypeError):
+                pass
+    
+    # 4. Fallback: infer from tags
+    tags = info.get("tags", [])
+    if not tags:
+        tags = template_meta.get("tags", [])
+    
+    if isinstance(tags, str):
+        tags = [t.strip() for t in tags.split(",")]
+    
+    if isinstance(tags, list):
+        tags_lower = [str(t).lower() for t in tags]
+        
+        # Critical patterns
+        critical_tags = ["rce", "remote-code-execution", "sqli", "sql-injection", "auth-bypass", "authentication-bypass"]
+        if any(tag in tags_lower for tag in critical_tags):
+            return Severity.CRITICAL
+        
+        # High patterns
+        high_tags = ["lfi", "rfi", "ssrf", "xxe", "exposed-panel", "creds", "credentials", "cmdi", "command-injection"]
+        if any(tag in tags_lower for tag in high_tags):
+            return Severity.HIGH
+    
+    # 5. Default
     return Severity.INFO
 
 

@@ -13,7 +13,7 @@ export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 const isUuid = (value?: string | null) => !!value && UUID_REGEX.test(String(value));
 
 // Backend API base URL
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
 
 /**
  * Get authentication headers from NextAuth session with UUID validation

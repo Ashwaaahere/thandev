@@ -47,7 +47,7 @@ export default function CWEDrawer({ cweId, open, onClose }: CWEDrawerProps) {
             setCweData(data);
           } else {
             // Fallback to unauthenticated fetch
-            const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+            const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
             const response = await fetch(`${API_BASE}/api/reference/cwe/${cweIdClean}`);
             if (!response.ok) {
               throw new Error(`HTTP ${response.status}`);
@@ -59,7 +59,7 @@ export default function CWEDrawer({ cweId, open, onClose }: CWEDrawerProps) {
           console.error('Failed to load CWE data', err);
           // Try unauthenticated as fallback
           try {
-            const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+            const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:8000';
             const response = await fetch(`${API_BASE}/api/reference/cwe/${cweIdClean}`);
             if (response.ok) {
               const data = await response.json();

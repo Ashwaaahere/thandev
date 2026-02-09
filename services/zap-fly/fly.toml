@@ -9,6 +9,14 @@ primary_region = "iad"
   # ZAP will run in daemon mode on port 8090
   # API port: 8090
   # Proxy port: 8080
+  
+  # Firefox headless browser configuration for DOM XSS scanning
+  MOZ_HEADLESS = "1"
+  DISPLAY = ":99"
+  # Prevent Firefox from running out of shared memory
+  MOZ_DISABLE_DEV_SHM_USAGE = "1"
+  # Use in-memory temp files
+  TMPDIR = "/tmp"
 
 # PRIVATE service - accessed via .flycast DNS only
 # Using [[services]] for private networking
@@ -22,17 +30,17 @@ primary_region = "iad"
     port = 8090
   
   [[services.http_checks]]
-    interval = "30s"
-    timeout = "10s"
-    grace_period = "60s"
+    interval = "60s"
+    timeout = "30s"
+    grace_period = "120s"
     method = "GET"
     path = "/JSON/core/view/version/"
     protocol = "http"
 
 [processes]
-  app = "zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config api.addrs.addr.enabled=true"
+  app = "zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.disablekey=true -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config api.addrs.addr.enabled=true -config rules.domxss.enabled=false"
 
 [[vm]]
   cpu_kind = "shared"
   cpus = 2
-  memory_mb = 2048
+  memory_mb = 4096

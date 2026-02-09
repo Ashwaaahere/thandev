@@ -203,6 +203,7 @@ async def list_findings(
             "remediation_steps": finding.remediation_steps if hasattr(finding, 'remediation_steps') else None,
             "default_remediation_steps": remediation_data["default_remediation_steps"],
             "impact_summary": impact_summary,
+            "affected_count": finding.affected_count if hasattr(finding, 'affected_count') else 1,
         })
     
     return {
@@ -354,5 +355,89 @@ async def get_finding_detail(
         ai_model=finding.ai_model if hasattr(finding, 'ai_model') else None,
         ai_confidence=finding.ai_confidence if hasattr(finding, 'ai_confidence') else None,
         raw_data=raw_data_dict,
+        affected_count=finding.affected_count if hasattr(finding, 'affected_count') else 1,
     )
+
+
+@router.get("/{finding_id}/affected-urls")
+async def get_finding_affected_urls(
+    finding_id: str,
+    offset: int = Query(0, ge=0, description="Number of instances to skip"),
+    limit: int = Query(100, ge=1, le=1000, description="Maximum number of instances to return"),
+    db: Session = Depends(get_db),
+    tenant = Depends(require_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get all affected URLs/instances for a grouped finding.
+    
+    Returns paginated list of FindingInstance records showing each URL
+    where this vulnerability was detected.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    
+    # Load finding with project relationship
+    finding = (
+        db.query(Finding)
+        .options(joinedload(Finding.scan_job).joinedload(ScanJob.project))
+        .filter(Finding.id == finding_id)
+        .first()
+    )
+    
+    if not finding:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Finding {finding_id} not found"
+        )
+    
+    # Verify ownership
+    if not finding.scan_job or not finding.scan_job.project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+    
+    project = finding.scan_job.project
+    if project.tenant_id != tenant.id or project.owner_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    
+    from app.models.finding import FindingInstance
+    
+    # Get total count
+    total = db.query(FindingInstance).filter(FindingInstance.finding_id == finding_id).count()
+    
+    # Get paginated instances
+    instances = (
+        db.query(FindingInstance)
+        .filter(FindingInstance.finding_id == finding_id)
+        .order_by(
+            FindingInstance.url.asc().nulls_last(),
+            FindingInstance.created_at.desc()
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    
+    return {
+        "finding_id": finding_id,
+        "affected_count": finding.affected_count if hasattr(finding, 'affected_count') else 1,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "instances": [
+            {
+                "id": inst.id,
+                "url": inst.url,
+                "path": inst.path,
+                "http_method": inst.http_method,
+                "parameter": inst.parameter,
+                "evidence_snippet": inst.evidence_snippet,
+                "is_static_asset": inst.is_static_asset,
+                "created_at": inst.created_at.isoformat() if inst.created_at else None,
+            }
+            for inst in instances
+        ],
+    }
 

@@ -102,6 +102,12 @@ async def enqueue_dependency_scan_job(
         "backend_url": backend_url,
     }
     
+    # Debug logging for callback URL
+    logger.warning(
+        f"[DEP-SCAN-DEBUG] Enqueuing job with callback_url={job_payload['callback_url']}, "
+        f"backend_url={backend_url}, settings.BACKEND_URL={getattr(settings, 'BACKEND_URL', 'NOT_SET')}"
+    )
+    
     try:
         # Remove None values for Redis stream
         stream_data = {k: str(v) if v is not None else "" for k, v in job_payload.items()}

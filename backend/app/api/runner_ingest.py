@@ -133,6 +133,19 @@ async def mark_scan_started_endpoint(
     return {"status": "ok", "scan_id": scan_id}
 
 
+def _infer_phase_from_tool(tool_name: str) -> str:
+    """
+    Infer the correct scan phase from tool name.
+    
+    This ensures the UI shows the correct active phase:
+    - 'enumeration' tool -> 'enumerate' phase
+    - All other tools -> 'scan' phase
+    """
+    if tool_name.lower() == "enumeration":
+        return "enumerate"
+    return "scan"
+
+
 @router.post("/scans/{scan_id}/tool-started")
 async def log_tool_started(
     scan_id: str,
@@ -153,6 +166,9 @@ async def log_tool_started(
     if not tool_name:
         raise HTTPException(status_code=422, detail="tool_name required")
 
+    # Infer the correct phase from tool name
+    inferred_phase = _infer_phase_from_tool(tool_name)
+
     # Create/Update ScanToolState
     state = db.query(ScanToolState).filter(
         ScanToolState.scan_id == scan_id,
@@ -164,16 +180,16 @@ async def log_tool_started(
             id=str(uuid.uuid4()),
             scan_id=scan_id,
             tool=tool_name,
-            phase="running",
-            stage="started",
+            phase=inferred_phase,
+            stage="running",
             message=f"Starting {tool_name}...",
             created_at=datetime.now(timezone.utc),
             updated_at=datetime.now(timezone.utc)
         )
         db.add(state)
     else:
-        state.phase = "running"
-        state.stage = "started"
+        state.phase = inferred_phase
+        state.stage = "running"
         state.updated_at = datetime.now(timezone.utc)
     
     db.commit()
@@ -755,9 +771,9 @@ async def create_tool_result(
                     assert severity is not None, "ZAP severity must be computed from riskcode"
                     assert severity != Severity.INFO or riskcode == 0, f"ZAP finding with riskcode={riskcode} should not be INFO"
                 
-                # CRITICAL: ZAP findings MUST use normalizer for grouping
-                # All ZAP findings must be grouped to prevent duplicates
-                if tool_name.lower() == "zap":
+                # CRITICAL: ZAP, Nuclei, and Dalfox findings MUST use normalizer for grouping
+                # This deduplicates findings by template_id/plugin_id and groups affected URLs
+                if tool_name.lower() in ("zap", "nuclei", "dalfox"):
                     finding, instance = create_or_update_finding_with_normalizer(
                         db=db,
                         scan_job_id=scan_id,
@@ -767,18 +783,28 @@ async def create_tool_result(
                     )
                     findings_created.append(finding)
                     
-                    # Assertion: ZAP findings must have finding_key and affected_count
+                    # Assertion: Grouped findings must have finding_key and affected_count
                     if not hasattr(finding, 'finding_key') or not finding.finding_key:
                         logger.error(
-                            f"ZAP finding missing finding_key: {finding.id}, title={finding.title[:50]}, "
-                            f"plugin_id={finding.plugin_id}"
+                            f"{tool_name} finding missing finding_key: {finding.id}, title={finding.title[:50]}"
                         )
                     if not hasattr(finding, 'affected_count') or finding.affected_count < 1:
                         logger.error(
-                            f"ZAP finding missing affected_count: {finding.id}, title={finding.title[:50]}"
+                            f"{tool_name} finding missing affected_count: {finding.id}, title={finding.title[:50]}"
+                        )
+                    
+                    # Log sample grouping for nuclei (first grouped finding per scan)
+                    if tool_name.lower() == "nuclei" and idx == 0:
+                        logger.info(
+                            f"[NUCLEI-GROUP] Sample nuclei finding: "
+                            f"title={finding.title[:60]}, "
+                            f"template_id={finding.template_id}, "
+                            f"severity={finding.severity.value if hasattr(finding.severity, 'value') else finding.severity}, "
+                            f"affected_count={finding.affected_count}, "
+                            f"finding_key={finding.finding_key[:16]}..."
                         )
                 else:
-                    # Use legacy function for non-ZAP tools (backward compatibility)
+                    # Use legacy function for other tools (backward compatibility)
                     finding = create_or_update_finding(
                         db=db,
                         scan_job_id=scan_id,
@@ -1218,9 +1244,35 @@ async def create_scan_inventory(
         ).first()
         
         if existing_artifact:
-            # Update existing inventory
-            existing_artifact.payload = inventory_data.inventory
-            logger.info(f"[INVENTORY-UPDATE] Updated asset inventory for scan {scan_id}")
+            # SMART MERGE: Only update if new inventory has MORE URLs than existing
+            # This prevents later empty/failed enumerations from overwriting successful ones
+            def get_url_count(inv: dict) -> int:
+                """Extract URL count from inventory structure."""
+                if not inv or not isinstance(inv, dict):
+                    return 0
+                discovery = inv.get("discovery", {})
+                if isinstance(discovery, dict):
+                    merged = discovery.get("merged", {})
+                    if isinstance(merged, dict):
+                        return merged.get("all_urls_count", 0)
+                return 0
+            
+            existing_url_count = get_url_count(existing_artifact.payload)
+            new_url_count = get_url_count(inventory_data.inventory)
+            
+            if new_url_count >= existing_url_count:
+                # New inventory has more or equal URLs - update
+                existing_artifact.payload = inventory_data.inventory
+                logger.info(
+                    f"[INVENTORY-UPDATE] Updated asset inventory for scan {scan_id}: "
+                    f"new={new_url_count} URLs, prev={existing_url_count} URLs"
+                )
+            else:
+                # Keep existing inventory (it has more URLs)
+                logger.info(
+                    f"[INVENTORY-KEEP] Keeping existing asset inventory for scan {scan_id}: "
+                    f"existing={existing_url_count} URLs, rejected new={new_url_count} URLs"
+                )
             artifact = existing_artifact
         else:
             # Create new inventory

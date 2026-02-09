@@ -423,7 +423,6 @@ def compute_evidence_signature(finding_data: Dict[str, Any], raw_data: Dict[str,
             form_action = form_action_match.group(1).lower().strip()
             # Normalize form action (extract path only)
             try:
-                from urllib.parse import urlparse
                 parsed = urlparse(form_action if form_action.startswith('http') else f"http://example.com{form_action}")
                 form_path = parsed.path or "/"
                 components.append(f"form_action:{form_path}")
@@ -624,6 +623,74 @@ def normalize_severity_for_finding(
     return original_severity
 
 
+def nuclei_rule_family(template_id: Optional[str], title: Optional[str], tags: Optional[list] = None) -> str:
+    """
+    Categorize Nuclei finding into rule family based on template_id, title, and tags.
+    
+    Args:
+        template_id: Nuclei template ID (e.g., "mongodb-detect-mongobleed")
+        title: Finding title
+        tags: Template tags list
+        
+    Returns:
+        Rule family string: "vuln", "misconfig", "exposure", "cve", "info", etc.
+    """
+    title_lower = (title or "").lower()
+    template_lower = (template_id or "").lower()
+    tags_lower = [str(t).lower() for t in (tags or [])]
+    
+    # CVE-related
+    if any("cve" in t for t in tags_lower) or "cve-" in template_lower:
+        return "cve"
+    
+    # Vulnerability patterns
+    vuln_patterns = ["sqli", "xss", "rce", "lfi", "rfi", "ssrf", "xxe", "csrf",
+                     "injection", "overflow", "traversal", "disclosure", "leak"]
+    if any(p in title_lower or p in template_lower for p in vuln_patterns):
+        return "vuln"
+    
+    # Misconfiguration
+    misconfig_patterns = ["misconfig", "default-login", "default-credential", "weak-password",
+                          "unauth", "open-redirect"]
+    if any(p in title_lower or p in template_lower for p in misconfig_patterns):
+        return "misconfig"
+    
+    # Exposure / Information
+    exposure_patterns = ["exposed", "exposure", "panel", "dashboard", "admin", "config"]
+    if any(p in title_lower or p in template_lower for p in exposure_patterns):
+        return "exposure"
+    
+    # Technology detection
+    detect_patterns = ["detect", "version", "fingerprint", "technology", "tech-detect"]
+    if any(p in title_lower or p in template_lower for p in detect_patterns):
+        return "detect"
+    
+    return "info"
+
+
+def group_scope_for_nuclei(template_id: Optional[str], title: Optional[str], rule_family: str) -> str:
+    """
+    Determine grouping scope for a Nuclei finding.
+    
+    For nuclei, findings with the same template_id represent the same vulnerability.
+    We group by template_id + host (not by individual URL/path).
+    
+    Returns:
+        "host" - Group across all URLs/paths on same host (default for nuclei)
+        "param" - Group by parameter name (for parameter-specific vulns)
+    """
+    title_lower = (title or "").lower()
+    
+    # Parameter-specific vulnerabilities should group by param
+    param_patterns = ["parameter", "sqli", "sql injection", "xss", "cross-site scripting"]
+    if any(p in title_lower for p in param_patterns):
+        return "param"
+    
+    # Default for nuclei: group by template_id at host level
+    # This is the key insight: MongoBleed on same host = 1 finding
+    return "host"
+
+
 def normalize_and_group_finding(
     finding_data: Dict[str, Any],
     scan_id: str,
@@ -631,6 +698,8 @@ def normalize_and_group_finding(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     """
     Normalize a finding and produce canonical finding + instance.
+    
+    Supports ZAP, Nuclei, Dalfox, and other tools.
     
     Args:
         finding_data: Raw finding data dict
@@ -645,6 +714,7 @@ def normalize_and_group_finding(
     
     # Extract fields
     tool = finding_data.get("tool") or finding_data.get("tool_name") or ""
+    tool_lower = tool.lower()
     url = finding_data.get("url") or ""
     path = finding_data.get("path") or ""
     parameter = finding_data.get("parameter")
@@ -654,6 +724,8 @@ def normalize_and_group_finding(
     
     # Normalize URL and extract host
     normalized_url = normalize_url(url, strip_query_for_static=True)
+    parsed = None
+    normalized_host = ""
     try:
         parsed = urlparse(normalized_url)
         normalized_host = parsed.netloc.lower()
@@ -662,35 +734,66 @@ def normalize_and_group_finding(
     except Exception:
         normalized_host = ""
     
+    # If URL has no scheme, urlparse puts everything in scheme/path and netloc is empty
+    # Try to extract host by adding scheme if missing
+    if not normalized_host and url:
+        try:
+            if not url.startswith(('http://', 'https://')):
+                parsed_with_scheme = urlparse(f"https://{url}")
+            else:
+                # URL has scheme but netloc is still empty - try the original url
+                parsed_with_scheme = urlparse(url)
+            normalized_host = parsed_with_scheme.netloc.lower()
+            if ':' in normalized_host:
+                normalized_host = normalized_host.split(':')[0]
+            # Also update parsed for later use
+            if normalized_host:
+                parsed = parsed_with_scheme
+        except Exception:
+            pass
+    
     # Check if static asset
     is_static = is_static_asset_path(path or normalized_url)
     
-    # Determine rule family (for ZAP)
+    # Determine rule family and grouping scope based on tool
     rule_family = "info"
-    if tool.lower() == "zap":
+    grouping_scope = "path"  # default
+    
+    if tool_lower == "zap":
         rule_family = zap_rule_family(plugin_id, title)
+        grouping_scope = group_scope_for_zap(plugin_id, title, rule_family)
+    elif tool_lower == "nuclei":
+        # Extract tags from raw_data or finding_data for nuclei
+        nuclei_tags = finding_data.get("categories", [])
+        if not nuclei_tags and isinstance(raw_data, dict):
+            info_block = raw_data.get("info", {})
+            if isinstance(info_block, dict):
+                nuclei_tags = info_block.get("tags", [])
+                if isinstance(nuclei_tags, str):
+                    nuclei_tags = [t.strip() for t in nuclei_tags.split(",")]
+        rule_family = nuclei_rule_family(rule_id, title, nuclei_tags)
+        grouping_scope = group_scope_for_nuclei(rule_id, title, rule_family)
+    elif tool_lower == "dalfox":
+        rule_family = "vuln"
+        # Dalfox findings should group by vuln type + parameter
+        if parameter:
+            grouping_scope = "param"
+        else:
+            grouping_scope = "host"
+    else:
+        # Generic tools: group by template_id/rule_id at host level
+        grouping_scope = "host"
     
     # Compute evidence signature
     evidence_sig = compute_evidence_signature(finding_data, raw_data)
     
     # Determine path bucket based on grouping scope
-    # Host-level issues should group across all URLs on the same host
-    # Path-level issues should group by path pattern
-    # Param-level issues should group by parameter name
-    # Form_action-level issues should group by form action endpoint
-    grouping_scope = group_scope_for_zap(plugin_id, title, rule_family)
-    
     if grouping_scope == "host":
-        # Host-level: group all URLs on same host (e.g., CSP, headers, CORS, cookies)
         path_bucket = "host-level"
     elif grouping_scope == "form_action":
-        # Form action-level: group by normalized form action path (e.g., CSRF on /upload.gtl)
-        # For CSRF, the URL itself is usually the form action endpoint
-        # Extract normalized path from URL (strip query params)
         form_action_path = None
         if parsed:
             form_action_path = parsed.path or "/"
-        # Try to extract from evidence if URL path is not clear
         if not form_action_path or form_action_path == "/":
             evidence = finding_data.get("evidence") or ""
             if evidence:
@@ -698,18 +801,14 @@ def normalize_and_group_finding(
                 if form_action_match:
                     form_action = form_action_match.group(1).strip()
                     try:
-                        from urllib.parse import urlparse
                         parsed_action = urlparse(form_action if form_action.startswith('http') else f"http://example.com{form_action}")
                         form_action_path = parsed_action.path or "/"
                     except:
                         form_action_path = form_action if form_action.startswith('/') else f"/{form_action}"
         path_bucket = f"form_action:{form_action_path}" if form_action_path else "form_action:unknown"
     elif grouping_scope == "param":
-        # Param-level: group by parameter name (e.g., XSS in specific param)
         path_bucket = "param-level"
     else:
-        # Path-level: group by normalized path (e.g., SQLi on specific endpoint, Big Redirect)
-        # For redirects, use the redirecting path (not the destination)
         path_bucket = parsed.path if parsed else ""
     
     # Normalize parameter
@@ -727,12 +826,23 @@ def normalize_and_group_finding(
     )
     
     # Normalize severity
-    normalized_severity = normalize_severity_for_finding(
-        finding_data,
-        raw_data,
-        rule_family,
-        is_static,
-    )
+    # For nuclei, use the severity engine (already computed by caller), just pass through
+    if tool_lower == "nuclei":
+        # Nuclei severity is computed by nuclei_to_severity() in the caller
+        # Just use what's provided — don't override with rule-family de-noising
+        from app.core.severity import normalize_severity as _normalize_sev
+        provided_sev = finding_data.get("severity")
+        if isinstance(provided_sev, Severity):
+            normalized_severity = provided_sev
+        else:
+            normalized_severity = _normalize_sev(provided_sev)
+    else:
+        normalized_severity = normalize_severity_for_finding(
+            finding_data,
+            raw_data,
+            rule_family,
+            is_static,
+        )
     
     # Build canonical finding (no specific URL)
     canonical = {

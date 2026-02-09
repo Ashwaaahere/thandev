@@ -184,6 +184,9 @@ app = FastAPI(
     version=settings.VERSION,
     description="Security intelligence platform API",
     lifespan=lifespan,
+    docs_url=None,  # Disable /docs endpoint
+    redoc_url=None,  # Disable /redoc endpoint
+    openapi_url=None,  # Disable /openapi.json endpoint
 )
 
 # CORS middleware
