@@ -3,10 +3,9 @@
  * Displays scan progress organized by phases with real-time updates
  */
 import React, { useMemo } from 'react';
-import {type ScanEvent, type ScanToolState } from '@/lib/hooks/useScanEvents';
+import {type ScanToolState } from '@/lib/hooks/useScanEvents';
 
 interface PhaseTimelineProps {
-  events: ScanEvent[];
   toolStates: Map<string, ScanToolState>;
   scanLevel?: string;
   isConnected: boolean;
@@ -51,11 +50,12 @@ const STAGE_COLORS: Record<string, string> = {
   parsing: 'text-purple-400',
   uploading: 'text-cyan-400',
   completed: 'text-emerald-400',
+  timed_out: 'text-emerald-400',
   failed: 'text-red-400',
   skipped: 'text-slate-500',
 };
 
-export function PhaseTimeline({ events, toolStates, scanLevel, isConnected }: PhaseTimelineProps) {
+export function PhaseTimeline({ toolStates, scanLevel, isConnected }: PhaseTimelineProps) {
   // Group tool states by phase
   const phaseTools = useMemo(() => {
     const grouped = new Map<string, ScanToolState[]>();
@@ -158,30 +158,6 @@ export function PhaseTimeline({ events, toolStates, scanLevel, isConnected }: Ph
           </div>
         );
       })}
-
-      {/* Event Log Summary */}
-      {events.length > 0 && (
-        <div className="mt-6 pt-6 border-t border-slate-700">
-          <h4 className="text-sm font-semibold text-slate-400 mb-2">Recent Events</h4>
-          <div className="space-y-1 max-h-40 overflow-y-auto text-xs text-slate-500">
-            {events.slice(-10).reverse().map((event) => (
-              <div key={event.id} className="flex items-start gap-2">
-                <span className="text-slate-600">
-                  {new Date(event.created_at || event.timestamp).toLocaleTimeString()}
-                </span>
-                <span className={STAGE_COLORS[event.stage] || 'text-slate-400'}>
-                  {STAGE_ICONS[event.stage] || '•'}
-                </span>
-                <span className="flex-1">
-                  {event.tool && <span className="font-medium">{TOOL_DISPLAY_NAMES[event.tool] || event.tool}:</span>}
-                  {' '}
-                  {event.message || event.stage}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -191,7 +167,7 @@ function ToolCard({ toolState }: { toolState: ScanToolState }) {
   const stageIcon = STAGE_ICONS[toolState.stage] || '•';
   const stageColor = STAGE_COLORS[toolState.stage] || 'text-slate-400';
   const isRunning = toolState.stage === 'running';
-  const isCompleted = toolState.stage === 'completed';
+  const isCompleted = toolState.stage === 'completed' || toolState.stage === 'timed_out';
   const isFailed = toolState.stage === 'failed';
 
   return (

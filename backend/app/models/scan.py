@@ -310,7 +310,6 @@ class ScanJob(Base):
     )
     tool_results = relationship("ToolResult", back_populates="scan_job", cascade="all, delete-orphan")
     artifacts = relationship("ScanArtifact", back_populates="scan_job", cascade="all, delete-orphan")
-    events = relationship("ScanEvent", back_populates="scan_job", cascade="all, delete-orphan")
     tool_states = relationship("ScanToolState", back_populates="scan_job", cascade="all, delete-orphan")
 
 

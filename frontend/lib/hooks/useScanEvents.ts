@@ -3,19 +3,6 @@
  */
 import { useEffect, useState, useRef } from 'react';
 
-export interface ScanEvent {
-  id: string;
-  scan_id: string;
-  timestamp: string;
-  created_at?: string;
-  phase: 'prepare' | 'enumerate' | 'scan' | 'correlate_score' | 'finalize';
-  tool?: string;
-  stage: string;
-  message?: string;
-  progress?: number;
-  meta?: Record<string, any>;
-}
-
 export interface ScanToolState {
   tool: string;
   phase: string;
@@ -27,14 +14,12 @@ export interface ScanToolState {
 }
 
 interface UseScanEventsReturn {
-  events: ScanEvent[];
   toolStates: Map<string, ScanToolState>;
   isConnected: boolean;
   error: string | null;
 }
 
 export function useScanEvents(scanId: string | null): UseScanEventsReturn {
-  const [events, setEvents] = useState<ScanEvent[]>([]);
   const [toolStates, setToolStates] = useState<Map<string, ScanToolState>>(new Map());
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,10 +55,7 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
             const data = JSON.parse(event.data);
             console.log('[WebSocket] Received:', data);
 
-            if (data.type === 'initial_events' && Array.isArray(data.events)) {
-              // Initial batch of events
-              setEvents(data.events);
-            } else if (data.type === 'initial_tool_states' && Array.isArray(data.tool_states)) {
+            if (data.type === 'initial_tool_states' && Array.isArray(data.tool_states)) {
               // Initial tool states
               const statesMap = new Map<string, ScanToolState>();
               data.tool_states.forEach((state: ScanToolState) => {
@@ -81,9 +63,6 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
                 statesMap.set(key, state);
               });
               setToolStates(statesMap);
-            } else if (data.type === 'event') {
-              // Single new event
-              setEvents((prev) => [...prev, data.event]);
             } else if (data.type === 'tool_state_update') {
               // Tool state update
               setToolStates((prev) => {
@@ -142,7 +121,6 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
   }, [scanId]);
 
   return {
-    events,
     toolStates,
     isConnected,
     error,

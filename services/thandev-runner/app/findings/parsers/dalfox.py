@@ -92,6 +92,10 @@ def parse_dalfox_output(output_file: Path) -> List[Dict[str, Any]]:
             logger.warning(f"Dalfox output is not a list: {type(data)}")
             return []
         
+        # Deduplicate findings by (url, parameter) to avoid repeated findings
+        # This matches the deduplication strategy used by ZAP and Nuclei
+        seen_findings = set()
+        
         # Filter out empty objects
         for item in data:
             if not isinstance(item, dict):
@@ -117,13 +121,28 @@ def parse_dalfox_output(output_file: Path) -> List[Dict[str, Any]]:
             # - severity: High/Medium/Low
             # - type: V (Verified), R (Reflected), etc.
             
+            # Extract URL and parameter for deduplication
+            finding_url = item.get("data") or item.get("url") or ""
+            finding_param = item.get("param") or item.get("parameter") or ""
+            
+            # Create deduplication key: (url, parameter)
+            # This ensures we don't report the same XSS on the same parameter multiple times
+            dedup_key = (finding_url, finding_param)
+            
+            # Skip if we've already seen this URL+parameter combination
+            if dedup_key in seen_findings:
+                logger.debug(f"Skipping duplicate Dalfox finding: param={finding_param} on {finding_url[:100]}")
+                continue
+            
+            seen_findings.add(dedup_key)
+            
             finding = {
                 "tool_id": "dalfox",
                 "title": item.get("message_str") or item.get("message") or "XSS Vulnerability",
                 "description": item.get("evidence") or item.get("message_str") or "",
                 "severity": _map_dalfox_severity(item.get("severity") or item.get("cwe")),
-                "url": item.get("data") or item.get("url") or "",
-                "parameter": item.get("param") or item.get("parameter") or "",
+                "url": finding_url,
+                "parameter": finding_param,
                 "http_method": item.get("method", "GET").upper() if item.get("method") else "GET",
                 "evidence": item.get("payload") or item.get("evidence") or "",
                 "cwe_id": item.get("cwe"),

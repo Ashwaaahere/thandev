@@ -1202,7 +1202,7 @@ export default function SecurityScannerClient() {
                         color: selectedMode === 'existing' ? 'white' : 'var(--muted)'
                       }}
                     >
-                      Existing project
+                      Complete scan
                     </button>
                     <button
                       type="button"

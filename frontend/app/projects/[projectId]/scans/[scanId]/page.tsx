@@ -226,7 +226,7 @@ export default function ScanReportPage() {
   const [downloadingCSV, setDownloadingCSV] = useState(false);
 
   // Connect to real-time scan events via WebSocket
-  const { events, toolStates: wsToolStates, isConnected } = useScanEvents(scanId);
+  const { toolStates: wsToolStates, isConnected } = useScanEvents(scanId);
   
   // Convert HTTP tools data to tool states format as fallback
   const toolStates = useMemo(() => {
@@ -2571,7 +2571,6 @@ export default function ScanReportPage() {
                     </div>
                     {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') ? (
                       <PhaseTimeline
-                        events={events}
                         toolStates={toolStates}
                         scanStatus={scan.status}
                         scanLevel={scan.scan_level}

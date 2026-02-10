@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.scan import ScanJob
-from app.models.scan_event import ScanEvent
 from app.models.scan_tool_state import ScanToolState
 
 logger = logging.getLogger(__name__)
@@ -76,20 +75,6 @@ async def websocket_scan_progress(
     
     Message format:
     {
-        "type": "event",
-        "data": {
-            "phase": "enumerate",
-            "tool": "katana",
-            "stage": "running",
-            "message": "Crawling URLs...",
-            "progress": 0.5,
-            "meta": {"urls_found": 150}
-        }
-    }
-    
-    or
-    
-    {
         "type": "tool_state",
         "data": {
             "tool": "katana",
@@ -141,31 +126,6 @@ async def websocket_scan_progress(
             "tool_states": tool_states_data
         })
         
-        # Send initial events
-        events = db.query(ScanEvent).filter(
-            ScanEvent.scan_id == scan_id
-        ).order_by(
-            ScanEvent.created_at.asc()
-        ).limit(100).all()
-        
-        await websocket.send_json({
-            "type": "initial_events",
-            "events": [
-                {
-                    "id": str(evt.id),
-                    "scan_id": evt.scan_id,
-                    "timestamp": evt.created_at.isoformat() if evt.created_at else None,
-                    "phase": evt.phase,
-                    "tool": evt.tool,
-                    "stage": evt.stage,
-                    "message": evt.message,
-                    "progress": evt.progress,
-                    "meta": evt.meta,
-                }
-                for evt in events
-            ]
-        })
-        
         # Keep connection alive and listen for messages
         while True:
             try:
@@ -190,22 +150,6 @@ async def websocket_scan_progress(
     
     finally:
         manager.disconnect(websocket, scan_id)
-
-
-async def broadcast_event_to_scan(scan_id: str, event_data: dict):
-    """
-    Broadcast event to all WebSocket subscribers of a scan.
-    
-    This function should be called after creating scan events to push updates to clients.
-    
-    Args:
-        scan_id: Scan job ID
-        event_data: Event data to broadcast
-    """
-    await manager.broadcast_to_scan(scan_id, {
-        "type": "event",
-        "event": event_data
-    })
 
 
 async def broadcast_tool_state_to_scan(scan_id: str, tool_state_data: dict):

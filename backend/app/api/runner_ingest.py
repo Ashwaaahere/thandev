@@ -21,12 +21,11 @@ from app.core.dependencies import require_runner_service_auth
 from app.models.scan import ScanJob, ScanStatus
 from app.models.finding import ToolResult, ToolExecutionStatus
 from app.schemas.scan import ToolResultCreate, ToolResultResponse
-from app.schemas.scan_event import ScanEventCreate, ScanEventBatchCreate, ScanEventResponse, ScanToolStateResponse, ScanInventoryCreate, ScanInventoryResponse
+from app.schemas.scan_event import ScanEventCreate, ScanEventBatchCreate, ScanToolStateResponse, ScanInventoryCreate, ScanInventoryResponse
 from app.services.findings_ingestor import create_or_update_finding, create_or_update_finding_with_normalizer
 from app.core.severity import normalize_severity, zap_to_severity, nuclei_to_severity, retire_to_severity, sslscan_to_severity, portfinding_to_severity, httpx_wappalyzer_to_severity, header_finding_to_severity
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
 from app.models.finding import Severity
-from app.models.scan_event import ScanEvent
 from app.models.scan_tool_state import ScanToolState
 
 router = APIRouter(
@@ -581,7 +580,13 @@ async def create_tool_result(
         pending_record.timed_out = 1 if tool_result.timed_out else 0
         pending_record.stdout_preview = tool_result.stdout_preview
         pending_record.stderr_preview = tool_result.stderr_preview
-        pending_record.status = ToolExecutionStatus.COMPLETED if tool_result.success else ToolExecutionStatus.FAILED
+        # Check for timeout first, then success/failure
+        if tool_result.timed_out:
+            pending_record.status = ToolExecutionStatus.TIMED_OUT
+        elif tool_result.success:
+            pending_record.status = ToolExecutionStatus.COMPLETED
+        else:
+            pending_record.status = ToolExecutionStatus.FAILED
         pending_record.parsed_findings_count = len(tool_result.findings)
         # Merge incoming meta with hash values (preserve technologies, dependencies, etc.)
         # CRITICAL: Use raw_meta if available (from raw_body), otherwise use tool_result.meta
@@ -626,7 +631,10 @@ async def create_tool_result(
                 timed_out=1 if tool_result.timed_out else 0,
                 stdout_preview=tool_result.stdout_preview,
                 stderr_preview=tool_result.stderr_preview,
-                status=ToolExecutionStatus.COMPLETED if tool_result.success else ToolExecutionStatus.FAILED,
+                # Check for timeout first, then success/failure
+                status=(ToolExecutionStatus.TIMED_OUT if tool_result.timed_out 
+                       else (ToolExecutionStatus.COMPLETED if tool_result.success 
+                            else ToolExecutionStatus.FAILED)),
                 parsed_findings_count=len(tool_result.findings),
                 meta={
                     **(raw_meta if raw_meta is not None else (tool_result.meta or {})),  # Use raw_meta if available (preserves client_dependencies, findings)
@@ -1028,10 +1036,10 @@ async def create_scan_events(
     db: Session = Depends(get_db),
 ):
     """
-    Create scan events for real-time progress tracking.
+    Update tool states for real-time progress tracking.
     
     This endpoint accepts batch events from runner service to minimize HTTP overhead.
-    Events are persisted and broadcast to WebSocket subscribers.
+    Tool states are updated and broadcast to WebSocket subscribers.
     
     Requires service authentication via RUNNER_API_TOKEN (Bearer token).
     
@@ -1040,7 +1048,7 @@ async def create_scan_events(
         event_batch: Batch of events to create
         
     Returns:
-        Success message with event count
+        Success message with tool state count
     """
     # Verify scan exists
     scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
@@ -1050,25 +1058,11 @@ async def create_scan_events(
             detail=f"Scan not found: {scan_id}"
         )
     
-    created_events = []
     # Track tool states we've already processed in this batch to avoid duplicates
     processed_tool_states = {}  # key: (scan_id, tool, phase)
     
     try:
         for event_data in event_batch.events:
-            # Create event
-            event = ScanEvent(
-                scan_id=scan_id,
-                phase=event_data.phase,
-                tool=event_data.tool,
-                stage=event_data.stage,
-                message=event_data.message,
-                progress=event_data.progress,
-                meta=event_data.meta,
-            )
-            db.add(event)
-            created_events.append(event)
-            
             # Update or create tool state snapshot
             if event_data.tool:
                 tool_key = (scan_id, event_data.tool, event_data.phase)
@@ -1116,30 +1110,14 @@ async def create_scan_events(
         db.commit()
         
         logger.info(
-            f"Created {len(created_events)} events for scan {scan_id}"
+            f"Updated {len(processed_tool_states)} tool states for scan {scan_id}"
         )
         
-        # Broadcast events to WebSocket subscribers
+        # Broadcast tool state updates to WebSocket subscribers
         try:
-            from app.api.websocket import broadcast_event_to_scan, broadcast_tool_state_to_scan
+            from app.api.websocket import broadcast_tool_state_to_scan
             import asyncio
             
-            for event in created_events:
-                event_data = {
-                    "id": str(event.id),
-                    "scan_id": event.scan_id,
-                    "timestamp": event.created_at.isoformat() if event.created_at else None,
-                    "phase": event.phase,
-                    "tool": event.tool,
-                    "stage": event.stage,
-                    "message": event.message,
-                    "progress": event.progress,
-                    "meta": event.meta,
-                }
-                # Use asyncio.create_task to broadcast without blocking
-                asyncio.create_task(broadcast_event_to_scan(scan_id, event_data))
-            
-            # Also broadcast tool state updates
             for tool_key, tool_state in processed_tool_states.items():
                 tool_state_data = {
                     "tool": tool_state.tool,
@@ -1152,59 +1130,24 @@ async def create_scan_events(
                 }
                 asyncio.create_task(broadcast_tool_state_to_scan(scan_id, tool_state_data))
             
-            logger.debug(f"Broadcasted {len(created_events)} events and {len(processed_tool_states)} tool states for scan {scan_id}")
+            logger.debug(f"Broadcasted {len(processed_tool_states)} tool states for scan {scan_id}")
         except Exception as broadcast_error:
             # Log but don't fail - WebSocket broadcast is best-effort
-            logger.warning(f"Failed to broadcast events for scan {scan_id}: {broadcast_error}")
+            logger.warning(f"Failed to broadcast tool states for scan {scan_id}: {broadcast_error}")
         
         return {
             "status": "success",
             "scan_id": scan_id,
-            "events_created": len(created_events),
+            "tool_states_updated": len(processed_tool_states),
         }
         
     except Exception as e:
-        logger.error(f"Failed to create scan events: {e}", exc_info=True)
+        logger.error(f"Failed to update tool states: {e}", exc_info=True)
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create scan events: {str(e)}"
+            detail=f"Failed to update tool states: {str(e)}"
         )
-
-
-@router.get("/{scan_id}/events", response_model=list[ScanEventResponse])
-async def get_scan_events(
-    scan_id: str,
-    limit: int = 100,
-    offset: int = 0,
-    db: Session = Depends(get_db),
-):
-    """
-    Get scan events for a scan (for debugging/history).
-    
-    Args:
-        scan_id: Scan job ID
-        limit: Maximum number of events to return
-        offset: Offset for pagination
-        
-    Returns:
-        List of scan events
-    """
-    # Verify scan exists
-    scan_job = db.query(ScanJob).filter(ScanJob.id == scan_id).first()
-    if not scan_job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Scan not found: {scan_id}"
-        )
-    
-    events = db.query(ScanEvent).filter(
-        ScanEvent.scan_id == scan_id
-    ).order_by(
-        ScanEvent.created_at.desc()
-    ).limit(limit).offset(offset).all()
-    
-    return events
 
 
 @router.get("/{scan_id}/tool-states", response_model=list[ScanToolStateResponse])

@@ -8,10 +8,9 @@
 'use client';
 
 import React from 'react';
-import { ScanEvent, ScanToolState } from '@/hooks/useScanEvents';
+import { ScanToolState } from '@/hooks/useScanEvents';
 
 interface PhaseTimelineProps {
-  events: ScanEvent[];
   toolStates: ScanToolState[];
   scanStatus: string;
   scanLevel?: string;
@@ -62,11 +61,11 @@ const STAGE_LABELS: Record<string, string> = {
   parsing: 'Parsing',
   uploading: 'Uploading',
   completed: 'Completed',
+  timed_out: 'Completed',
   failed: 'Failed',
 };
 
 export default function PhaseTimeline({
-  events,
   toolStates,
   scanStatus,
   scanLevel,
@@ -164,7 +163,7 @@ export default function PhaseTimeline({
 
   // Get stage color
   const getStageColor = (stage: string) => {
-    if (stage === 'completed') return 'text-emerald-400';
+    if (stage === 'completed' || stage === 'timed_out') return 'text-emerald-400';
     if (stage === 'failed') return 'text-red-400';
     if (stage === 'running' || stage === 'parsing' || stage === 'uploading') return 'text-blue-400';
     return 'text-slate-400';
@@ -172,7 +171,7 @@ export default function PhaseTimeline({
 
   // Get stage background
   const getStageBg = (stage: string) => {
-    if (stage === 'completed') return 'bg-emerald-500/20';
+    if (stage === 'completed' || stage === 'timed_out') return 'bg-emerald-500/20';
     if (stage === 'failed') return 'bg-red-500/20';
     if (stage === 'running' || stage === 'parsing' || stage === 'uploading') return 'bg-blue-500/20';
     return 'bg-slate-500/20';
@@ -247,8 +246,8 @@ export default function PhaseTimeline({
                   </div>
                   <p className="text-xs text-slate-400 mb-3">{phase.description}</p>
 
-                  {/* Tool Cards */}
-                  {phaseToolStates.length > 0 && (
+                  {/* Tool Cards - only show for active or pending phases, not completed */}
+                  {phaseToolStates.length > 0 && !isCompleted && (
                     <div className="space-y-2">
                       {phaseToolStates.map(toolState => {
                         const icon = TOOL_ICONS[toolState.tool] || '🔧';
@@ -327,28 +326,6 @@ export default function PhaseTimeline({
           );
         })}
       </div>
-
-      {/* Event Log (collapsed by default) */}
-      {events.length > 0 && (
-        <details className="mt-6 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
-          <summary className="text-sm font-medium cursor-pointer" style={{ color: 'var(--fg)' }}>
-            Event Log ({events.length} events)
-          </summary>
-          <div className="mt-3 space-y-1 max-h-64 overflow-y-auto text-xs font-mono" style={{ color: 'var(--muted)' }}>
-            {events.slice(-20).reverse().map(event => (
-              <div key={event.id} className="flex gap-2">
-                <span className="text-slate-500">
-                  {new Date(event.timestamp).toLocaleTimeString()}
-                </span>
-                <span className="text-blue-400">{event.phase}</span>
-                {event.tool && <span className="text-emerald-400">{event.tool}</span>}
-                <span className="text-slate-400">{event.stage}</span>
-                {event.message && <span className="text-slate-300">{event.message}</span>}
-              </div>
-            ))}
-          </div>
-        </details>
-      )}
     </div>
   );
 }

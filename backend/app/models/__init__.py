@@ -5,7 +5,6 @@ from app.models.tenant import Tenant
 from app.models.project import Project
 from app.models.project_url import ProjectUrl
 from app.models.scan import ScanJob
-from app.models.scan_event import ScanEvent
 from app.models.scan_tool_state import ScanToolState
 from app.models.finding import Finding, FindingInstance, ToolResult
 from app.models.domain_verification import DomainVerification, DomainVerificationStatus
@@ -24,7 +23,6 @@ __all__ = [
     "Project",
     "ProjectUrl",
     "ScanJob",
-    "ScanEvent",
     "ScanToolState",
     "Finding",
     "FindingInstance",

@@ -7,18 +7,6 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 
-export interface ScanEvent {
-  id: string;
-  scan_id: string;
-  timestamp: string;
-  phase: string;
-  tool?: string | null;
-  stage: string;
-  message?: string | null;
-  progress?: number | null;
-  meta?: Record<string, any> | null;
-}
-
 export interface ScanToolState {
   tool: string;
   phase: string;
@@ -30,14 +18,12 @@ export interface ScanToolState {
 }
 
 interface UseScanEventsReturn {
-  events: ScanEvent[];
   toolStates: ScanToolState[];
   isConnected: boolean;
   error: string | null;
 }
 
 export function useScanEvents(scanId: string | null): UseScanEventsReturn {
-  const [events, setEvents] = useState<ScanEvent[]>([]);
   const [toolStates, setToolStates] = useState<ScanToolState[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,17 +75,10 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
           const data = JSON.parse(event.data);
           console.log('[useScanEvents] Received message:', data.type, data);
           
-          if (data.type === 'initial_events') {
-            // Initial events from backend
-            console.log('[useScanEvents] Setting initial events:', data.events?.length || 0);
-            setEvents(data.events || []);
-          } else if (data.type === 'initial_tool_states') {
+          if (data.type === 'initial_tool_states') {
             // Initial tool states from backend
             console.log('[useScanEvents] Setting initial tool states:', data.tool_states);
             setToolStates(data.tool_states || []);
-          } else if (data.type === 'event') {
-            // Single event update
-            setEvents(prev => [...prev, data.event]);
           } else if (data.type === 'tool_state') {
             // Single tool state update
             setToolStates(prev => {
@@ -171,7 +150,6 @@ export function useScanEvents(scanId: string | null): UseScanEventsReturn {
   }, [connect]);
 
   return {
-    events,
     toolStates,
     isConnected,
     error,
