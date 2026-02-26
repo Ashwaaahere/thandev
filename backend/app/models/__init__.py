@@ -16,6 +16,8 @@ from app.models.allowed_domain import AllowedDomain
 from app.models.scan_artifact import ScanArtifact
 from app.models.integration import Integration
 from app.models.repo_connection import RepoConnection
+from app.models.linked_repo import LinkedRepo
+from app.models.code_scan import CodeScan
 
 __all__ = [
     "User",
@@ -37,6 +39,8 @@ __all__ = [
     "ScanArtifact",
     "Integration",
     "RepoConnection",
+    "LinkedRepo",
+    "CodeScan",
 ]
 
 

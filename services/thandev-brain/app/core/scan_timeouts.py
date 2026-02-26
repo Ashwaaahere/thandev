@@ -28,15 +28,15 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
         }
     },
     "advanced": {
-        "max_total_seconds": 5400,  # 1.5 hours total (increased for complex targets)
+        "max_total_seconds": 10800,  # 3 hours total (deep comprehensive scans)
         "per_tool": {
-            "httpx": 30,
-            "sslscan": 180,  # 3 minutes (normally 30s, 6x safety buffer)
-            "nmap": 1800,  # 30 minutes (comprehensive scan)
-            "zap": 2700,  # 45 minutes (increased from 20min - advanced scans run ajax_spider + active_scan, needs more time for comprehensive testing)
-            "nuclei": 1800,  # 30 minutes (comprehensive template scanning - increased from 15min)
-            "dalfox": 2400,  # 40 minutes (thorough XSS testing - increased from 20min)
-            "sqlmap": 2400,  # 40 minutes (thorough SQLi testing - increased from 20min)
+            "httpx": 120,  # 2 minutes
+            "sslscan": 600,  # 10 minutes
+            "nmap": 9000,  # 2.5 hours
+            "zap": 7200,  # 2 hours
+            "nuclei": 9000,  # 2.5 hours
+            "dalfox": 9000,  # 2.5 hours
+            "sqlmap": 9000,  # 2.5 hours
         }
     }
 }

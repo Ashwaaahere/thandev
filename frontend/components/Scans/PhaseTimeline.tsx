@@ -98,15 +98,15 @@ export default function PhaseTimeline({
   const currentPhaseId = React.useMemo(() => {
     // If scan is completed, show finalize
     if (scanStatus === 'completed') return 'finalize';
-    
+
     // If no tool states yet, we're in prepare phase
     if (toolStates.length === 0) return 'prepare';
-    
+
     // Check each phase in priority order to find the active one
     // A phase is active if it has running/queued/starting tools OR if it's the latest phase with any activity
     // IMPORTANT: Check enumerate BEFORE scan to ensure enumeration phase is shown during enumeration
     const phaseOrder = ['finalize', 'correlate_score', 'scan', 'enumerate', 'prepare'];
-    
+
     // First pass: Find phases with actively running tools (prioritize enumerate over scan)
     // Check enumerate first if it has any tools
     const enumerateTools = toolStatesByPhase['enumerate'] || [];
@@ -116,7 +116,7 @@ export default function PhaseTimeline({
     if (hasRunningEnumerate) {
       return 'enumerate';
     }
-    
+
     // Then check other phases
     for (const phase of phaseOrder) {
       if (phase === 'enumerate') continue; // Already checked
@@ -128,24 +128,24 @@ export default function PhaseTimeline({
         return phase;
       }
     }
-    
+
     // Second pass: Find the latest phase with any completed tools
     // But if enumerate has any tools (even completed), show it if scan hasn't started yet
     const scanTools = toolStatesByPhase['scan'] || [];
     const hasScanActivity = scanTools.length > 0;
     const enumerateHasActivity = enumerateTools.length > 0;
-    
+
     if (enumerateHasActivity && !hasScanActivity) {
       // Enumeration has activity but scan hasn't started - show enumerate
       return 'enumerate';
     }
-    
+
     for (const phase of phaseOrder) {
       if (toolStatesByPhase[phase]?.length > 0) {
         return phase;
       }
     }
-    
+
     return 'prepare';
   }, [toolStates, toolStatesByPhase, scanStatus]);
 
@@ -153,9 +153,9 @@ export default function PhaseTimeline({
   const getPhaseStatus = (phaseId: string): 'pending' | 'active' | 'completed' => {
     const currentPhase = PHASES.find(p => p.id === currentPhaseId);
     const thisPhase = PHASES.find(p => p.id === phaseId);
-    
+
     if (!currentPhase || !thisPhase) return 'pending';
-    
+
     if (thisPhase.order < currentPhase.order) return 'completed';
     if (thisPhase.order === currentPhase.order) return 'active';
     return 'pending';
@@ -200,7 +200,8 @@ export default function PhaseTimeline({
       <div className="space-y-4">
         {PHASES.map((phase, idx) => {
           const phaseStatus = getPhaseStatus(phase.id);
-          const phaseToolStates = toolStatesByPhase[phase.id] || [];
+          // Filter out the "enumeration" pseudo-tool from the UI card list
+          const phaseToolStates = (toolStatesByPhase[phase.id] || []).filter(ts => ts.tool !== 'enumeration');
           const isActive = phaseStatus === 'active';
           const isCompleted = phaseStatus === 'completed';
 
@@ -211,21 +212,19 @@ export default function PhaseTimeline({
                 {/* Phase Indicator */}
                 <div className="flex flex-col items-center">
                   <div
-                    className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold text-sm ${
-                      isCompleted
+                    className={`w-8 h-8 rounded-full border-2 flex items-center justify-center font-semibold text-sm ${isCompleted
                         ? 'border-emerald-500 bg-emerald-500/20 text-emerald-400'
                         : isActive
-                        ? 'border-blue-500 bg-blue-500/20 text-blue-400 animate-pulse'
-                        : 'border-slate-600 bg-slate-800/40 text-slate-500'
-                    }`}
+                          ? 'border-blue-500 bg-blue-500/20 text-blue-400 animate-pulse'
+                          : 'border-slate-600 bg-slate-800/40 text-slate-500'
+                      }`}
                   >
                     {isCompleted ? '✓' : phase.order}
                   </div>
                   {idx < PHASES.length - 1 && (
                     <div
-                      className={`w-0.5 h-12 mt-2 ${
-                        isCompleted ? 'bg-emerald-500/50' : 'bg-slate-700'
-                      }`}
+                      className={`w-0.5 h-12 mt-2 ${isCompleted ? 'bg-emerald-500/50' : 'bg-slate-700'
+                        }`}
                     />
                   )}
                 </div>
@@ -234,9 +233,8 @@ export default function PhaseTimeline({
                 <div className="flex-1 -mt-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
                     <h3
-                      className={`font-semibold ${
-                        isActive ? 'text-blue-400' : isCompleted ? 'text-emerald-400' : 'text-slate-400'
-                      }`}
+                      className={`font-semibold ${isActive ? 'text-blue-400' : isCompleted ? 'text-emerald-400' : 'text-slate-400'
+                        }`}
                     >
                       {phase.label}
                     </h3>

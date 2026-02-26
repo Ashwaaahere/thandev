@@ -109,7 +109,7 @@ services:
 
   thandev-runner:
     build: ./services/thandev-runner
-    mem_limit: 2g
+    mem_limit: 4g
     cpus: "2.0"
     env_file:
       - .env.fly.local

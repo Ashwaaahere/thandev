@@ -293,11 +293,12 @@ async def process_step_request(message: Dict[str, Any]) -> None:
                         if scan_job_id:
                             await emit_scan_event(scan_id=scan_job_id, phase=phase, tool=tool, stage=stage, message=message, progress=progress, meta=meta)
 
-                    # Add overall timeout for enumeration (15 minutes)
-                    logger.info(f"[ENUM] Running enumeration with 15 minute timeout for scan {scan_job_id}")
+                    # Add overall timeout for enumeration (45 minutes)
+                    # Increased from 15 min to accommodate ffuf, liveness checks, and soft-404 detection
+                    logger.info(f"[ENUM] Running enumeration with 45 minute timeout for scan {scan_job_id}")
                     inventory = await asyncio.wait_for(
                         run_enumeration(target_url=target_ref, scan_level=scan_level, emit_event_callback=enum_cb),
-                        timeout=900.0  # 15 minutes
+                        timeout=2700.0  # 45 minutes
                     )
 
                     # Upload inventory

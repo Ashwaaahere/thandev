@@ -25,6 +25,7 @@ from app.api import runner_ingest
 from app.api.runner_ingest import callback_router
 from app.api import integrations
 from app.api import cve
+from app.api import code_scans
 from app.api import reference
 from app.api import websocket
 
@@ -531,6 +532,7 @@ app.include_router(domain_verifications.router, prefix=settings.API_V1_PREFIX)
 app.include_router(stats.router, prefix=settings.API_V1_PREFIX)
 app.include_router(integrations.router, prefix=settings.API_V1_PREFIX)
 app.include_router(cve.router, prefix=settings.API_V1_PREFIX)
+app.include_router(code_scans.router, prefix=settings.API_V1_PREFIX)
 # Runner service endpoints - moved from /api/internal to /api/runner to avoid Fly.io proxy blocking
 # Still requires Bearer token authentication via require_runner_service_auth
 app.include_router(runner_ingest.router, prefix="/api/runner")

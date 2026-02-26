@@ -1202,7 +1202,7 @@ export default function SecurityScannerClient() {
                         color: selectedMode === 'existing' ? 'white' : 'var(--muted)'
                       }}
                     >
-                      Complete scan
+                      Black box testing
                     </button>
                     <button
                       type="button"

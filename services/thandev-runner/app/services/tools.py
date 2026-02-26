@@ -782,15 +782,29 @@ class ToolExecutor:
         if inventory and isinstance(inventory, dict):
             # Extract URLs from inventory
             discovery = inventory.get("discovery", {})
-            merged_urls = discovery.get("merged", {}).get("all_urls", [])
+            merged = discovery.get("merged", {})
             
-            if merged_urls:
-                all_urls = list(set(merged_urls))  # Deduplicate
+            # Prefer typed tool targets (smart routing) over raw all_urls
+            tool_targets = merged.get("tool_targets", {})
+            nuclei_targets = tool_targets.get("nuclei", [])
+            
+            if nuclei_targets:
+                all_urls = list(set(nuclei_targets))  # Deduplicate
                 logger.info(
-                    f"[NUCLEI] Will scan {len(all_urls)} URLs from asset inventory for scan {scan_job_id}"
+                    f"[NUCLEI] Using {len(all_urls)} typed target URLs (hosts + high-value endpoints) "
+                    f"from asset inventory for scan {scan_job_id}"
                 )
             else:
-                logger.info(f"[NUCLEI] Asset inventory found but contains no URLs for scan {scan_job_id}")
+                # Fallback: use raw all_urls
+                merged_urls = merged.get("all_urls", [])
+                if merged_urls:
+                    all_urls = list(set(merged_urls))
+                    logger.info(
+                        f"[NUCLEI] No tool_targets found, using {len(all_urls)} raw URLs "
+                        f"from asset inventory for scan {scan_job_id}"
+                    )
+                else:
+                    logger.info(f"[NUCLEI] Asset inventory found but contains no URLs for scan {scan_job_id}")
         else:
             logger.info(f"[NUCLEI] No asset inventory found for scan {scan_job_id}, will crawl target")
         
@@ -2112,18 +2126,32 @@ class ToolExecutor:
         if inventory and isinstance(inventory, dict):
             discovery = inventory.get("discovery", {})
             merged = discovery.get("merged", {})
-            inventory_param_urls = merged.get("param_urls", [])
             
-            if inventory_param_urls:
+            # Prefer typed tool targets (smart routing) over raw param_urls
+            tool_targets = merged.get("tool_targets", {})
+            dalfox_targets = tool_targets.get("dalfox", [])
+            
+            if dalfox_targets:
+                inventory_param_urls = dalfox_targets
                 logger.info(
-                    f"[DALFOX] scan {scan_job_id}: Found {len(inventory_param_urls)} parameterized URLs "
-                    f"in asset inventory"
+                    f"[DALFOX] scan {scan_job_id}: Using {len(inventory_param_urls)} typed target URLs "
+                    f"(scored parameterized URLs) from asset inventory"
                 )
-                # Add inventory URLs to harvester
+            else:
+                # Fallback: use raw param_urls
+                inventory_param_urls = merged.get("param_urls", [])
+                if inventory_param_urls:
+                    logger.info(
+                        f"[DALFOX] scan {scan_job_id}: No tool_targets found, using {len(inventory_param_urls)} "
+                        f"raw parameterized URLs from asset inventory"
+                    )
+                else:
+                    logger.info(f"[DALFOX] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}")
+            
+            # Add inventory URLs to harvester
+            if inventory_param_urls:
                 for url in inventory_param_urls:
                     harvester.add_manual_url(url)
-            else:
-                logger.info(f"[DALFOX] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}")
         else:
             logger.info(f"[DALFOX] No asset inventory found for scan {scan_job_id}, will harvest from job dir")
         
@@ -2299,7 +2327,7 @@ class ToolExecutor:
             "--format", "json",  # JSON output for parsing
             "--follow-redirects",  # Follow redirects to find XSS
             "--mining-dict",  # Parameter mining from dictionaries
-            "--mining-dom",  # DOM-based parameter mining (lightweight)
+              # DOM-based parameter mining (lightweight)
             # Note: --mining-all doesn't exist in dalfox, removed
             "--only-poc", "g,v",  # Only show findings with proof-of-concept (grep + verified)
             "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",  # Realistic UA to avoid blocking
@@ -2951,14 +2979,29 @@ class ToolExecutor:
         if inventory and isinstance(inventory, dict):
             discovery = inventory.get("discovery", {})
             merged = discovery.get("merged", {})
-            inventory_urls = merged.get("all_urls", [])
+            urls_to_seed = []
             
-            if inventory_urls:
+            # Prefer typed tool targets (smart routing) over raw all_urls
+            tool_targets = merged.get("tool_targets", {})
+            zap_seeds = tool_targets.get("zap_seeds", [])
+            
+            if zap_seeds:
+                urls_to_seed = zap_seeds  # Already capped at 20
                 logger.info(
-                    f"[ZAP] Seeding ZAP with {len(inventory_urls)} URLs from asset inventory for scan {scan_job_id}"
+                    f"[ZAP] Seeding ZAP with {len(urls_to_seed)} typed seed URLs "
+                    f"(auth/admin/api endpoints) from asset inventory for scan {scan_job_id}"
                 )
-                # Limit to first 50 URLs to avoid overwhelming ZAP
+            else:
+                # Fallback: use raw all_urls
+                inventory_urls = merged.get("all_urls", [])
                 urls_to_seed = inventory_urls[:50]
+                if urls_to_seed:
+                    logger.info(
+                        f"[ZAP] No tool_targets found, seeding ZAP with {len(urls_to_seed)} "
+                        f"raw URLs from asset inventory for scan {scan_job_id}"
+                    )
+            
+            if urls_to_seed:
                 seeded_count = 0
                 
                 for url in urls_to_seed:
@@ -3131,7 +3174,7 @@ class ToolExecutor:
                         test_proxy_url = zap_api_url.replace("/JSON", "").replace(":8090", f":{proxy_port}")
                         test_proxy_dict = {"http": test_proxy_url, "https": test_proxy_url}
                         # Test if proxy works
-                        test_response = requests.get("http://testphp.vulnweb.com/", proxies=test_proxy_dict, timeout=3, verify=False)
+                        test_response = requests.get(target_url, proxies=test_proxy_dict, timeout=3, verify=False)
                         working_proxy_port = proxy_port
                         logger.info(f"Found working ZAP proxy on port {proxy_port}")
                         break
@@ -3459,9 +3502,32 @@ class ToolExecutor:
                 else:
                     logger.warning(f"ZAP Active Scan response missing scanId: {active_scan_result}")
             
-            if not active_scan_id:
-                logger.error(f"Failed to start ZAP Active Scan: No scanId in response. Response: {active_scan_response.text}")
-                raise ValueError(f"Failed to start ZAP Active Scan: {active_scan_response.text}")
+            # CRITICAL FIX: If active_scan_id is 0, None, or missing, try to get it from the scans list
+            # ZAP sometimes returns scan ID as 0 or doesn't return it, but the scan is actually running
+            if not active_scan_id or active_scan_id == 0:
+                logger.warning(f"ZAP Active Scan response had invalid scanId ({active_scan_id}), attempting to find running scan from scans list...")
+                try:
+                    await asyncio.sleep(2)  # Give ZAP a moment to register the scan
+                    fallback_scans_response = await asyncio.to_thread(http_session.get, f"{zap_api_url}/JSON/ascan/view/scans/?apikey=", timeout=10)
+                    fallback_scans = fallback_scans_response.json().get("scans", [])
+                    # Find the most recent running scan (not FINISHED)
+                    running_scans = [s for s in fallback_scans if s.get("state") != "FINISHED"]
+                    if running_scans:
+                        # Sort by ID (newest first) and take the first one
+                        running_scans.sort(key=lambda x: int(x.get("id", "0")), reverse=True)
+                        active_scan_id = running_scans[0].get("id")
+                        logger.info(f"Found running ZAP Active Scan from scans list: scanId={active_scan_id}, state={running_scans[0].get('state')}, progress={running_scans[0].get('progress', '0')}%")
+                    elif fallback_scans:
+                        # If no running scans, use the most recent one (might have just finished)
+                        fallback_scans.sort(key=lambda x: int(x.get("id", "0")), reverse=True)
+                        active_scan_id = fallback_scans[0].get("id")
+                        logger.warning(f"No running scans found, using most recent scan: scanId={active_scan_id}")
+                except Exception as fallback_error:
+                    logger.warning(f"Failed to get scan ID from scans list: {fallback_error}")
+            
+            if not active_scan_id or active_scan_id == 0:
+                logger.error(f"Failed to start ZAP Active Scan: No valid scanId in response or scans list. Response: {active_scan_response.text}")
+                raise ValueError(f"Failed to start ZAP Active Scan: No valid scanId in response or scans list")
             
             # Poll active scan status
             logger.info(f"Polling ZAP Active Scan status for scanId: {active_scan_id}, timeout={timeout_seconds}s")
@@ -3595,6 +3661,28 @@ class ToolExecutor:
                             logger.warning(f"ZAP Active Scan finished immediately with 0 requests - scan may not have run properly")
                     else:
                         logger.warning(f"ZAP Active Scan {active_scan_id} not found in scans list")
+                        # CRITICAL FIX: If scan ID is 0 or not found, try to recover the actual scan ID
+                        if active_scan_id == 0 or active_scan_id == "0":
+                            logger.warning(f"Scan ID is 0, attempting to recover actual scan ID from scans list...")
+                            # Find the most recent running scan
+                            running_scans = [s for s in scans_data if s.get("state") != "FINISHED"]
+                            if running_scans:
+                                running_scans.sort(key=lambda x: int(x.get("id", "0")), reverse=True)
+                                recovered_scan_id = running_scans[0].get("id")
+                                logger.info(f"Recovered scan ID: {recovered_scan_id} (was {active_scan_id})")
+                                active_scan_id = recovered_scan_id
+                                current_scan = running_scans[0]
+                                # Update status_percent from the recovered scan
+                                status_percent = int(current_scan.get("progress", "0"))
+                                logger.info(f"Using recovered scan ID {active_scan_id}, progress={status_percent}%")
+                            elif scans_data:
+                                # If no running scans, use most recent finished scan
+                                scans_data.sort(key=lambda x: int(x.get("id", "0")), reverse=True)
+                                recovered_scan_id = scans_data[0].get("id")
+                                logger.warning(f"No running scans found, using most recent scan ID: {recovered_scan_id}")
+                                active_scan_id = recovered_scan_id
+                                current_scan = scans_data[0]
+                                status_percent = int(current_scan.get("progress", "100"))
                 except Exception as scan_detail_error:
                     logger.debug(f"Failed to get scan details: {scan_detail_error}")
                     # Fall back to simple status logging
@@ -3820,11 +3908,8 @@ class ToolExecutor:
                     f"Sample alert domains: {[urlparse(a.get('url', '')).netloc for a in all_alerts[:3]]}. "
                     f"Sample filtered out: {filtered_out[:3]}"
                 )
-                # CRITICAL: If we have alerts but filtered to 0, include at least some alerts to avoid 0 results
-                # This ensures ZAP results are shown even if domain matching is slightly off
-                if len(all_alerts) > 0:
-                    logger.info(f"Including first {min(5, len(all_alerts))} alerts as fallback to avoid 0 results")
-                    alerts = all_alerts[:5]  # Include first 5 alerts as fallback
+                # Don't include alerts from other domains - they would contaminate this project's results
+                logger.info(f"No alerts matched target domain {target_domain}. This is expected if ZAP found no issues for this target.")
         except Exception as e:
             logger.error(f"Failed to retrieve ZAP alerts: {e}", exc_info=True)
             alerts = []
@@ -3974,21 +4059,35 @@ class ToolExecutor:
         if inventory and isinstance(inventory, dict):
             discovery = inventory.get("discovery", {})
             merged = discovery.get("merged", {})
-            inventory_param_urls = merged.get("param_urls", [])
             
-            if inventory_param_urls:
-                # For SQLMap, limit to first 20 URLs to avoid very long scans
-                limited_urls = inventory_param_urls[:20]
+            # Prefer typed tool targets (smart routing) over raw param_urls
+            tool_targets = merged.get("tool_targets", {})
+            sqlmap_targets = tool_targets.get("sqlmap", [])
+            
+            if sqlmap_targets:
+                # tool_targets already scored and capped at 30
+                limited_urls = sqlmap_targets
                 logger.info(
-                    f"[SQLMAP] scan {scan_job_id}: Found {len(inventory_param_urls)} parameterized URLs "
-                    f"in asset inventory, using first {len(limited_urls)}"
+                    f"[SQLMAP] scan {scan_job_id}: Using {len(limited_urls)} typed target URLs "
+                    f"(DB-likelihood scored parameterized URLs) from asset inventory"
                 )
-                # Add inventory URLs to harvester
                 for url in limited_urls:
                     harvester.add_manual_url(url, method="GET")
                 parameterized_urls = limited_urls
             else:
-                logger.warning(f"[SQLMAP] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}. Will fall back to other methods.")
+                # Fallback: use raw param_urls
+                inventory_param_urls = merged.get("param_urls", [])
+                if inventory_param_urls:
+                    limited_urls = inventory_param_urls[:20]
+                    logger.info(
+                        f"[SQLMAP] scan {scan_job_id}: No tool_targets found, using first {len(limited_urls)} "
+                        f"raw parameterized URLs from asset inventory"
+                    )
+                    for url in limited_urls:
+                        harvester.add_manual_url(url, method="GET")
+                    parameterized_urls = limited_urls
+                else:
+                    logger.warning(f"[SQLMAP] Asset inventory found but contains no parameterized URLs for scan {scan_job_id}. Will fall back to other methods.")
         else:
             logger.warning(f"[SQLMAP] No asset inventory found for scan {scan_job_id}. Will proceed with fallback methods (harvesting, crawling, or fallback targets).")
         
@@ -4298,24 +4397,86 @@ class ToolExecutor:
             import time
             exec_start_time = time.time()
 
-            # Use asyncio.to_thread to prevent blocking event loop
-            result = await asyncio.to_thread(
-                subprocess.run,
+            # CRITICAL FIX: Use Popen with manual output reading to capture partial output on timeout
+            # When subprocess.run() times out, it raises TimeoutExpired and we lose all output
+            # With Popen + threads, we can read output as it's generated and keep it even if timeout occurs
+            import threading
+            import queue
+
+            process = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=timeout,
+                bufsize=0  # Unbuffered for immediate reading
             )
 
+            # Queues to collect output from threads
+            stdout_lines = []
+            stderr_lines = []
+
+            def read_stdout():
+                try:
+                    for line in process.stdout:
+                        stdout_lines.append(line)
+                except Exception:
+                    pass
+
+            def read_stderr():
+                try:
+                    for line in process.stderr:
+                        stderr_lines.append(line)
+                except Exception:
+                    pass
+
+            stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+            stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+
+            timed_out = False
+            try:
+                process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                logger.warning(
+                    "sqlmap scan %s timed out after %d seconds (%d minutes). Killing process and capturing partial results...",
+                    scan_job_id, timeout, timeout // 60
+                )
+                process.kill()
+                process.wait(timeout=5)
+
+            # Wait for reader threads to finish
+            stdout_thread.join(timeout=5)
+            stderr_thread.join(timeout=5)
+
+            stdout_text = ''.join(stdout_lines)
+            stderr_text = ''.join(stderr_lines)
+            exit_code = process.returncode
+
             exec_duration = time.time() - exec_start_time
-            stdout_bytes = len(result.stdout.encode("utf-8")) if result.stdout else 0
-            stderr_bytes = len(result.stderr.encode("utf-8")) if result.stderr else 0
-            exit_code = result.returncode
-            
-            logger.info(
-                "sqlmap scan %s completed: exit_code=%s, stdout=%d bytes, stderr=%d bytes, output_dir=%s",
-                scan_job_id, exit_code, stdout_bytes, stderr_bytes, sqlmap_output_dir
-            )
+            stdout_bytes = len(stdout_text.encode("utf-8")) if stdout_text else 0
+            stderr_bytes = len(stderr_text.encode("utf-8")) if stderr_text else 0
+
+            if timed_out:
+                logger.info(
+                    "sqlmap scan %s: captured %d bytes of stdout and %d bytes of stderr before timeout",
+                    scan_job_id, stdout_bytes, stderr_bytes
+                )
+            else:
+                logger.info(
+                    "sqlmap scan %s completed: exit_code=%s, stdout=%d bytes, stderr=%d bytes, output_dir=%s",
+                    scan_job_id, exit_code, stdout_bytes, stderr_bytes, sqlmap_output_dir
+                )
+
+            # Wrap stdout/stderr in a result-like object for downstream compatibility
+            class _Result:
+                pass
+            result = _Result()
+            result.stdout = stdout_text
+            result.stderr = stderr_text
+            result.returncode = exit_code
             
             # Check if output directory has artifacts
             artifacts = list(sqlmap_output_dir.rglob("*")) if sqlmap_output_dir.exists() else []
@@ -4374,6 +4535,40 @@ class ToolExecutor:
             result_files = list(sqlmap_output_dir.glob("*.csv")) + list(sqlmap_output_dir.glob("*.json"))
             if result_files:
                 has_results = True
+
+            # Handle timeout case
+            if timed_out:
+                if has_results or stdout_bytes > 0:
+                    logger.info("sqlmap scan %s timed out but found partial results", scan_job_id)
+                    return {
+                        "tool_name": "sqlmap",
+                        "output": result.stdout,
+                        "exit_code": exit_code,
+                        "error": f"Tool execution timed out after {timeout} seconds, but partial results captured ({stdout_bytes} bytes)",
+                        "command": " ".join(cmd),
+                        "timed_out": True,
+                        "output_dir": str(sqlmap_output_dir),
+                        "success": True,
+                        "execution_time": exec_duration,
+                        "targets_count": len(parameterized_urls),
+                        "meta": {
+                            "harvested_requests": harvester_stats.get("total_requests", 0),
+                            "total_parameters": harvester_stats.get("total_parameters", 0),
+                            "mode_id": mode_id,
+                        },
+                    }
+                else:
+                    return {
+                        "tool_name": "sqlmap",
+                        "output": result.stdout,
+                        "exit_code": exit_code,
+                        "error": f"Tool execution timed out after {timeout} seconds with no results",
+                        "command": " ".join(cmd),
+                        "timed_out": True,
+                        "output_dir": str(sqlmap_output_dir),
+                        "success": False,
+                        "execution_time": exec_duration,
+                    }
             
             if exit_code != 0:
                 if has_results or stdout_bytes > 0:
@@ -4448,47 +4643,6 @@ class ToolExecutor:
                     "mode_id": mode_id,
                 },
             }
-        except subprocess.TimeoutExpired as exc:
-            # Calculate execution time even on timeout
-            exec_duration = time.time() - exec_start_time
-            logger.warning("sqlmap scan %s timed out after %d seconds (%d minutes, actual: %.2fs). Checking for partial results...", 
-                          scan_job_id, timeout, timeout // 60, exec_duration)
-            logger.warning("  Command: %s", " ".join(cmd))
-            
-            # Check for partial results even on timeout
-            result_files = list(sqlmap_output_dir.glob("*.csv")) + list(sqlmap_output_dir.glob("*.json")) + list(sqlmap_output_dir.glob("*.txt"))
-            has_results = len(result_files) > 0
-            
-            # Try to read any output that was captured
-            partial_output = ""
-            if hasattr(exc, 'stdout') and exc.stdout:
-                partial_output = exc.stdout.decode('utf-8', errors='ignore') if isinstance(exc.stdout, bytes) else exc.stdout
-            
-            if has_results:
-                logger.info("sqlmap scan %s timed out but found partial results: %d files", scan_job_id, len(result_files))
-                return {
-                    "tool_name": "sqlmap",
-                    "output": partial_output,
-                    "exit_code": None,  # None indicates timeout
-                    "error": f"Tool execution timed out after {timeout} seconds, but partial results found",
-                    "command": " ".join(cmd),
-                    "timed_out": True,
-                    "output_dir": str(sqlmap_output_dir),
-                    "success": True,  # Mark as success if we have results
-                    "execution_time": exec_duration,  # Actual time before timeout
-                }
-            else:
-                return {
-                    "tool_name": "sqlmap",
-                    "output": partial_output,
-                    "exit_code": None,  # None indicates timeout
-                    "error": f"Tool execution timed out after {timeout} seconds ({timeout // 60} minutes)",
-                    "command": " ".join(cmd),
-                    "timed_out": True,
-                    "output_dir": str(sqlmap_output_dir),
-                    "execution_time": exec_duration,  # Actual time before timeout
-                    "success": False,  # Timeout without results is a failure
-                }
         except Exception as e:
             logger.error(f"sqlmap execution error for scan {scan_job_id}: {e}", exc_info=True)
             logger.error(f"  Command: {' '.join(cmd)}")

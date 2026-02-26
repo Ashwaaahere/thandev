@@ -93,6 +93,11 @@ class Settings(BaseSettings):
     BRAIN_SERVICE_TIMEOUT: int = 60  # Timeout in seconds for brain service requests (increased for slow RAG queries)
     BRAIN_HEALTH_PATH: str = "/health"  # Health endpoint path for brain service (env override supported)
     
+    # Code Scan OIDC (CI ingestion)
+    # dev: accept oidc_token == "dev-local" for any provider, mint ingest token without JWT verification
+    # prod: verify OIDC JWT with provider JWKS + issuer + audience
+    CODE_SCAN_OIDC_MODE: str = "prod"
+
     # Runner Service Authentication
     RUNNER_API_TOKEN: Optional[str] = None  # Bearer token for runner service authentication (required in production)
     # Internal endpoint security (comma-separated IPs/CIDR blocks, or "private" for private networks only)

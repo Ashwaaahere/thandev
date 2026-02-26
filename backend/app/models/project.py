@@ -35,6 +35,8 @@ class Project(Base):
     # Relationships
     scan_jobs = relationship("ScanJob", back_populates="project", cascade="all, delete-orphan")
     repo_connections = relationship("RepoConnection", back_populates="project", cascade="all, delete-orphan")
+    linked_repos = relationship("LinkedRepo", back_populates="project", cascade="all, delete-orphan")
+    code_scans = relationship("CodeScan", back_populates="project", cascade="all, delete-orphan")
     project_urls = relationship("ProjectUrl", back_populates="project", cascade="all, delete-orphan")
     # Performance scans relationship - use noload to avoid querying if table doesn't exist
     # The table name mismatch (performance_scan_jobs vs performance_scans) causes issues

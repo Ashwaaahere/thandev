@@ -20,6 +20,7 @@ from app.utils.finding_normalizer import (
     normalize_and_group_finding,
 )
 from app.models.finding import Severity
+from app.utils.dalfox_instance_meta import parse_dalfox_evidence_snippet
 
 
 class TestURLNormalization:
@@ -579,6 +580,115 @@ class TestNormalizeAndGroupFinding:
         assert zap_rule_family(None, "CSRF Token Missing") == "csrf"
 
 
+class TestDalfoxSinkIdentity:
+    def _base(self, **overrides):
+        finding = {
+            "tool": "dalfox",
+            "title": "Found XSS",
+            "severity": "medium",
+            "url": "https://example.com/search?uid=%3Csvg%2Fonload%3Dalert(1)%3E",
+            "raw_data": "{}",
+            "message": "Reflected XSS",
+            "payload": "<svg/onload=alert(1)>",
+        }
+        finding.update(overrides)
+        return finding
+
+    def test_dalfox_fingerprint_invariant_to_payload_title_message(self):
+        f1 = self._base(
+            title="payload <svg/onload=alert(1)>",
+            message="Reflected XSS",
+            raw_data='{"payload":"<svg/onload=alert(1)>","param":"uid"}',
+        )
+        f2 = self._base(
+            title="totally different title with payload <img src=x onerror=alert(2)>",
+            message="Triggered XSS in another payload",
+            raw_data='{"payload":"<img src=x onerror=alert(2)>","param":"uid"}',
+            payload="<img src=x onerror=alert(2)>",
+        )
+
+        c1, _ = normalize_and_group_finding(f1, "scan-1", "proj-1")
+        c2, _ = normalize_and_group_finding(f2, "scan-1", "proj-1")
+        assert c1["finding_key"] == c2["finding_key"]
+
+    def test_dalfox_fingerprint_changes_with_identity_components(self):
+        base, _ = normalize_and_group_finding(
+            self._base(raw_data='{"param":"uid"}'),
+            "scan-1",
+            "proj-1",
+        )
+        changed_path, _ = normalize_and_group_finding(
+            self._base(url="https://example.com/profile?uid=%3Cscript%3E1%3C/script%3E", raw_data='{"param":"uid"}'),
+            "scan-1",
+            "proj-1",
+        )
+        changed_param, _ = normalize_and_group_finding(
+            self._base(url="https://example.com/search?q=%3Cscript%3E1%3C/script%3E", raw_data='{"param":"q"}'),
+            "scan-1",
+            "proj-1",
+        )
+        changed_kind, _ = normalize_and_group_finding(
+            self._base(message="Found DOM Object", raw_data='{"param":"uid","message":"Found DOM Object"}'),
+            "scan-1",
+            "proj-1",
+        )
+        changed_vuln, _ = normalize_and_group_finding(
+            self._base(message="Found Open Redirect", raw_data='{"param":"next","message":"Found Open Redirect","cwe":"CWE-601"}'),
+            "scan-1",
+            "proj-1",
+        )
+        changed_host_port, _ = normalize_and_group_finding(
+            self._base(url="https://example.com:8080/search?uid=%3Cscript%3E1%3C/script%3E", raw_data='{"param":"uid"}'),
+            "scan-1",
+            "proj-1",
+        )
+
+        assert base["finding_key"] != changed_path["finding_key"]
+        assert base["finding_key"] != changed_param["finding_key"]
+        assert base["finding_key"] != changed_kind["finding_key"]
+        assert base["finding_key"] != changed_vuln["finding_key"]
+        assert base["finding_key"] != changed_host_port["finding_key"]
+
+    def test_dalfox_title_payload_free_and_param_inferred(self):
+        payload = "<svg/onload=alert(1)>"
+        canonical, _ = normalize_and_group_finding(
+            self._base(
+                title=f"Reflected XSS with payload {payload}",
+                url="https://example.com/search?=&uid=%3Csvg%2Fonload%3Dalert(1)%3E",
+                raw_data='{"payload":"<svg/onload=alert(1)>"}',
+                parameter=None,
+            ),
+            "scan-1",
+            "proj-1",
+        )
+        assert payload not in canonical["title"]
+        assert "uid" in canonical["title"]
+
+    def test_dalfox_instance_severity_mapping(self):
+        triggered_canonical, triggered_instance = normalize_and_group_finding(
+            self._base(
+                message="Triggered XSS in response",
+                raw_data='{"param":"uid","message":"Triggered XSS in response","type":"V"}',
+            ),
+            "scan-1",
+            "proj-1",
+        )
+        dom_canonical, dom_instance = normalize_and_group_finding(
+            self._base(
+                message="Found DOM Object",
+                raw_data='{"param":"uid","message":"Found DOM Object"}',
+            ),
+            "scan-1",
+            "proj-1",
+        )
+
+        triggered_meta = parse_dalfox_evidence_snippet(triggered_instance["evidence_snippet"])
+        dom_meta = parse_dalfox_evidence_snippet(dom_instance["evidence_snippet"])
+        assert triggered_meta["instance_severity"] == "high"
+        assert dom_meta["instance_severity"] == "medium"
+        assert triggered_canonical["severity"] == Severity.HIGH
+        assert dom_canonical["severity"] == Severity.MEDIUM
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

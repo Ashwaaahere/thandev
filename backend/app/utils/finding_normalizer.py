@@ -14,11 +14,12 @@ import re
 import json
 import logging
 from typing import Dict, Any, Optional, List, Tuple
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse, urlunparse, parse_qs, parse_qsl, unquote
 
 from app.models.finding import Severity
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata
 from app.utils.noise_rules_engine import apply_noise_rules
+from app.utils.dalfox_instance_meta import build_dalfox_evidence_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,508 @@ def normalize_url(url: str, strip_query_for_static: bool = True) -> str:
         logger.warning(f"Failed to normalize URL '{url}': {e}")
         # Fallback: lowercase and strip fragment
         return url.split('#')[0].lower()
+
+
+def _extract_param_value_from_url(url: str, param: str) -> Optional[str]:
+    """
+    Helper to extract a single parameter value from a URL query string.
+    
+    Returns the first value for the parameter, or None if not present.
+    """
+    if not url or not param:
+        return None
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        values = qs.get(param)
+        if not values:
+            return None
+        return values[0]
+    except Exception:
+        return None
+
+
+def normalize_redirect_target(value: str) -> str:
+    """
+    Normalize redirect target for grouping Dalfox open redirect payloads.
+    
+    Rules:
+    - URL decode once
+    - Trim whitespace
+    - If starts with '//' -> prefix 'https:'
+    - If starts with 'http://' -> convert to 'https://' (for grouping only)
+    - Remove trailing slashes for grouping
+    - Lowercase hostname
+    - Strip common 'www.' prefix from hostname
+    
+    The original raw payload should be preserved separately (e.g., in evidence),
+    this function is ONLY for grouping equivalence classes.
+    """
+    if value is None:
+        return ""
+    
+    try:
+        # Decode once and trim
+        decoded = unquote(str(value))
+        decoded = decoded.strip()
+        if not decoded:
+            return ""
+        
+        # Normalize scheme-less URLs
+        if decoded.startswith("//"):
+            decoded = "https:" + decoded
+        
+        # Normalize http -> https for grouping
+        if decoded.lower().startswith("http://"):
+            decoded = "https://" + decoded[7:]
+        
+        parsed = urlparse(decoded)
+        
+        # If still no scheme, treat as https host
+        if not parsed.scheme and parsed.path and not parsed.netloc:
+            decoded = "https://" + decoded.lstrip("/")
+            parsed = urlparse(decoded)
+        
+        host = parsed.hostname.lower() if parsed.hostname else ""
+        if host.startswith("www."):
+            host = host[4:]
+        
+        path = (parsed.path or "").rstrip("/")
+        if not path:
+            path = "/"
+        
+        # Rebuild normalized target (scheme is always https for grouping)
+        normalized = f"https://{host}{path}"
+        return normalized
+    except Exception:
+        # Fallback: best-effort canonicalization
+        return str(value).strip().lower().rstrip("/")
+
+
+def _normalize_path_for_identity(path: str) -> str:
+    clean_path = (path or "").strip() or "/"
+    if not clean_path.startswith("/"):
+        clean_path = f"/{clean_path}"
+    return clean_path.rstrip("/") or "/"
+
+
+def _extract_path_via_regex(url: str) -> str:
+    if not url:
+        return "/"
+    candidate = str(url).strip()
+    patterns = [
+        r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+(/[^?#]*)",
+        r"^//[^/]+(/[^?#]*)",
+        r"^[^/?#]+(/[^?#]*)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, candidate)
+        if match:
+            return _normalize_path_for_identity(match.group(1))
+    return "/"
+
+
+def _is_default_port(scheme: str, port: Optional[int]) -> bool:
+    if port is None:
+        return True
+    scheme_l = (scheme or "").lower()
+    return (scheme_l == "http" and port == 80) or (scheme_l == "https" and port == 443)
+
+
+def _extract_host_path_for_dalfox(url: str) -> Tuple[str, str]:
+    """
+    Return (host_key, path) where host_key keeps non-default port.
+    """
+    candidate = (url or "").strip()
+    if not candidate:
+        return "unknown-host", "/"
+
+    parsed = None
+    candidates = [candidate]
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+        candidates.extend([f"https://{candidate}", f"//{candidate}"])
+
+    for value in candidates:
+        try:
+            test = urlparse(value)
+            if test.hostname:
+                parsed = test
+                break
+        except Exception:
+            continue
+
+    if not parsed or not parsed.hostname:
+        host_match = re.search(r"^(?:[a-zA-Z][a-zA-Z0-9+.-]*://)?([^/?#]+)", candidate)
+        host_part = host_match.group(1).lower() if host_match else "unknown-host"
+        path_part = _extract_path_via_regex(candidate)
+        return host_part, path_part
+
+    hostname = parsed.hostname.lower()
+    port = parsed.port
+    scheme = (parsed.scheme or "").lower()
+    if port and not _is_default_port(scheme, port):
+        host_key = f"{hostname}:{port}"
+    else:
+        host_key = hostname
+
+    path = _normalize_path_for_identity(parsed.path or "/")
+    return host_key or "unknown-host", path
+
+
+def _normalize_dalfox_instance_url(url: str) -> str:
+    """
+    Normalize DALFOX instance URL while preserving query (for URL-level dedup).
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+
+    try:
+        parsed = urlparse(raw)
+        if not parsed.netloc and not parsed.scheme:
+            parsed = urlparse(f"https://{raw}")
+
+        scheme = (parsed.scheme or "https").lower()
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return raw
+
+        netloc = host
+        if parsed.port and not _is_default_port(scheme, parsed.port):
+            netloc = f"{host}:{parsed.port}"
+
+        path = _normalize_path_for_identity(parsed.path or "/")
+        return urlunparse((scheme, netloc, path, "", parsed.query or "", ""))
+    except Exception:
+        return raw
+
+
+def _decode_once(value: Any) -> str:
+    if value is None:
+        return ""
+    return unquote(str(value))
+
+
+def _payload_preview(payload_raw: Any, payload_decoded: str) -> str:
+    value = payload_decoded or (str(payload_raw) if payload_raw is not None else "")
+    value = value.strip()
+    if not value:
+        return ""
+    return value[:140] + ("..." if len(value) > 140 else "")
+
+
+def _extract_dalfox_marker_tokens(message: str, payload_decoded: str) -> List[str]:
+    tokens = set()
+    for src in [message or "", payload_decoded or ""]:
+        if not src:
+            continue
+        marker_match = re.findall(r"marker\s*[:=]\s*([A-Za-z0-9_-]{4,})", src, re.IGNORECASE)
+        for token in marker_match:
+            tokens.add(token.lower())
+        for token in re.findall(r"[A-Za-z0-9_-]{8,}", src):
+            has_alpha = any(ch.isalpha() for ch in token)
+            has_digit = any(ch.isdigit() for ch in token)
+            if has_alpha and has_digit:
+                tokens.add(token.lower())
+    return list(tokens)
+
+
+def _looks_like_xss_value(value: str) -> bool:
+    if not value:
+        return False
+    decoded = _decode_once(value)
+    if len(decoded) < 6:
+        return False
+    if not any(ch in decoded for ch in ['<', '>', '"', "'", '(', ')']):
+        return False
+    return len(set(decoded)) >= 4
+
+
+def _infer_dalfox_param(
+    provided_param: Optional[str],
+    full_url: str,
+    payload_raw: Any,
+    payload_decoded: str,
+    message: str,
+) -> str:
+    if provided_param and str(provided_param).strip():
+        return str(provided_param).strip().lower()
+
+    if not full_url:
+        return "unknown"
+
+    try:
+        parsed = urlparse(full_url)
+        query = parsed.query or ""
+        if not query and parsed.path and "?" in parsed.path:
+            query = parsed.path.split("?", 1)[1]
+        pairs = parse_qsl(query, keep_blank_values=True)
+    except Exception:
+        pairs = []
+
+    if not pairs:
+        return "unknown"
+
+    payload_raw_str = str(payload_raw) if payload_raw is not None else ""
+    payload_decoded_l = (payload_decoded or "").lower()
+    marker_tokens = _extract_dalfox_marker_tokens(message or "", payload_decoded or "")
+    message_l = (message or "").lower()
+
+    best_param = None
+    best_score = -1
+
+    for name, value in pairs:
+        if not name:
+            continue
+        val_raw = value or ""
+        val_decoded = _decode_once(val_raw)
+        val_l = val_decoded.lower()
+        score = 0
+
+        if marker_tokens and any(token in val_l for token in marker_tokens):
+            score += 20
+        if payload_decoded_l and payload_decoded_l in val_l:
+            score += 12
+        if payload_raw_str and payload_raw_str in val_raw:
+            score += 10
+        if _looks_like_xss_value(val_decoded):
+            score += 6
+        if f"parameter '{name.lower()}'" in message_l or f"param {name.lower()}" in message_l:
+            score += 4
+
+        if score > best_score:
+            best_score = score
+            best_param = name
+
+    if best_param and best_score > 0:
+        return best_param.strip().lower()
+    return "unknown"
+
+
+def _classify_dalfox_finding(
+    finding_data: Dict[str, Any],
+    raw_data: Dict[str, Any],
+) -> Tuple[str, str, str]:
+    message = str(
+        finding_data.get("message")
+        or raw_data.get("message")
+        or raw_data.get("message_str")
+        or finding_data.get("description")
+        or ""
+    )
+    msg_l = message.lower()
+
+    cwe = str(
+        finding_data.get("cwe_id")
+        or finding_data.get("cwe")
+        or raw_data.get("cwe")
+        or ""
+    ).lower()
+
+    vuln_type_hint = str(finding_data.get("vuln_type") or "").lower()
+    if "open_redirect" in vuln_type_hint or "found open redirect" in msg_l or "cwe-601" in cwe:
+        vuln_type = "open_redirect"
+    else:
+        vuln_type = "xss"
+
+    raw_type = str(raw_data.get("type") or finding_data.get("type") or "").lower()
+
+    if "dom" in msg_l or "found dom object" in msg_l or "dom-object" in msg_l:
+        kind = "dom"
+    else:
+        kind = "reflected"
+
+    marker = "reflected"
+    if "triggered" in msg_l or raw_type in {"v", "verified", "triggered"}:
+        marker = "triggered"
+    elif kind == "dom":
+        marker = "dom-object"
+
+    return vuln_type, kind, marker
+
+
+def _dalfox_instance_severity(
+    vuln_type: str,
+    marker: str,
+    finding_data: Dict[str, Any],
+    raw_data: Dict[str, Any],
+) -> Severity:
+    if vuln_type == "open_redirect":
+        return Severity.LOW
+
+    message = str(
+        finding_data.get("message")
+        or raw_data.get("message")
+        or raw_data.get("message_str")
+        or finding_data.get("description")
+        or ""
+    ).lower()
+    raw_type = str(raw_data.get("type") or finding_data.get("type") or "").lower()
+    is_stored = "stored" in message or raw_type == "stored"
+    is_verified = "verified" in message or raw_type in {"v", "verified"}
+    is_triggered = marker == "triggered" or "triggered" in message
+
+    if is_triggered or is_stored or is_verified:
+        return Severity.HIGH
+    return Severity.MEDIUM
+
+
+def _normalize_and_group_dalfox_finding(
+    finding_data: Dict[str, Any],
+    raw_data: Dict[str, Any],
+    scan_id: str,
+    project_id: str,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    url = (
+        finding_data.get("url")
+        or raw_data.get("data")
+        or raw_data.get("url")
+        or raw_data.get("raw")
+        or raw_data.get("target")
+        or ""
+    )
+    normalized_instance_url = _normalize_dalfox_instance_url(str(url))
+    host_key, path = _extract_host_path_for_dalfox(str(url or normalized_instance_url))
+
+    payload_raw = finding_data.get("payload")
+    if payload_raw is None:
+        payload_raw = raw_data.get("payload")
+    payload_decoded = _decode_once(payload_raw)
+
+    message = str(
+        finding_data.get("message")
+        or raw_data.get("message")
+        or raw_data.get("message_str")
+        or finding_data.get("description")
+        or finding_data.get("evidence")
+        or raw_data.get("evidence")
+        or ""
+    )
+
+    vuln_type, kind, marker = _classify_dalfox_finding(finding_data, raw_data)
+    param = _infer_dalfox_param(
+        provided_param=finding_data.get("parameter") or raw_data.get("param") or raw_data.get("parameter"),
+        full_url=str(url),
+        payload_raw=payload_raw,
+        payload_decoded=payload_decoded,
+        message=message,
+    )
+
+    if vuln_type == "open_redirect":
+        title = f"Open Redirect via parameter '{param}' on {path}"
+        canonical_description = (
+            f"Dalfox reported an open redirect sink on {path} via parameter '{param}'. "
+            "Payload-level evidence is stored on individual finding instances."
+        )
+    elif kind == "dom":
+        title = f"DOM XSS via parameter '{param}' on {path}"
+        canonical_description = (
+            f"Dalfox reported a DOM XSS sink on {path} via parameter '{param}'. "
+            "Payload-level evidence is stored on individual finding instances."
+        )
+    else:
+        title = f"Reflected XSS via parameter '{param}' on {path}"
+        canonical_description = (
+            f"Dalfox reported a reflected XSS sink on {path} via parameter '{param}'. "
+            "Payload-level evidence is stored on individual finding instances."
+        )
+
+    key_material = f"dalfox|{vuln_type}|{kind}|{host_key}|{path}|{param}"
+    finding_key = hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+    severity = _dalfox_instance_severity(vuln_type, marker, finding_data, raw_data)
+
+    cwe = finding_data.get("cwe_id") or raw_data.get("cwe")
+    raw_type = str(raw_data.get("type") or finding_data.get("type") or "").lower()
+    is_static = is_static_asset_path(path)
+    method = (
+        finding_data.get("http_method")
+        or finding_data.get("method")
+        or raw_data.get("method")
+        or raw_data.get("http_method")
+        or "GET"
+    )
+    method_upper = str(method).upper().strip() if method else "GET"
+    if method_upper not in ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]:
+        method_upper = "GET"
+
+    preview = _payload_preview(payload_raw, payload_decoded)
+    if marker == "triggered":
+        snippet_prefix = "Triggered"
+    elif marker == "dom-object":
+        snippet_prefix = "DOM object"
+    else:
+        snippet_prefix = "Reflected"
+    if vuln_type == "open_redirect":
+        snippet_prefix = "Open redirect"
+    display_snippet = f"{snippet_prefix}: {preview}" if preview else snippet_prefix
+    evidence_snippet = build_dalfox_evidence_snippet(
+        display_snippet=display_snippet,
+        meta={
+            "payload_raw": None if payload_raw is None else str(payload_raw),
+            "payload_decoded": payload_decoded or None,
+            "message": message or None,
+            "marker": marker,
+            "instance_severity": severity.value,
+        },
+    )
+
+    canonical_raw = {
+        "tool": "dalfox",
+        "host_key": host_key,
+        "path": path,
+        "param": param,
+        "vuln_type": vuln_type,
+        "categories": [vuln_type],
+        "kind": kind,
+        "marker": marker,
+        "cwe": cwe,
+        "url": (normalized_instance_url.split("?", 1)[0] if normalized_instance_url else None),
+        "finding_key_material": key_material,
+    }
+
+    canonical = {
+        "finding_key": finding_key,
+        "tool": finding_data.get("tool") or finding_data.get("tool_name") or "dalfox",
+        "title": title,
+        "description": canonical_description,
+        "severity": severity,
+        "rule_family": "vuln",
+        "plugin_id": finding_data.get("plugin_id"),
+        "rule_id": finding_data.get("rule_id") or finding_data.get("template_id"),
+        "template_id": finding_data.get("template_id"),
+        "cwe_id": cwe,
+        "cve_id": finding_data.get("cve_id"),
+        "cvss_score": finding_data.get("cvss_score"),
+        "zap_riskcode": None,
+        "zap_confidence": None,
+        "wasc_id": None,
+        "alert_ref": None,
+        "vuln_type": vuln_type,
+        "categories": finding_data.get("categories", []) or [vuln_type],
+        "remediation_summary": finding_data.get("remediation_summary"),
+        "remediation_steps": finding_data.get("remediation_steps"),
+        "evidence": None,
+        "parameter": param,
+        "raw_data": json.dumps(canonical_raw, default=str),
+        "scan_job_id": scan_id,
+        "project_id": project_id,
+    }
+
+    instance = {
+        "url": normalized_instance_url or str(url),
+        "path": path,
+        "http_method": method_upper,
+        "parameter": param,
+        "evidence_snippet": evidence_snippet,
+        "is_static_asset": is_static,
+        "marker": marker,
+        "payload_raw": None if payload_raw is None else str(payload_raw),
+        "payload_decoded": payload_decoded or None,
+        "message": message or None,
+        "instance_severity": severity.value,
+        "raw_type": raw_type or None,
+    }
+    return canonical, instance
 
 
 def is_static_asset_path(path: str) -> bool:
@@ -721,6 +1224,15 @@ def normalize_and_group_finding(
     plugin_id = finding_data.get("plugin_id") or raw_data.get("pluginId")
     rule_id = finding_data.get("rule_id") or finding_data.get("template_id")
     title = finding_data.get("title") or finding_data.get("name") or "Security Finding"
+
+    # DALFOX has dedicated sink-identity normalization and fingerprinting rules.
+    if tool_lower == "dalfox":
+        return _normalize_and_group_dalfox_finding(
+            finding_data=finding_data,
+            raw_data=raw_data,
+            scan_id=scan_id,
+            project_id=project_id,
+        )
     
     # For nuclei: extract URL from raw_data if finding_data.url is missing
     # Nuclei parser stores the URL in raw_data.matched-at or raw_data.host
@@ -794,6 +1306,19 @@ def normalize_and_group_finding(
         # Generic tools: group by template_id/rule_id at host level
         grouping_scope = "host"
     
+    # Determine if this is a Dalfox open redirect finding (special grouping rules)
+    vuln_type_lower = (finding_data.get("vuln_type") or "").lower()
+    title_lower = (title or "").lower()
+    cwe_lower = str(finding_data.get("cwe_id") or "").lower()
+    is_dalfox_open_redirect = (
+        tool_lower == "dalfox"
+        and (
+            "open_redirect" in vuln_type_lower
+            or "open redirect" in title_lower
+            or "cwe-601" in cwe_lower
+        )
+    )
+    
     # Compute evidence signature
     # For nuclei with host-level grouping, use a simplified signature that only
     # includes template_id and title. This prevents URL-specific evidence (headers,
@@ -803,6 +1328,32 @@ def normalize_and_group_finding(
         sig_parts = [f"title:{title}"]
         if rule_id:
             sig_parts.append(f"rule:{rule_id}")
+        evidence_sig = "|".join(sig_parts)
+    elif is_dalfox_open_redirect:
+        # For Dalfox open redirect, deliberately exclude payload-specific details
+        # from the evidence signature so that multiple payload variants on the
+        # same sink+parameter collapse into a single canonical finding.
+        sig_parts = [
+            f"title:{title}",
+            "tool:dalfox",
+            "vuln:open_redirect",
+        ]
+        if parameter:
+            sig_parts.append(f"param:{parameter.lower().strip()}")
+        evidence_sig = "|".join(sig_parts)
+    elif tool_lower == "dalfox":
+        # For ALL Dalfox findings (XSS, etc.), use a simplified signature that
+        # excludes payload-specific details.  Multiple XSS payloads succeeding
+        # on the same endpoint+parameter should collapse into one finding.
+        sig_parts = [
+            f"title:{title}",
+            "tool:dalfox",
+        ]
+        vuln_type_str = finding_data.get("vuln_type") or ""
+        if vuln_type_str:
+            sig_parts.append(f"vuln:{vuln_type_str.lower().strip()}")
+        if parameter:
+            sig_parts.append(f"param:{parameter.lower().strip()}")
         evidence_sig = "|".join(sig_parts)
     else:
         evidence_sig = compute_evidence_signature(finding_data, raw_data)
@@ -827,7 +1378,12 @@ def normalize_and_group_finding(
                         form_action_path = form_action if form_action.startswith('/') else f"/{form_action}"
         path_bucket = f"form_action:{form_action_path}" if form_action_path else "form_action:unknown"
     elif grouping_scope == "param":
-        path_bucket = "param-level"
+        # For Dalfox open redirect, group by endpoint path + parameter, not by
+        # the full URL including the redirect payload.
+        if is_dalfox_open_redirect and parsed:
+            path_bucket = parsed.path or "/"
+        else:
+            path_bucket = "param-level"
     else:
         path_bucket = parsed.path if parsed else ""
     
@@ -905,4 +1461,3 @@ def normalize_and_group_finding(
     }
     
     return canonical, instance
-

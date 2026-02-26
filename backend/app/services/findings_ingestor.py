@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session, joinedload
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from app.models.finding import Finding, FindingInstance, Severity, FindingStatus
 from app.models.scan import ScanJob
@@ -29,6 +29,38 @@ from app.utils.finding_normalizer import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _is_default_port_for_url(scheme: str, port: Optional[int]) -> bool:
+    if port is None:
+        return True
+    scheme_l = (scheme or "").lower()
+    return (scheme_l == "http" and port == 80) or (scheme_l == "https" and port == 443)
+
+
+def _normalize_dalfox_instance_url_for_dedup(url: Any) -> str:
+    """
+    Normalize DALFOX instance URL while preserving query string.
+    This is used as phase-1 instance identity (finding_id + normalized full URL).
+    """
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlparse(raw)
+        if not parsed.netloc and not parsed.scheme:
+            parsed = urlparse(f"https://{raw}")
+        scheme = (parsed.scheme or "https").lower()
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return raw
+        netloc = host
+        if parsed.port and not _is_default_port_for_url(scheme, parsed.port):
+            netloc = f"{host}:{parsed.port}"
+        path = (parsed.path or "/").rstrip("/") or "/"
+        return urlunparse((scheme, netloc, path, "", parsed.query or "", ""))
+    except Exception:
+        return raw
 
 
 def _create_finding_with_canonical_name(
@@ -461,11 +493,43 @@ def create_or_update_finding_with_normalizer(
                 if not existing_finding.finding_key:
                     existing_finding.finding_key = finding_key
                     existing_finding.dedup_key = finding_key
+
+    # DALFOX: Secondary dedup by canonical fingerprint only (never by title/payload).
+    if not existing_finding and canonical_tool.lower() == "dalfox":
+        duplicate_candidates = db.query(Finding).filter(
+            Finding.scan_job_id == scan_job_id,
+            Finding.tool_name == "dalfox",
+            (Finding.finding_key == finding_key) | (Finding.dedup_key == finding_key),
+        ).all()
+
+        if duplicate_candidates:
+            duplicate_candidates.sort(key=lambda f: (
+                -(getattr(f, 'affected_count', 1) or 1),
+                getattr(f, 'created_at', now)
+            ))
+            existing_finding = duplicate_candidates[0]
+
+            for dup in duplicate_candidates[1:]:
+                logger.warning(
+                    f"Merging duplicate Dalfox finding by fingerprint: {dup.id} into {existing_finding.id} "
+                    f"(finding_key={finding_key[:16]}...)"
+                )
+                dup_instances = db.query(FindingInstance).filter(
+                    FindingInstance.finding_id == dup.id
+                ).all()
+                for inst in dup_instances:
+                    inst.finding_id = existing_finding.id
+                    db.add(inst)
+                existing_finding.affected_count = (existing_finding.affected_count or 1) + (dup.affected_count or 1)
+                db.delete(dup)
+
+            if not existing_finding.finding_key:
+                existing_finding.finding_key = finding_key
+                existing_finding.dedup_key = finding_key
     
     if existing_finding:
         # Update existing finding
         existing_finding.last_seen_at = now
-        existing_finding.affected_count += 1
         
         # Update severity if new one is higher
         new_severity = canonical_data["severity"]
@@ -483,10 +547,27 @@ def create_or_update_finding_with_normalizer(
         # Update rule_family if not set
         if not existing_finding.rule_family and canonical_data.get("rule_family"):
             existing_finding.rule_family = canonical_data["rule_family"]
+
+        if not existing_finding.parameter:
+            existing_finding.parameter = canonical_data.get("parameter") or instance_data.get("parameter")
+
+        # DALFOX phase-1 instance identity: dedup by normalized full URL only.
+        if canonical_tool.lower() == "dalfox":
+            normalized_instance_url = _normalize_dalfox_instance_url_for_dedup(instance_data.get("url"))
+            if normalized_instance_url:
+                instance_data["url"] = normalized_instance_url
+                existing_instance = db.query(FindingInstance).filter(
+                    FindingInstance.finding_id == existing_finding.id,
+                    FindingInstance.url == normalized_instance_url,
+                ).first()
+                if existing_instance:
+                    if not existing_instance.evidence_snippet and instance_data.get("evidence_snippet"):
+                        existing_instance.evidence_snippet = instance_data.get("evidence_snippet")
+                    return existing_finding, existing_instance
+
+        existing_finding.affected_count = (existing_finding.affected_count or 1) + 1
         
-        # CRITICAL: Always create a new instance for each occurrence
-        # This ensures that every time this finding is encountered, an instance is stored
-        # IMPORTANT: Even if URL is None/empty, create the instance (some findings may not have URLs)
+        # Create a new instance for this occurrence.
         instance_url = instance_data.get("url")
         instance_path = instance_data.get("path")
         
@@ -559,6 +640,7 @@ def create_or_update_finding_with_normalizer(
             cvss_score=canonical_data.get("cvss_score"),
             url=None,  # No specific URL for canonical finding
             path=None,  # No specific path for canonical finding
+            parameter=canonical_data.get("parameter") or instance_data.get("parameter"),
             template_id=canonical_data.get("template_id"),
             rule_id=canonical_data.get("rule_id"),
             vuln_type=vuln_type,
@@ -581,11 +663,15 @@ def create_or_update_finding_with_normalizer(
         
         db.add(finding)
         db.flush()  # Flush to get finding.id
+
+        first_instance_url = instance_data.get("url")
+        if canonical_tool.lower() == "dalfox":
+            first_instance_url = _normalize_dalfox_instance_url_for_dedup(first_instance_url)
         
         # Create first instance
         instance = FindingInstance(
             finding_id=finding.id,
-            url=instance_data.get("url"),
+            url=first_instance_url,
             path=instance_data.get("path"),
             http_method=instance_data.get("http_method"),
             parameter=instance_data.get("parameter"),
@@ -2812,27 +2898,51 @@ def ingest_dalfox_findings(
             itype = (itype_raw.lower() if itype_raw else "").strip()
             method = method_raw or "GET"
             
-            # Severity based on XSS type
-            if itype in {"stored", "blind"}:
+            # Infer vulnerability type: default to XSS, but detect Open Redirect
+            message_raw = item.get("message") or item.get("message_str") or ""
+            cwe_raw = item.get("cwe")
+            message_lower = str(message_raw).lower()
+            cwe_lower = str(cwe_raw or "").lower()
+            if (
+                "open redirect" in message_lower
+                or "open-redirect" in message_lower
+                or "openredirect" in message_lower
+                or "cwe-601" in cwe_lower
+            ):
+                vuln_type = "open_redirect"
+            else:
+                vuln_type = "xss"
+            
+            # Severity based on type
+            if vuln_type == "xss" and itype in {"stored", "blind"}:
                 severity = Severity.HIGH
-            else:  # reflected or unknown
+            else:
+                # Open redirect and reflected/unknown XSS are typically medium
                 severity = Severity.MEDIUM
             
             # Build title
-            if param:
-                title = f"Cross-Site Scripting (XSS) in parameter '{param}'"
+            if vuln_type == "open_redirect":
+                if param:
+                    title = f"Open Redirect via parameter '{param}'"
+                else:
+                    title = "Open Redirect vulnerability detected"
             else:
-                title = "Cross-Site Scripting (XSS) detected"
-            
-            # Add XSS type to title if available
-            if itype and itype != "reflected":
-                title = f"{itype.capitalize()} {title}"
+                if param:
+                    title = f"Cross-Site Scripting (XSS) in parameter '{param}'"
+                else:
+                    title = "Cross-Site Scripting (XSS) detected"
+                # Add XSS type to title if available
+                if itype and itype != "reflected":
+                    title = f"{itype.capitalize()} {title}"
             
             # Build description
-            description_lines = [
-                "Dalfox identified a potential Cross-Site Scripting (XSS) issue.",
-            ]
-            if itype:
+            description_lines = []
+            if vuln_type == "open_redirect":
+                description_lines.append("Dalfox identified a potential Open Redirect issue.")
+            else:
+                description_lines.append("Dalfox identified a potential Cross-Site Scripting (XSS) issue.")
+            
+            if itype and vuln_type == "xss":
                 description_lines.append(f"- XSS type: {itype.capitalize()}")
             if param:
                 description_lines.append(f"- Parameter: `{param}`")
@@ -2841,16 +2951,24 @@ def ingest_dalfox_findings(
             if payload:
                 truncated_payload = payload[:120] + ('…' if len(payload) > 120 else '')
                 description_lines.append(f"- Example payload (truncated): `{truncated_payload}`")
-            description_lines.append(
-                "\nAn attacker could leverage this to execute arbitrary JavaScript "
-                "in the victim's browser."
-            )
+            if vuln_type == "open_redirect":
+                description_lines.append(
+                    "\nAn attacker could leverage this to redirect users to arbitrary external sites, "
+                    "which can be used for phishing or credential theft."
+                )
+            else:
+                description_lines.append(
+                    "\nAn attacker could leverage this to execute arbitrary JavaScript "
+                    "in the victim's browser."
+                )
             
             description = "\n".join(description_lines)
             
             # Build evidence string (human-readable summary)
             evidence_parts = []
-            if itype:
+            if vuln_type == "open_redirect":
+                evidence_parts.append("Open Redirect")
+            elif itype:
                 evidence_parts.append(f"{itype.capitalize()} XSS")
             if param:
                 evidence_parts.append(f"parameter '{param}'")
@@ -2876,7 +2994,7 @@ def ingest_dalfox_findings(
                 "http_method": item.get("http_method"),
                 "payload": item.get("payload"),
                 "type": item.get("type"),
-                "categories": ["xss"],
+                "categories": [vuln_type],
             }
             # Copy any other fields from item (excluding None values to keep JSON clean)
             for key, value in item.items():
@@ -2901,8 +3019,8 @@ def ingest_dalfox_findings(
             if not method_upper and url:
                 method_upper = "GET"
             
-            # Use create_or_update_finding helper for deduplication
-            finding = create_or_update_finding(
+            # Use normalizer-based grouped ingestion (same path as runner_ingest).
+            finding, _instance = create_or_update_finding_with_normalizer(
                 db=db,
                 scan_job_id=scan_job_id,
                 project_id=project_id,
@@ -2912,18 +3030,22 @@ def ingest_dalfox_findings(
                     "url": url,
                     "http_method": method_upper if method_upper else None,
                     "parameter": param,
-                    "vuln_type": "xss",
-                    "title": title,
+                    "vuln_type": vuln_type,
+                    "title": title,  # normalizer replaces DALFOX titles with canonical payload-free title
                     "description": description,
                     "severity": severity,
+                    "message": message_raw,
+                    "payload": payload,
+                    "type": item.get("type"),
                     "raw_data": raw_data_json,
-                    "categories": ["xss"],
-                    "evidence": evidence,
+                    "categories": [vuln_type],
+                    "evidence": evidence_raw or evidence,
                 },
                 tool_result_id=tool_result_id,
             )
             
-            findings.append(finding)
+            if not any(existing.id == finding.id for existing in findings):
+                findings.append(finding)
             # #region agent log
             with open('/home/ashwath/thandev/.cursor/debug.log', 'a') as f:
                 f.write(json.dumps({"sessionId":"debug-session","runId":"run1","hypothesisId":"E","location":"findings_ingestor.py:2313","message":"Dalfox finding created","data":{"finding_id":finding.id if hasattr(finding,'id') else None,"tool_result_id":finding.tool_result_id if hasattr(finding,'tool_result_id') else None,"tool_name":finding.tool_name if hasattr(finding,'tool_name') else None,"url":str(finding.url)[:100] if hasattr(finding,'url') and finding.url else None,"scan_job_id":finding.scan_job_id if hasattr(finding,'scan_job_id') else None},"timestamp":int(datetime.now(timezone.utc).timestamp()*1000)})+'\n')
@@ -5877,6 +5999,3 @@ def ingest_http_header_findings(
         raise
     
     return header_findings
-
-
-

@@ -300,8 +300,8 @@ class TestNucleiFindingGrouping:
 class TestDalfoxGrouping:
     """Test that Dalfox findings also group correctly."""
     
-    def test_same_xss_type_groups(self):
-        """Same XSS finding at different URLs should group."""
+    def test_same_param_different_paths_do_not_group(self):
+        """DALFOX sink identity includes path, so different paths must not group."""
         f1 = {
             "tool": "dalfox",
             "title": "Reflected XSS",
@@ -322,6 +322,4 @@ class TestDalfoxGrouping:
         canonical1, _ = normalize_and_group_finding(f1, "scan-1", "proj-1")
         canonical2, _ = normalize_and_group_finding(f2, "scan-1", "proj-1")
         
-        # Same XSS type with same param on same host should group
-        assert canonical1["finding_key"] == canonical2["finding_key"]
-
+        assert canonical1["finding_key"] != canonical2["finding_key"]

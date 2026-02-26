@@ -2,7 +2,7 @@
 Finding endpoints - list and detail
 """
 import logging
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, HTTPException, status, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload
@@ -18,6 +18,7 @@ from app.models.user import User
 from app.schemas.finding import FindingDetailResponse
 from app.utils.finding_response_builder import extract_location_from_raw_data, get_impact_summary, get_remediation_data
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata, normalize_cwe_id
+from app.utils.dalfox_instance_meta import parse_dalfox_evidence_snippet
 from app.core.severity import zap_to_severity
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,40 @@ router = APIRouter(
     prefix="/findings",
     tags=["findings"],
 )
+
+
+def _serialize_affected_instance(instance: Any, tool_name: Optional[str]) -> dict:
+    evidence_snippet = instance.evidence_snippet
+    display_snippet = evidence_snippet
+    payload_raw = None
+    payload_decoded = None
+    message = None
+    marker = None
+    instance_severity = None
+    if (tool_name or "").lower() == "dalfox":
+        parsed = parse_dalfox_evidence_snippet(evidence_snippet)
+        display_snippet = parsed.get("display_snippet")
+        payload_raw = parsed.get("payload_raw")
+        payload_decoded = parsed.get("payload_decoded")
+        message = parsed.get("message")
+        marker = parsed.get("marker")
+        instance_severity = parsed.get("instance_severity")
+    return {
+        "id": instance.id,
+        "url": instance.url,
+        "path": instance.path,
+        "http_method": instance.http_method,
+        "parameter": instance.parameter,
+        "evidence_snippet": display_snippet,
+        "display_snippet": display_snippet,
+        "payload_raw": payload_raw,
+        "payload_decoded": payload_decoded,
+        "message": message,
+        "marker": marker,
+        "instance_severity": instance_severity,
+        "is_static_asset": instance.is_static_asset,
+        "created_at": instance.created_at.isoformat() if instance.created_at else None,
+    }
 
 
 @router.get("")
@@ -426,18 +461,5 @@ async def get_finding_affected_urls(
         "total": total,
         "offset": offset,
         "limit": limit,
-        "instances": [
-            {
-                "id": inst.id,
-                "url": inst.url,
-                "path": inst.path,
-                "http_method": inst.http_method,
-                "parameter": inst.parameter,
-                "evidence_snippet": inst.evidence_snippet,
-                "is_static_asset": inst.is_static_asset,
-                "created_at": inst.created_at.isoformat() if inst.created_at else None,
-            }
-            for inst in instances
-        ],
+        "instances": [_serialize_affected_instance(inst, finding.tool_name) for inst in instances],
     }
-

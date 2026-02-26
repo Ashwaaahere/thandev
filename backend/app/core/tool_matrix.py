@@ -49,20 +49,12 @@ TOOL_MATRIX: dict[ScanLevel, List[ToolConfig]] = {
     ScanLevel.ADVANCED: [
         {"key": "httpx", "enabled": True, "intensity": "high"},
         {"key": "nuclei", "enabled": True, "profile": "advanced_web"},
-        {"key": "dalfox", "enabled": True, "aggressiveness": "high"},
+        {"key": "dalfox", "enabled": True, "aggressiveness": "high", "timeout_seconds": 9000},
         {"key": "nmap", "enabled": True, "profile": "full_ports_scripts"},
         {"key": "sslscan", "enabled": True},
-        {"key": "sqlmap", "enabled": True, "timeout_seconds": 2400},  # 40 minutes for thorough SQLi testing
-        {"key": "zap", "enabled": True, "mode": "ajax_spider", "timeout_seconds": 600},  # AJAX spider first
-        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 1800},  # Then active scan (increased timeout)
-        # NOTE: Future/experimental tools removed from active matrix
-        # These tools are not yet fully wired or stable:
-        # - xss_experimental (Playwright-based XSS checks)
-        # - ssrf_oob (OOB SSRF interaction testing)
-        # - cmdi_oob (OOB Command Injection testing)
-        # - subfinder (subdomain enumeration)
-        # - gitleaks (secret scanning)
-        # - nikto, amass, gobuster, crt.sh, sslyze (referenced in presets but not in main tool matrix)
+        {"key": "sqlmap", "enabled": True, "timeout_seconds": 9000},
+        {"key": "zap", "enabled": True, "mode": "ajax_spider", "timeout_seconds": 1200},  # AJAX spider (20 min)
+        {"key": "zap", "enabled": True, "mode": "active_scan", "timeout_seconds": 7200},  # Active scan (2 hours)
     ],
 }
 

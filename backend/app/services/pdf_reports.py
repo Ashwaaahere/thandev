@@ -28,6 +28,7 @@ from app.models.finding import Finding
 from app.models.tenant import Tenant
 from app.models.project import Project
 from app.core.constants import CANON_FINDINGS_COUNT, CANON_SEV_BREAKDOWN, DEPRECATED_FINDINGS_BY_SEVERITY
+from app.utils.dalfox_instance_meta import parse_dalfox_evidence_snippet
 import logging
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,37 @@ def _severity_label(severity: Any) -> str:
     if s not in SEVERITY_COLORS:
         s = "info"
     return s
+
+
+def _format_instance_line_for_pdf(instance: Any, tool_name: str) -> str:
+    inst_url = getattr(instance, "url", "") or ""
+    inst_path = getattr(instance, "path", "") or ""
+    inst_method = getattr(instance, "http_method", "") or "GET"
+    display = inst_url or inst_path or "N/A"
+    if inst_method:
+        display = f"{inst_method} {display}"
+
+    if (tool_name or "").lower() != "dalfox":
+        return display
+
+    parsed = parse_dalfox_evidence_snippet(getattr(instance, "evidence_snippet", None))
+    extras: List[str] = []
+    marker = parsed.get("marker")
+    severity = parsed.get("instance_severity")
+    payload = parsed.get("payload_decoded") or parsed.get("payload_raw")
+
+    if marker:
+        extras.append(str(marker))
+    if severity:
+        extras.append(str(severity).upper())
+    if payload:
+        payload_str = str(payload)
+        payload_preview = payload_str[:80] + ("..." if len(payload_str) > 80 else "")
+        extras.append(f"payload={payload_preview}")
+
+    if extras:
+        return f"{display} [{'; '.join(extras)}]"
+    return display
 
 
 def _load_scan_and_findings(
@@ -1884,15 +1916,10 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
                     urls_to_show = all_instances[:MAX_URLS_IN_BODY]
                     remaining_count = len(all_instances) - MAX_URLS_IN_BODY if len(all_instances) > MAX_URLS_IN_BODY else 0
                     
-                    story.append(Paragraph(f"<b>Affected URLs ({actual_count}):</b>", styles["body"]))
+                    story.append(Paragraph(f"<b>Affected URLs/Payloads ({actual_count}):</b>", styles["body"]))
                     
                     for inst in urls_to_show:
-                        inst_url = getattr(inst, "url", "") or ""
-                        inst_path = getattr(inst, "path", "") or ""
-                        inst_method = getattr(inst, "http_method", "") or "GET"
-                        display_url = inst_url or inst_path or "N/A"
-                        if inst_method:
-                            display_url = f"{inst_method} {display_url}"
+                        display_url = _format_instance_line_for_pdf(inst, getattr(f, "tool_name", "") or "")
                         
                         # Wrap long URLs
                         if len(display_url) > 100:
@@ -1921,7 +1948,7 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
                         story.append(Spacer(1, 4))
                         story.append(
                             Paragraph(
-                                f'<font color="{COLOR_TEXT_MUTED.hexval()}"><i>... and {remaining_count} more URL{"s" if remaining_count != 1 else ""} (see Appendix A for full list)</i></font>',
+                                f'<font color="{COLOR_TEXT_MUTED.hexval()}"><i>... and {remaining_count} more instance{"s" if remaining_count != 1 else ""} (see Appendix A for full list)</i></font>',
                                 styles["small_muted"]
                             )
                         )
@@ -1929,7 +1956,7 @@ def _build_findings_detail(findings: List[Finding], styles: dict, db: Session = 
                     # No instances loaded but affected_count > 0
                     story.append(
                         Paragraph(
-                            f'<b>Affected URLs ({affected_count}):</b>',
+                            f'<b>Affected URLs/Payloads ({affected_count}):</b>',
                             styles["body"]
                         )
                     )
@@ -1982,6 +2009,7 @@ def _build_appendix_affected_urls(findings: List[Finding], styles: dict) -> List
             findings_with_appendix.append({
                 "finding_id": finding_id,
                 "title": getattr(f, "title", "") or "(no title)",
+                "tool_name": getattr(f, "tool_name", "") or "",
                 "affected_count": affected_count,
                 "all_instances": all_instances,
                 "remaining_instances": all_instances[25:],  # Skip first 25
@@ -1991,11 +2019,11 @@ def _build_appendix_affected_urls(findings: List[Finding], styles: dict) -> List
         return story
     
     story.append(Spacer(1, 12))
-    story.append(Paragraph("Appendix A — Full Affected URL Lists", styles["section_title"]))
+    story.append(Paragraph("Appendix A — Full Affected URL/Payload Lists", styles["section_title"]))
     story.append(
         Paragraph(
-            "This appendix contains the complete list of affected URLs for findings with more than 25 URLs. "
-            "The first 25 URLs are shown in the main findings section.",
+            "This appendix contains the complete list of remaining instances for findings with more than 25 instances. "
+            "The first 25 are shown in the main findings section.",
             styles["small_muted"]
         )
     )
@@ -2008,19 +2036,14 @@ def _build_appendix_affected_urls(findings: List[Finding], styles: dict) -> List
         story.append(Paragraph(f"<b>A.{idx}. {title}</b>", styles["subsection_title"]))
         story.append(
             Paragraph(
-                f'<font color="{COLOR_TEXT_MUTED.hexval()}">Remaining {remaining_count} of {entry["affected_count"]} affected URLs:</font>',
+                f'<font color="{COLOR_TEXT_MUTED.hexval()}">Remaining {remaining_count} of {entry["affected_count"]} affected instances:</font>',
                 styles["small_muted"]
             )
         )
         story.append(Spacer(1, 4))
         
         for inst in entry["remaining_instances"]:
-            inst_url = getattr(inst, "url", "") or ""
-            inst_path = getattr(inst, "path", "") or ""
-            inst_method = getattr(inst, "http_method", "") or "GET"
-            display_url = inst_url or inst_path or "N/A"
-            if inst_method:
-                display_url = f"{inst_method} {display_url}"
+            display_url = _format_instance_line_for_pdf(inst, entry.get("tool_name", ""))
             
             # Wrap long URLs
             if len(display_url) > 100:

@@ -37,16 +37,16 @@ SCAN_TIMEOUTS: Dict[str, Dict] = {
         }
     },
     "advanced": {
-        "max_total_seconds": 5400,  # 1.5 hours total (increased for complex targets)
+        "max_total_seconds": 10800,  # 3 hours total (deep comprehensive scans)
         "per_tool": {
             "httpx": 120,  # 2 minutes
-            "nuclei": 5000,  # ~83 minutes (increased to allow full scan duration)
-            "nmap": 5000,  # ~83 minutes
-            "ffuf": 5000,  # ~83 minutes
+            "nuclei": 9000,  # 2.5 hours
+            "nmap": 9000,  # 2.5 hours
+            "ffuf": 9000,  # 2.5 hours
             "sslscan": 600,  # 10 minutes
-            "dalfox": 5000,  # ~83 minutes (increased to allow full scan duration)
-            "sqlmap": 5000,  # ~83 minutes (increased to allow full scan duration)
-            "zap": 2700,  # 45 minutes (aligned with brain timeouts)
+            "dalfox": 9000,  # 2.5 hours
+            "sqlmap": 9000,  # 2.5 hours
+            "zap": 7200,  # 2 hours
         }
     }
 }

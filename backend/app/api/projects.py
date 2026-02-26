@@ -35,6 +35,7 @@ from app.services.domain_verification import (
 )
 from app.schemas.project import (
     ProjectCreate,
+    ProjectCreateQuick,
     ProjectResponse,
     ProjectWithStats,
     ProjectListWithStatsResponse,
@@ -126,6 +127,63 @@ def create_project(
     return ProjectResponse.model_validate(project)
 
 
+# Placeholder URL for projects created from Code Scan (no DAST target yet)
+PROJECT_QUICK_PLACEHOLDER_URL = "https://code-scan-placeholder.invalid"
+PROJECT_QUICK_PLACEHOLDER_ROOT = "code-scan-placeholder.invalid"
+
+
+@router.post("/quick", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+def create_project_quick(
+    payload: ProjectCreateQuick,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    tenant: Tenant = Depends(require_tenant),
+):
+    """
+    Create a new project with only name and optional description (for Code Scan onboarding).
+    Uses a placeholder target_url until the user adds a real URL for Web Spy/DAST.
+    """
+    from app.core.limits import get_effective_limits, check_limit_exceeded
+    from app.core.project_utils import get_all_projects_count
+
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Thandev-User-Id header is required",
+        )
+    limits = get_effective_limits(db, tenant, current_user)
+    current_count = get_all_projects_count(db, tenant, current_user)
+    check_limit_exceeded(
+        db=db,
+        tenant=tenant,
+        user=current_user,
+        limit_key="max_projects",
+        current_count=current_count,
+        limit_override=limits.get("max_projects"),
+    )
+    project = Project(
+        name=payload.name.strip(),
+        target_url=PROJECT_QUICK_PLACEHOLDER_URL,
+        root_domain=PROJECT_QUICK_PLACEHOLDER_ROOT,
+        repo_url=None,
+        description=payload.description.strip() if payload.description else None,
+        owner_id=current_user.id,
+        tenant_id=tenant.id,
+    )
+    db.add(project)
+    db.commit()
+    try:
+        db.refresh(project)
+    except Exception as e:
+        if "performance_scans" in str(e).lower() or "undefinedtable" in str(e).lower():
+            project = db.query(Project).filter(Project.id == project.id).first()
+        else:
+            raise
+    project_urls = db.query(ProjectUrl).filter(ProjectUrl.project_id == project.id).all()
+    project.project_urls = project_urls
+    return ProjectResponse.model_validate(project)
+
+
 @router.get("", response_model=ProjectListWithStatsResponse)
 def list_projects(
     db: Session = Depends(get_db),
@@ -173,6 +231,12 @@ def list_projects(
             # Skip projects without root_domain
             if not p.root_domain:
                 logger.debug(f"Project {p.id} has no root_domain, skipping")
+                continue
+
+            # Code Scan placeholder projects (no DAST target yet) are always shown to owner
+            if p.root_domain == PROJECT_QUICK_PLACEHOLDER_ROOT:
+                filtered_projects.append(p)
+                logger.debug(f"Project {p.id} is Code Scan placeholder, including")
                 continue
             
             # Check if domain is allowlisted

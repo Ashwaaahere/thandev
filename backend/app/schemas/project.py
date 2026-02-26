@@ -14,6 +14,12 @@ class ProjectCreate(BaseModel):
     description: Optional[str] = Field(None, description="Project description")
 
 
+class ProjectCreateQuick(BaseModel):
+    """Schema for creating a project from Code Scan (name only; placeholder URL used for DAST)."""
+    name: str = Field(..., min_length=1, max_length=255, description="Project name")
+    description: Optional[str] = Field(None, description="Project description")
+
+
 class ProjectUrlResponse(BaseModel):
     """Schema for project URL response"""
     id: str

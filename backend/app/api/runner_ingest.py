@@ -861,6 +861,50 @@ async def create_tool_result(
             f"findings_created={len(findings_created)}"
         )
         
+        # Update ScanToolState to 'completed' for this tool (fallback when brain is disabled)
+        # The brain normally does this, but when disabled the backend must handle it
+        try:
+            tool_state = db.query(ScanToolState).filter(
+                ScanToolState.scan_id == scan_id,
+                ScanToolState.tool == tool_result.tool_name
+            ).first()
+            
+            if tool_state:
+                tool_state.stage = "completed" if tool_result.success else "failed"
+                tool_state.message = (
+                    f"{tool_result.tool_name} completed with {len(findings_created)} findings"
+                    if tool_result.success
+                    else f"{tool_result.tool_name} failed: {tool_result.error_message or 'unknown error'}"
+                )
+                tool_state.progress = 1.0
+                tool_state.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                logger.info(
+                    f"[TOOL-STATE-UPDATE] Updated ScanToolState for {tool_result.tool_name} "
+                    f"in scan {scan_id} to stage='{tool_state.stage}'"
+                )
+            else:
+                # Create tool state if it doesn't exist (scan started without brain)
+                new_state = ScanToolState(
+                    id=str(uuid.uuid4()),
+                    scan_id=scan_id,
+                    tool=tool_result.tool_name,
+                    phase=_infer_phase_from_tool(tool_result.tool_name),
+                    stage="completed" if tool_result.success else "failed",
+                    message=f"{tool_result.tool_name} completed with {len(findings_created)} findings",
+                    progress=1.0,
+                    created_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc),
+                )
+                db.add(new_state)
+                db.commit()
+                logger.info(
+                    f"[TOOL-STATE-CREATE] Created ScanToolState for {tool_result.tool_name} "
+                    f"in scan {scan_id} (brain was not running)"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to update ScanToolState for {tool_result.tool_name} in scan {scan_id}: {e}")
+        
         # Check if all tools are complete and update scan status if needed
         try:
             _check_and_update_scan_completion(scan_job, db)

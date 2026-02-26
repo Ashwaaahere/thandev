@@ -32,6 +32,12 @@ type FindingInstance = {
   http_method?: string | null;
   parameter?: string | null;
   evidence_snippet?: string | null;
+  display_snippet?: string | null;
+  payload_raw?: string | null;
+  payload_decoded?: string | null;
+  message?: string | null;
+  marker?: string | null;
+  instance_severity?: string | null;
   is_static_asset?: boolean | null;
 };
 
@@ -227,14 +233,14 @@ export default function ScanReportPage() {
 
   // Connect to real-time scan events via WebSocket
   const { toolStates: wsToolStates, isConnected } = useScanEvents(scanId);
-  
+
   // Convert HTTP tools data to tool states format as fallback
   const toolStates = useMemo(() => {
     // If WebSocket provided tool states, use them
     if (wsToolStates && wsToolStates.length > 0) {
       return wsToolStates;
     }
-    
+
     // Otherwise, convert tools data from HTTP API
     if (tools && tools.length > 0) {
       return tools.map(tool => ({
@@ -246,7 +252,7 @@ export default function ScanReportPage() {
         updated_at: tool.completed_at || tool.started_at || new Date().toISOString(),
       }));
     }
-    
+
     return [];
   }, [wsToolStates, tools]);
 
@@ -262,9 +268,9 @@ export default function ScanReportPage() {
       // Immediately set loading to false to prevent loading spinner when returning to tab
       setLoading(false);
       setInitialLoadFailed(false);
-      
+
       let pollInterval: NodeJS.Timeout | null = null;
-      
+
       // Silent refresh - fetch without showing loading state
       const silentRefresh = async () => {
         try {
@@ -276,7 +282,7 @@ export default function ScanReportPage() {
             }
             return prevScan;
           });
-          
+
           // Set up polling if scan is running/queued
           const isRunning = data.status === 'running' || data.status === 'queued' || data.status === 'pending';
           if (isRunning) {
@@ -308,9 +314,9 @@ export default function ScanReportPage() {
           initialLoadDoneRef.current = null;
         }
       };
-      
+
       silentRefresh();
-      
+
       // Cleanup polling interval on unmount
       return () => {
         if (pollInterval) {
@@ -401,13 +407,13 @@ export default function ScanReportPage() {
 
     // Initial load (only if we haven't loaded this scanId yet)
     if (initialLoadDoneRef.current !== scanId) {
-    setLoading(true);
-    setInitialLoadFailed(false);
-    loadScan().catch((err) => {
-      // Mark initial load as failed so we show full-page error
-      setInitialLoadFailed(true);
-      setError(err instanceof Error ? err.message : 'Failed to load scan');
-    }).finally(() => setLoading(false));
+      setLoading(true);
+      setInitialLoadFailed(false);
+      loadScan().catch((err) => {
+        // Mark initial load as failed so we show full-page error
+        setInitialLoadFailed(true);
+        setError(err instanceof Error ? err.message : 'Failed to load scan');
+      }).finally(() => setLoading(false));
     }
 
     // Set up polling if scan is running/queued
@@ -440,7 +446,7 @@ export default function ScanReportPage() {
   useEffect(() => {
     const fetchProject = async () => {
       if (!session || !projectId) return;
-      
+
       try {
         const data = await thandevFetchJSON<{ id: string; name: string }>(`/api/projects/${projectId}`, session);
         setProject(data);
@@ -466,7 +472,7 @@ export default function ScanReportPage() {
 
   // Track if tools have been loaded at least once
   const toolsLoadedRef = useRef(false);
-  
+
   // Load tools data (with polling when scan is running)
   useEffect(() => {
     async function loadTools() {
@@ -475,7 +481,7 @@ export default function ScanReportPage() {
       try {
         // Only show loading on first load
         if (!toolsLoadedRef.current) {
-        setToolsLoading(true);
+          setToolsLoading(true);
         }
         setToolsError(null);
         const data = await thandevFetchJSON<ToolsResponse>(`/api/scans/${scanId}/tools`, session);
@@ -495,18 +501,18 @@ export default function ScanReportPage() {
         setToolsLoading(false);
       }
     }
-    
+
     loadTools();
-    
+
     // Poll for tools updates while scan is running
     const isRunning = scan?.status === 'running' || scan?.status === 'queued';
     let pollInterval: NodeJS.Timeout | null = null;
-    
+
     if (isRunning) {
       // Poll every 15 seconds (reduced frequency to avoid disrupting user reading)
       pollInterval = setInterval(loadTools, 15000); // 15 seconds
     }
-    
+
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
@@ -570,7 +576,7 @@ export default function ScanReportPage() {
   // Load findings data from paginated endpoint
   useEffect(() => {
     let isPolling = false;
-    
+
     async function loadFindings() {
       if (!session || !scanId) return;
 
@@ -644,11 +650,11 @@ export default function ScanReportPage() {
       }
     }
     loadFindings();
-    
+
     // Poll for findings updates while scan is running (only on first page to avoid disrupting user)
     const isRunning = scan?.status === 'running' || scan?.status === 'queued';
     let pollInterval: NodeJS.Timeout | null = null;
-    
+
     if (isRunning && findingsPage === 0) {
       // Poll every 15 seconds (reduced frequency to avoid disrupting user reading)
       pollInterval = setInterval(() => {
@@ -656,7 +662,7 @@ export default function ScanReportPage() {
         loadFindings();
       }, 15000); // 15 seconds
     }
-    
+
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
@@ -673,7 +679,7 @@ export default function ScanReportPage() {
       setArtifactsLoading(true);
       const data = await thandevFetchJSON<{ items: any[] }>(`/api/scans/${scanId}/artifacts`, session);
       setArtifacts(data);
-      
+
       // Extract HTTPX surface artifacts
       const httpxArtifacts = data?.items?.filter((item: any) => item.type === 'httpx_surface') || [];
       setHttpxSurfaceArtifacts(httpxArtifacts.length > 0 ? httpxArtifacts[0] : null);
@@ -683,6 +689,29 @@ export default function ScanReportPage() {
       setArtifactsLoading(false);
     }
   };
+
+  // Ensure HTTPX surface artifacts are loaded when the HTTPX tool filter is selected
+  // so that users see meaningful information instead of an empty "No findings" state.
+  useEffect(() => {
+    if (!session || !scanId) return;
+    if (selectedToolFilter === 'httpx' && !artifactsLoading) {
+      // We deliberately do not await this here; the existing loadArtifacts function
+      // manages its own loading state and error handling.
+      loadArtifacts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedToolFilter, session, scanId]);
+
+  // Also perform a one-time load of artifacts when the scan page is ready so that
+  // HTTPX surface data is available for the overview Findings card even if the
+  // user never explicitly selects the HTTPX tool filter or Enumeration tab.
+  useEffect(() => {
+    if (!session || !scanId) return;
+    if (!artifacts && !artifactsLoading) {
+      loadArtifacts();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, scanId]);
 
   // Load artifacts when dependency tabs or enumeration tab are activated
   // Also reload if scan status changes (e.g., from running to completed) to pick up new artifacts
@@ -701,28 +730,28 @@ export default function ScanReportPage() {
     if (!session || !scanId) {
       console.log('loadAllInstances: Missing session or scanId', { session: !!session, scanId });
       loadingRef.current[findingId] = false;
-        return;
-      }
-      
+      return;
+    }
+
     // Prevent duplicate calls using ref
     if (loadingRef.current[findingId]) {
       console.log('loadAllInstances: Already loading (ref check)', findingId);
       return;
     }
-    
+
     // Check state as well
     if (loadingInstances[findingId]) {
       console.log('loadAllInstances: Already loading (state check)', findingId);
       return;
     }
-    
+
     // Check if we already have all instances
     const existingInstances = expandedFindingInstances[findingId];
     if (existingInstances && existingInstances.length > 0 && !showAll) {
       const finding = findings.find(f => f.id === findingId);
       const affectedCount = finding?.affected_count || 0;
       const loadedCount = existingInstances.length;
-      
+
       // Only skip if we have all instances (or close to it, within 5%)
       if (loadedCount >= affectedCount || (affectedCount > 0 && loadedCount >= affectedCount * 0.95)) {
         console.log('loadAllInstances: Already loaded all instances', findingId, 'count:', loadedCount, 'affected_count:', affectedCount);
@@ -730,60 +759,60 @@ export default function ScanReportPage() {
         return;
       }
     }
-    
+
     // Mark as loading
     loadingRef.current[findingId] = true;
 
     try {
       setLoadingInstances(prev => ({ ...prev, [findingId]: true }));
-      
+
       // If showAll is true, fetch all instances with high limit
       // Otherwise, just fetch what's needed for pagination
       const limit = showAll ? 100000 : 1000; // Use high limit to get all at once
       const url = `/api/scans/${scanId}/findings/${findingId}/instances?limit=${limit}&offset=0`;
-      
+
       console.log('loadAllInstances: Fetching instances for', findingId, 'showAll=', showAll);
-      
+
       let allInstances: FindingInstance[] = [];
-      
+
       // Use high limit to get all at once (API supports up to 20000)
       const maxLimit = 20000;
       const paginatedUrl = `/api/scans/${scanId}/findings/${findingId}/instances?limit=${maxLimit}&offset=0`;
-        const data = await thandevFetchJSON<{ 
-          items: FindingInstance[], 
-          total: number, 
-          affected_count?: number,
-          next_offset: number | null
-        }>(paginatedUrl, session);
-        
-      console.log('loadAllInstances: Received instances:', { 
-          total: data.total, 
+      const data = await thandevFetchJSON<{
+        items: FindingInstance[],
+        total: number,
+        affected_count?: number,
+        next_offset: number | null
+      }>(paginatedUrl, session);
+
+      console.log('loadAllInstances: Received instances:', {
+        total: data.total,
         itemsReceived: data.items?.length || 0,
-          next_offset: data.next_offset,
-          affected_count: data.affected_count
-        });
-        
-        if (data.items && data.items.length > 0) {
+        next_offset: data.next_offset,
+        affected_count: data.affected_count
+      });
+
+      if (data.items && data.items.length > 0) {
         allInstances = data.items;
-        
+
         // If there are more instances than the limit, fetch remaining pages
         if (data.next_offset !== null && data.next_offset !== undefined && data.items.length < data.total) {
           let currentOffset = data.next_offset;
           while (currentOffset < data.total && allInstances.length < data.total) {
             const nextPageUrl = `/api/scans/${scanId}/findings/${findingId}/instances?limit=${maxLimit}&offset=${currentOffset}`;
-            const nextPageData = await thandevFetchJSON<{ 
-              items: FindingInstance[], 
-              total: number, 
+            const nextPageData = await thandevFetchJSON<{
+              items: FindingInstance[],
+              total: number,
               next_offset: number | null
             }>(nextPageUrl, session);
-            
+
             if (nextPageData.items && nextPageData.items.length > 0) {
               allInstances = [...allInstances, ...nextPageData.items];
               currentOffset = nextPageData.next_offset || currentOffset + nextPageData.items.length;
             } else {
               break;
             }
-            
+
             // Safety check
             if (nextPageData.next_offset === null || nextPageData.next_offset === undefined) {
               break;
@@ -791,19 +820,19 @@ export default function ScanReportPage() {
           }
         }
       }
-      
+
       // Check for data inconsistency
       const finding = findings.find(f => f.id === findingId);
       const expectedCount = finding?.affected_count || 0;
-      
-      console.log('✅ loadAllInstances: Fetched all instances:', { 
+
+      console.log('✅ loadAllInstances: Fetched all instances:', {
         findingId,
         total: allInstances.length,
         expectedCount,
         firstFew: allInstances.slice(0, 3).map(i => i.url || i.path),
         lastFew: allInstances.slice(-3).map(i => i.url || i.path)
       });
-      
+
       if (expectedCount > 0 && allInstances.length < expectedCount) {
         console.warn(
           `⚠️ Data inconsistency detected: Finding ${findingId} has affected_count=${expectedCount} ` +
@@ -811,7 +840,7 @@ export default function ScanReportPage() {
           `This indicates an ingestion issue - instances were not fully stored during scan.`
         );
       }
-      
+
       if (allInstances.length > 0) {
         // Update state with all instances
         setExpandedFindingInstances(prev => {
@@ -844,7 +873,7 @@ export default function ScanReportPage() {
         error: errorMessage,
         stack: err instanceof Error ? err.stack : undefined
       });
-      
+
       // Check if it's a network error
       if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
         alert(`Failed to load URLs: Network error. Please check:\n1. Backend is running\n2. No CORS issues\n3. Check browser console for details`);
@@ -861,7 +890,7 @@ export default function ScanReportPage() {
   // Only for Pro/Advanced scans
   useEffect(() => {
     if (!session || !scanId || !scan) return;
-    
+
     // Skip tech stack for basic scans
     if (scan.scan_level === 'basic') {
       setTechStackLoading(false);
@@ -872,7 +901,7 @@ export default function ScanReportPage() {
     const fetchTechStack = async () => {
       // Only show loading on initial load, not during polling
       if (!techStack) {
-      setTechStackLoading(true);
+        setTechStackLoading(true);
       }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/tech-stack`, session);
@@ -909,7 +938,7 @@ export default function ScanReportPage() {
   // Only for Pro/Advanced scans
   useEffect(() => {
     if (activeTab !== 'enumeration' || !session || !scanId || !scan) return;
-    
+
     // Skip for basic scans
     if (scan.scan_level === 'basic') {
       setInventoryLoading(false);
@@ -920,7 +949,7 @@ export default function ScanReportPage() {
     const fetchInventory = async () => {
       // Only show loading on initial load, not during polling
       if (!inventory) {
-      setInventoryLoading(true);
+        setInventoryLoading(true);
       }
       try {
         const data = await thandevFetchJSON<any>(`/api/scans/${scanId}/inventory`, session);
@@ -933,7 +962,7 @@ export default function ScanReportPage() {
         console.error('Failed to fetch enumeration inventory:', error);
         // Don't clear inventory on error during polling
         if (!inventory) {
-        setInventory(null);
+          setInventory(null);
         }
       } finally {
         setInventoryLoading(false);
@@ -941,16 +970,16 @@ export default function ScanReportPage() {
     };
 
     fetchInventory();
-    
+
     // Poll for enumeration updates while scan is running
     const isRunning = scan.status === 'running' || scan.status === 'queued';
     let pollInterval: NodeJS.Timeout | null = null;
-    
+
     if (isRunning) {
       // Poll every 20 seconds (reduced frequency to avoid disrupting user reading)
       pollInterval = setInterval(fetchInventory, 20000);
     }
-    
+
     return () => {
       if (pollInterval) clearInterval(pollInterval);
     };
@@ -1348,29 +1377,29 @@ export default function ScanReportPage() {
 
     try {
       setDownloadingCSV(true);
-      
+
       // Build CSV content
       const rows: string[] = [];
-      
+
       // Header
       rows.push('URL,Type,Parameters,Technologies');
-      
+
       // Add all URLs
       const allUrls = inventory.discovery?.merged?.all_urls || [];
       const paramUrls = inventory.discovery?.merged?.param_urls || [];
       const paramUrlSet = new Set(paramUrls);
       const technologies = inventory.technologies || [];
       const techString = technologies.join('; ');
-      
+
       allUrls.forEach((url: string) => {
         const isParam = paramUrlSet.has(url);
         const type = isParam ? 'Parameterized' : 'Standard';
-        const params = isParam && inventory.discovery?.arjun?.params_by_url?.[url] 
-          ? (Array.isArray(inventory.discovery.arjun.params_by_url[url]) 
-              ? inventory.discovery.arjun.params_by_url[url].join('; ')
-              : Object.keys(inventory.discovery.arjun.params_by_url[url]).join('; '))
+        const params = isParam && inventory.discovery?.arjun?.params_by_url?.[url]
+          ? (Array.isArray(inventory.discovery.arjun.params_by_url[url])
+            ? inventory.discovery.arjun.params_by_url[url].join('; ')
+            : Object.keys(inventory.discovery.arjun.params_by_url[url]).join('; '))
           : '';
-        
+
         // Escape CSV values
         const escapeCSV = (val: string) => {
           if (val.includes(',') || val.includes('"') || val.includes('\n')) {
@@ -1378,10 +1407,10 @@ export default function ScanReportPage() {
           }
           return val;
         };
-        
+
         rows.push(`${escapeCSV(url)},${type},${escapeCSV(params)},${escapeCSV(techString)}`);
       });
-      
+
       const csvContent = rows.join('\n');
       const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
       const fileUrl = window.URL.createObjectURL(blob);
@@ -1530,9 +1559,9 @@ export default function ScanReportPage() {
                   >
                     {tab.label}
                     {activeTab === tab.id && (
-                      <span 
+                      <span
                         className="absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full"
-                        style={{ 
+                        style={{
                           background: 'var(--brand)',
                           bottom: '-2px'
                         }}
@@ -1559,9 +1588,9 @@ export default function ScanReportPage() {
                           {/* Progress Bar */}
                           {(scan?.status === 'running' || scan?.status === 'queued') && (
                             <div className="mt-2 w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
-                              <div 
+                              <div
                                 className="h-full transition-all duration-300"
-                                style={{ 
+                                style={{
                                   background: 'var(--brand)',
                                   width: `${scan?.progress_pct || 0}%`
                                 }}
@@ -1673,535 +1702,606 @@ export default function ScanReportPage() {
                         </svg>
                         <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Executive Summary</h2>
                       </div>
-                    {executiveSummary ? (
-                      <div className="space-y-4">
-                        <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-                          {executiveSummary}
-                        </p>
-                        {/* Coverage line: unique categories across all findings */}
-                        {(() => {
-                          const uniqueCats = Array.from(new Set(
-                            (findings ?? []).flatMap((f) => f.categories ?? [])
-                          ));
-                          return uniqueCats.length > 0 && (
-                            <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
-                              Coverage: {uniqueCats.map(formatCategory).join(' • ')}
-                            </p>
-                          );
-                        })()}
-                        {cveIds.length > 0 && (
-                          <div className="mb-4">
-                            <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>Related security news</h3>
-                            <div className="relative inline-block group">
-                              <Link
-                                href={`/dashboard/cve/${encodeURIComponent(cveIds[0])}`}
-                                className="inline-flex items-center gap-1.5 text-xs text-[var(--brand)] hover:text-[var(--brand)]/80 hover:underline transition-colors"
-                              >
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-                                </svg>
-                                View details for {cveIds[0]}
+                      {executiveSummary ? (
+                        <div className="space-y-4">
+                          <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+                            {executiveSummary}
+                          </p>
+                          {/* Coverage line: unique categories across all findings */}
+                          {(() => {
+                            const uniqueCats = Array.from(new Set(
+                              (findings ?? []).flatMap((f) => f.categories ?? [])
+                            ));
+                            return uniqueCats.length > 0 && (
+                              <p className="mt-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                Coverage: {uniqueCats.map(formatCategory).join(' • ')}
+                              </p>
+                            );
+                          })()}
+                          {cveIds.length > 0 && (
+                            <div className="mb-4">
+                              <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>Related security news</h3>
+                              <div className="relative inline-block group">
+                                <Link
+                                  href={`/dashboard/cve/${encodeURIComponent(cveIds[0])}`}
+                                  className="inline-flex items-center gap-1.5 text-xs text-[var(--brand)] hover:text-[var(--brand)]/80 hover:underline transition-colors"
+                                >
+                                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                                  </svg>
+                                  View details for {cveIds[0]}
+                                  {cveIds.length > 1 && (
+                                    <span className="ml-1 text-[var(--muted)]">({cveIds.length} CVEs)</span>
+                                  )}
+                                </Link>
                                 {cveIds.length > 1 && (
-                                  <span className="ml-1 text-[var(--muted)]">({cveIds.length} CVEs)</span>
-                                )}
-                              </Link>
-                              {cveIds.length > 1 && (
-                                <div className="absolute left-0 top-full mt-2 z-20 hidden group-hover:block w-64 p-3 rounded-lg border shadow-xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                                  <p className="text-xs font-medium mb-2" style={{ color: 'var(--fg)' }}>All CVEs in this scan:</p>
-                                  <div className="flex flex-wrap gap-1.5">
-                                    {cveIds.map((cve) => (
-                                      <span key={cve} className="text-xs font-mono px-1.5 py-0.5 rounded bg-[var(--surface-2)] border" style={{ color: 'var(--muted)', borderColor: 'var(--border)' }}>
-                                        {cve}
-                                      </span>
-                                    ))}
+                                  <div className="absolute left-0 top-full mt-2 z-20 hidden group-hover:block w-64 p-3 rounded-lg border shadow-xl" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                                    <p className="text-xs font-medium mb-2" style={{ color: 'var(--fg)' }}>All CVEs in this scan:</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {cveIds.map((cve) => (
+                                        <span key={cve} className="text-xs font-mono px-1.5 py-0.5 rounded bg-[var(--surface-2)] border" style={{ color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                          {cve}
+                                        </span>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          {topRisks.length > 0 && (
+                            <div>
+                              <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>Top Risks</h3>
+                              <ul className="list-disc list-inside space-y-1">
+                                {topRisks.map((risk, idx) => {
+                                  // Handle both string and object formats
+                                  if (typeof risk === 'string') {
+                                    return (
+                                      <li key={`risk-string-${idx}-${risk.substring(0, 20)}`} className="text-sm" style={{ color: 'var(--fg)' }}>{risk}</li>
+                                    );
+                                  }
+
+                                  // Handle object format with finding details
+                                  const riskObj = risk as TopRisk;
+                                  const severity = riskObj.severity?.toUpperCase() || 'INFO';
+                                  const severityColor = severityClasses(riskObj.severity || 'info');
+
+                                  // Generate stable key from object properties
+                                  const objectKey = `${riskObj.title || 'untitled'}-${riskObj.cve_id || idx}-${riskObj.url || ''}`;
+
+                                  return (
+                                    <li key={objectKey} className="text-sm" style={{ color: 'var(--fg)' }}>
+                                      <span className="mr-2">
+                                        <SeverityBadge severity={riskObj.severity || 'info'} />
+                                      </span>
+                                      <span className="font-semibold">{riskObj.title || 'Untitled finding'}</span>
+                                      {riskObj.cvss_score != null && typeof riskObj.cvss_score === 'number' && (
+                                        <> · CVSS {riskObj.cvss_score.toFixed(1)}</>
+                                      )}
+                                      {riskObj.cve_id && (
+                                        <> · {riskObj.cve_id}</>
+                                      )}
+                                      {riskObj.url && (
+                                        <>
+                                          {' · '}
+                                          <a
+                                            href={riskObj.url}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="underline decoration-dotted text-indigo-400 hover:text-indigo-300"
+                                          >
+                                            View
+                                          </a>
+                                        </>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-center py-12 relative">
+                          {/* Large document icon with dashed circle */}
+                          <div className="relative mx-auto mb-6" style={{ width: '120px', height: '120px' }}>
+                            <svg className="absolute inset-0 w-full h-full" viewBox="0 0 120 120" fill="none">
+                              <circle cx="60" cy="60" r="55" stroke="var(--border)" strokeWidth="2" strokeDasharray="8 4" fill="none" opacity="0.5" />
+                            </svg>
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <svg className="w-16 h-16" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                              </svg>
                             </div>
                           </div>
-                        )}
-                        {topRisks.length > 0 && (
-                          <div>
-                            <h3 className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>Top Risks</h3>
-                            <ul className="list-disc list-inside space-y-1">
-                              {topRisks.map((risk, idx) => {
-                                // Handle both string and object formats
-                                if (typeof risk === 'string') {
-                                  return (
-                                    <li key={`risk-string-${idx}-${risk.substring(0, 20)}`} className="text-sm" style={{ color: 'var(--fg)' }}>{risk}</li>
-                                  );
-                                }
-
-                                // Handle object format with finding details
-                                const riskObj = risk as TopRisk;
-                                const severity = riskObj.severity?.toUpperCase() || 'INFO';
-                                const severityColor = severityClasses(riskObj.severity || 'info');
-
-                                // Generate stable key from object properties
-                                const objectKey = `${riskObj.title || 'untitled'}-${riskObj.cve_id || idx}-${riskObj.url || ''}`;
-
-                                return (
-                                  <li key={objectKey} className="text-sm" style={{ color: 'var(--fg)' }}>
-                                <span className="mr-2">
-                                  <SeverityBadge severity={riskObj.severity || 'info'} />
-                                    </span>
-                                    <span className="font-semibold">{riskObj.title || 'Untitled finding'}</span>
-                                    {riskObj.cvss_score != null && typeof riskObj.cvss_score === 'number' && (
-                                      <> · CVSS {riskObj.cvss_score.toFixed(1)}</>
-                                    )}
-                                    {riskObj.cve_id && (
-                                      <> · {riskObj.cve_id}</>
-                                    )}
-                                    {riskObj.url && (
-                                      <>
-                                        {' · '}
-                                        <a
-                                          href={riskObj.url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="underline decoration-dotted text-indigo-400 hover:text-indigo-300"
-                                        >
-                                          View
-                                        </a>
-                                      </>
-                                    )}
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="text-center py-12 relative">
-                        {/* Large document icon with dashed circle */}
-                        <div className="relative mx-auto mb-6" style={{ width: '120px', height: '120px' }}>
-                          <svg className="absolute inset-0 w-full h-full" viewBox="0 0 120 120" fill="none">
-                            <circle cx="60" cy="60" r="55" stroke="var(--border)" strokeWidth="2" strokeDasharray="8 4" fill="none" opacity="0.5" />
-                          </svg>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <svg className="w-16 h-16" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                          <p className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
+                            Executive summary will be available once the primary vulnerability scanning phase completes.
+                          </p>
+                          {/* Faint brain/gear icon on the right */}
+                          <div className="absolute right-8 top-8 opacity-10">
+                            <svg className="w-24 h-24" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                             </svg>
                           </div>
                         </div>
-                        <p className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
-                          Executive summary will be available once the primary vulnerability scanning phase completes.
-                        </p>
-                        {/* Faint brain/gear icon on the right */}
-                        <div className="absolute right-8 top-8 opacity-10">
-                          <svg className="w-24 h-24" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
-                          </svg>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Findings card */}
-                  <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>
-                        Findings {findingsTotal > 0 && <span style={{ color: 'var(--muted)' }}>{findingsTotal}</span>}
-                      </h2>
-                      <div className="flex items-center gap-3">
-                        {/* Tool filter dropdown */}
-                        {(availableTools.length > 0 || findingsTotal > 0) && (
-                          <select
-                            value={selectedToolFilter}
-                            onChange={(e) => {
-                              setSelectedToolFilter(e.target.value);
-                              setFindingsPage(0);
-                            }}
-                            className="text-sm px-3 py-1.5 rounded-lg border appearance-none cursor-pointer font-medium"
-                            style={{
-                              background: 'var(--surface)',
-                              borderColor: 'var(--border)',
-                              color: 'var(--fg)',
-                              cursor: 'pointer'
-                            }}
-                          >
-                            <option value="all" style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>All Tools</option>
-                            {(availableTools.length > 0 ? availableTools : Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort()).map(toolName => (
-                              <option key={toolName} value={toolName} style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>
-                                {toolName.charAt(0).toUpperCase() + toolName.slice(1)}
-                              </option>
-                            ))}
-                          </select>
-                        )}
-                        {(() => {
-                          const infoCount = findings.filter(f => f.severity?.toLowerCase() === 'info').length;
-                          if (infoCount > 0) {
-                            return (
-                              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={showInfoFindings}
-                                  onChange={(e) => {
-                                    setShowInfoFindings(e.target.checked);
-                                    setFindingsPage(0);
-                                  }}
-                                  className="w-4 h-4 rounded border"
-                                  style={{
-                                    background: showInfoFindings ? 'var(--brand)' : 'var(--surface)',
-                                    borderColor: 'var(--border)',
-                                    accentColor: 'var(--brand)'
-                                  }}
-                                />
-                                <span style={{ color: 'var(--fg)' }}>
-                                  Show informational
-                                </span>
-                              </label>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </div>
+                      )}
                     </div>
 
-                    {/* Pagination controls at top */}
-                    {findingsTotal > findingsLimit && (
-                      <div className="flex items-center justify-between mb-4 pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
-                        <div className="text-sm" style={{ color: 'var(--muted)' }}>
-                          Showing {findingsPage * findingsLimit + 1} - {Math.min((findingsPage + 1) * findingsLimit, findingsTotal)} of {findingsTotal} findings
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => setFindingsPage(prev => Math.max(0, prev - 1))}
-                            disabled={findingsPage === 0 || findingsLoading}
-                            className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            style={{
-                              background: findingsPage === 0 ? 'var(--surface-2)' : 'var(--surface-2)',
-                              borderColor: 'var(--border)',
-                              color: findingsPage === 0 ? 'var(--muted)' : 'var(--fg)'
-                            }}
-                          >
-                            Previous
-                          </button>
-                          <span className="text-sm px-2" style={{ color: 'var(--muted)' }}>
-                            Page {findingsPage + 1} of {Math.ceil(findingsTotal / findingsLimit)}
-                          </span>
-                          <button
-                            onClick={() => setFindingsPage(prev => prev + 1)}
-                            disabled={findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 || findingsLoading}
-                            className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                            style={{
-                              background: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--surface-2)' : 'var(--surface-2)',
-                              borderColor: 'var(--border)',
-                              color: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--muted)' : 'var(--fg)'
-                            }}
-                          >
-                            Next
-                          </button>
+                    {/* Findings card */}
+                    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>
+                          Findings {findingsTotal > 0 && <span style={{ color: 'var(--muted)' }}>{findingsTotal}</span>}
+                        </h2>
+                        <div className="flex items-center gap-3">
+                          {/* Tool filter dropdown */}
+                          {(availableTools.length > 0 || findingsTotal > 0) && (
+                            <select
+                              value={selectedToolFilter}
+                              onChange={(e) => {
+                                setSelectedToolFilter(e.target.value);
+                                setFindingsPage(0);
+                              }}
+                              className="text-sm px-3 py-1.5 rounded-lg border appearance-none cursor-pointer font-medium"
+                              style={{
+                                background: 'var(--surface)',
+                                borderColor: 'var(--border)',
+                                color: 'var(--fg)',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <option value="all" style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>All Tools</option>
+                              {(availableTools.length > 0 ? availableTools : Array.from(new Set(findings.map(f => f.tool_name).filter(Boolean))).sort()).map(toolName => (
+                                <option key={toolName} value={toolName} style={{ background: 'var(--bg)', color: 'var(--fg)', padding: '8px' }}>
+                                  {toolName.charAt(0).toUpperCase() + toolName.slice(1)}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          {(() => {
+                            const infoCount = findings.filter(f => f.severity?.toLowerCase() === 'info').length;
+                            if (infoCount > 0) {
+                              return (
+                                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={showInfoFindings}
+                                    onChange={(e) => {
+                                      setShowInfoFindings(e.target.checked);
+                                      setFindingsPage(0);
+                                    }}
+                                    className="w-4 h-4 rounded border"
+                                    style={{
+                                      background: showInfoFindings ? 'var(--brand)' : 'var(--surface)',
+                                      borderColor: 'var(--border)',
+                                      accentColor: 'var(--brand)'
+                                    }}
+                                  />
+                                  <span style={{ color: 'var(--fg)' }}>
+                                    Show informational
+                                  </span>
+                                </label>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </div>
-                    )}
-                    {findingsLoading ? (
-                      <div className="space-y-4">
-                        {[...Array(3)].map((_, i) => (
-                          <div key={i} className="border rounded-lg p-4 animate-pulse" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
-                            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
-                            <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+
+                      {/* Pagination controls at top */}
+                      {findingsTotal > findingsLimit && (
+                        <div className="flex items-center justify-between mb-4 pb-4 border-b" style={{ borderColor: 'var(--border)' }}>
+                          <div className="text-sm" style={{ color: 'var(--muted)' }}>
+                            Showing {findingsPage * findingsLimit + 1} - {Math.min((findingsPage + 1) * findingsLimit, findingsTotal)} of {findingsTotal} findings
                           </div>
-                        ))}
-                      </div>
-                    ) : findingsError ? (
-                      <div className="text-sm text-red-400 py-4">{findingsError}</div>
-                    ) : findings.length === 0 ? (
-                      <div className="text-center py-8">
-                        <div className="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)', opacity: 0.5 }}>
-                          <svg className="w-6 h-6" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                          </svg>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setFindingsPage(prev => Math.max(0, prev - 1))}
+                              disabled={findingsPage === 0 || findingsLoading}
+                              className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              style={{
+                                background: findingsPage === 0 ? 'var(--surface-2)' : 'var(--surface-2)',
+                                borderColor: 'var(--border)',
+                                color: findingsPage === 0 ? 'var(--muted)' : 'var(--fg)'
+                              }}
+                            >
+                              Previous
+                            </button>
+                            <span className="text-sm px-2" style={{ color: 'var(--muted)' }}>
+                              Page {findingsPage + 1} of {Math.ceil(findingsTotal / findingsLimit)}
+                            </span>
+                            <button
+                              onClick={() => setFindingsPage(prev => prev + 1)}
+                              disabled={findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 || findingsLoading}
+                              className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                              style={{
+                                background: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--surface-2)' : 'var(--surface-2)',
+                                borderColor: 'var(--border)',
+                                color: findingsPage >= Math.ceil(findingsTotal / findingsLimit) - 1 ? 'var(--muted)' : 'var(--fg)'
+                              }}
+                            >
+                              Next
+                            </button>
+                          </div>
                         </div>
-                        <p className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>No findings detected</p>
-                        <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                          {scan?.status === 'completed'
-                            ? 'This scan completed successfully but did not identify any security vulnerabilities or issues.'
-                            : 'Findings will appear here once the scan completes.'}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="space-y-4">
-                        {findings.filter(f => showInfoFindings || f.severity?.toLowerCase() !== 'info').map((finding, idx) => {
-                          // Generate stable key from finding properties
-                          const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
-                          return (
-                            <div key={findingKey} className="border rounded-lg p-4 transition-colors hover:opacity-80 overflow-hidden relative" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
-                              {/* External link icon in top right */}
-                              <button className="absolute top-4 right-4 p-1 rounded hover:opacity-80" style={{ color: 'var(--muted)' }}>
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                </svg>
-                              </button>
-                              
-                              {/* Header: Severity + Status + Title */}
-                              <div className="flex items-start justify-between gap-2 mb-3 pr-8">
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 flex-wrap mb-2">
-                                    <SeverityBadge severity={finding.severity || 'info'} />
-                                    {finding.status && <StatusBadge status={finding.status} />}
-                                    {finding.not_seen_in_latest_scan !== null && (
-                                      finding.not_seen_in_latest_scan ? (
-                                        <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#fef3c7', color: '#92400e', borderColor: '#fbbf24' }}>
-                                          NOT SEEN IN LATEST
-                                        </span>
-                                      ) : (
-                                        <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#d1fae5', color: '#065f46', borderColor: '#10b981' }}>
-                                          STILL PRESENT
-                                        </span>
-                                      )
-                                    )}
-                                  </div>
-                                  <h4 className="font-semibold text-sm break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.title}</h4>
-                                </div>
+                      )}
+                      {findingsLoading ? (
+                        <div className="space-y-4">
+                          {[...Array(3)].map((_, i) => (
+                            <div key={i} className="border rounded-lg p-4 animate-pulse" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}>
+                              <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
+                              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : findingsError ? (
+                        <div className="text-sm text-red-400 py-4">{findingsError}</div>
+                      ) : findings.length === 0 ? (
+                        httpxSurfaceArtifacts && httpxSurfaceArtifacts.payload ? (
+                          <div className="text-left py-6">
+                            <p className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
+                              HTTPX discovered web endpoints for this target.
+                            </p>
+                            <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>
+                              These are surface discovery results (URLs and endpoints) rather than security vulnerabilities. Detailed HTTPX output is available under the Enumeration tab.
+                            </p>
+                            {httpxSurfaceArtifacts.payload.in_scope && (
+                              <div className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>
+                                In-scope endpoints:{' '}
+                                {(httpxSurfaceArtifacts.payload.in_scope['404_groups'] || []).reduce(
+                                  (sum: number, g: any) => sum + (g.count || 0),
+                                  0
+                                ) +
+                                  (httpxSurfaceArtifacts.payload.in_scope.other_endpoints
+                                    ? httpxSurfaceArtifacts.payload.in_scope.other_endpoints.length
+                                    : 0)}
                               </div>
+                            )}
+                            {httpxSurfaceArtifacts.payload.out_of_scope && (
+                              <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                                Out-of-scope endpoints:{' '}
+                                {(httpxSurfaceArtifacts.payload.out_of_scope['404_groups'] || []).reduce(
+                                  (sum: number, g: any) => sum + (g.count || 0),
+                                  0
+                                ) +
+                                  (httpxSurfaceArtifacts.payload.out_of_scope.other_endpoints
+                                    ? httpxSurfaceArtifacts.payload.out_of_scope.other_endpoints.length
+                                    : 0)}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-center py-8">
+                            <div className="w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)', opacity: 0.5 }}>
+                              <svg className="w-6 h-6" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                              </svg>
+                            </div>
+                            <p className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>No findings detected</p>
+                            <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                              {scan?.status === 'completed'
+                                ? 'This scan completed successfully but did not identify any security vulnerabilities or issues.'
+                                : 'Findings will appear here once the scan completes.'}
+                            </p>
+                          </div>
+                        )
+                      ) : (
+                        <div className="space-y-4">
+                          {findings.filter(f => showInfoFindings || f.severity?.toLowerCase() !== 'info').map((finding, idx) => {
+                            // Generate stable key from finding properties
+                            const findingKey = finding.id || `${finding.title || 'finding'}-${finding.url || ''}-${idx}`;
+                            return (
+                              <div key={findingKey} className="border rounded-lg p-4 transition-colors hover:opacity-80 overflow-hidden relative" style={{ borderColor: 'var(--border)', background: 'var(--surface-2)', maxWidth: '100%', wordWrap: 'break-word', overflowWrap: 'break-word' }}>
+                                {/* External link icon in top right */}
+                                <button className="absolute top-4 right-4 p-1 rounded hover:opacity-80" style={{ color: 'var(--muted)' }}>
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                  </svg>
+                                </button>
 
-                              <div className="space-y-3">
-                                {/* 1. Where it was found - ALWAYS SHOW with tolerant logic */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    Where it was found
+                                {/* Header: Severity + Status + Title */}
+                                <div className="flex items-start justify-between gap-2 mb-3 pr-8">
+                                  <div className="flex-1">
+                                    <div className="flex items-center gap-2 flex-wrap mb-2">
+                                      <SeverityBadge severity={finding.severity || 'info'} />
+                                      {finding.status && <StatusBadge status={finding.status} />}
+                                      {finding.not_seen_in_latest_scan !== null && (
+                                        finding.not_seen_in_latest_scan ? (
+                                          <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#fef3c7', color: '#92400e', borderColor: '#fbbf24' }}>
+                                            NOT SEEN IN LATEST
+                                          </span>
+                                        ) : (
+                                          <span className="px-2 py-1 text-xs font-medium rounded-full border" style={{ background: '#d1fae5', color: '#065f46', borderColor: '#10b981' }}>
+                                            STILL PRESENT
+                                          </span>
+                                        )
+                                      )}
+                                    </div>
+                                    <h4 className="font-semibold text-sm break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.title}</h4>
                                   </div>
-                                  {(() => {
-                                    // Check if this is a grouped finding
-                                    const affectedCount = finding.affected_count || 1;
-                                    const instances = finding.instances_sample || [];
-                                    const mostlyStatic = finding.mostly_static || false;
-                                    
-                                    // Tolerant logic: use defaults when missing
-                                    const method = finding.http_method || "GET";
-                                    const url = finding.url || finding.path || null;
-                                    const param = finding.parameter;
+                                </div>
 
-                                    // Show grouped finding if affected_count > 1
-                                    if (affectedCount > 1) {
-                                      return (
-                                        <>
-                                          <div className="text-xs font-medium mb-2" style={{ color: 'var(--fg)' }}>
-                                            This issue affects <strong>{affectedCount}</strong> URL{affectedCount !== 1 ? 's' : ''}
-                                            {mostlyStatic && (
-                                              <span className="ml-2 px-2 py-0.5 text-[10px] rounded border" style={{ background: 'var(--surface)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
-                                                Mostly static assets
-                                              </span>
-                                            )}
-                                          </div>
-                                          {(instances.length > 0 || affectedCount > 1) && (
-                                            <div className="mt-2">
-                                              <button
-                                                onClick={() => {
-                                                  if (!finding.id) return;
-                                                  const findingId = finding.id;
-                                                  const isExpanded = expandedDetails.includes(findingId);
-                                                  
-                                                  if (!isExpanded) {
-                                                    // Expanding - update state first
-                                                    setExpandedDetails(prev => prev.includes(findingId) ? prev : [...prev, findingId]);
-                                                    
-                                                    // Check if we need to load instances
-                                                    const hasAllInstances = expandedFindingInstances[findingId] && expandedFindingInstances[findingId].length >= affectedCount;
-                                                    const isCurrentlyLoading = loadingInstances[findingId] || loadingRef.current[findingId];
-                                                    
-                                                    // Only load if we don't have all instances and we're not already loading
-                                                    if (affectedCount > instances.length && !hasAllInstances && !isCurrentlyLoading) {
-                                                      // Mark as loading immediately to prevent duplicate calls
-                                                      loadingRef.current[findingId] = true;
-                                                      setLoadingInstances(prev => ({ ...prev, [findingId]: true }));
-                                                      setShowAllUrls(prev => ({ ...prev, [findingId]: true }));
-                                                      
-                                                      // Load instances asynchronously
-                                                      loadAllInstances(findingId, true).finally(() => {
-                                                        loadingRef.current[findingId] = false;
+                                <div className="space-y-3">
+                                  {/* 1. Where it was found - ALWAYS SHOW with tolerant logic */}
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                      Where it was found
+                                    </div>
+                                    {(() => {
+                                      // Check if this is a grouped finding
+                                      const affectedCount = finding.affected_count || 1;
+                                      const instances = finding.instances_sample || [];
+                                      const mostlyStatic = finding.mostly_static || false;
+
+                                      // Tolerant logic: use defaults when missing
+                                      const method = finding.http_method || "GET";
+                                      const url = finding.url || finding.path || null;
+                                      const param = finding.parameter;
+
+                                      // Show grouped finding if affected_count > 1
+                                      if (affectedCount > 1) {
+                                        return (
+                                          <>
+                                            <div className="text-xs font-medium mb-2" style={{ color: 'var(--fg)' }}>
+                                              This issue affects <strong>{affectedCount}</strong> payload/URL instance{affectedCount !== 1 ? 's' : ''}
+                                              {mostlyStatic && (
+                                                <span className="ml-2 px-2 py-0.5 text-[10px] rounded border" style={{ background: 'var(--surface)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                                  Mostly static assets
+                                                </span>
+                                              )}
+                                            </div>
+                                            {(instances.length > 0 || affectedCount > 1) && (
+                                              <div className="mt-2">
+                                                <button
+                                                  onClick={() => {
+                                                    if (!finding.id) return;
+                                                    const findingId = finding.id;
+                                                    const isExpanded = expandedDetails.includes(findingId);
+
+                                                    if (!isExpanded) {
+                                                      // Expanding - update state first
+                                                      setExpandedDetails(prev => prev.includes(findingId) ? prev : [...prev, findingId]);
+
+                                                      // Check if we need to load instances
+                                                      const hasAllInstances = expandedFindingInstances[findingId] && expandedFindingInstances[findingId].length >= affectedCount;
+                                                      const isCurrentlyLoading = loadingInstances[findingId] || loadingRef.current[findingId];
+
+                                                      // Only load if we don't have all instances and we're not already loading
+                                                      if (affectedCount > instances.length && !hasAllInstances && !isCurrentlyLoading) {
+                                                        // Mark as loading immediately to prevent duplicate calls
+                                                        loadingRef.current[findingId] = true;
+                                                        setLoadingInstances(prev => ({ ...prev, [findingId]: true }));
+                                                        setShowAllUrls(prev => ({ ...prev, [findingId]: true }));
+
+                                                        // Load instances asynchronously
+                                                        loadAllInstances(findingId, true).finally(() => {
+                                                          loadingRef.current[findingId] = false;
+                                                        });
+                                                      }
+                                                    } else {
+                                                      // Collapsing
+                                                      setExpandedDetails(prev => prev.filter(id => id !== findingId));
+                                                      setShowAllUrls(prev => {
+                                                        const updated = { ...prev };
+                                                        delete updated[findingId];
+                                                        return updated;
                                                       });
                                                     }
-                                                  } else {
-                                                    // Collapsing
-                                                    setExpandedDetails(prev => prev.filter(id => id !== findingId));
-                                                    setShowAllUrls(prev => {
-                                                      const updated = { ...prev };
-                                                      delete updated[findingId];
-                                                      return updated;
-                                                    });
-                                                  }
-                                                }}
-                                                className="text-xs cursor-pointer font-medium mb-2 flex items-center gap-1 hover:opacity-80 transition-opacity"
-                                                style={{ color: 'var(--brand)' }}
-                                              >
-                                                <svg 
-                                                  className={`w-3 h-3 transition-transform ${expandedDetails.includes(finding.id || '') ? 'rotate-180' : ''}`}
-                                                  fill="none" 
-                                                  stroke="currentColor" 
-                                                  viewBox="0 0 24 24"
+                                                  }}
+                                                  className="text-xs cursor-pointer font-medium mb-2 flex items-center gap-1 hover:opacity-80 transition-opacity"
+                                                  style={{ color: 'var(--brand)' }}
                                                 >
-                                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                                </svg>
-                                                {(() => {
-                                                  const findingId = finding.id;
-                                                  const loadedInstances = findingId ? expandedFindingInstances[findingId] : null;
-                                                  const displayedCount = (loadedInstances && loadedInstances.length > 0)
-                                                    ? loadedInstances.length
-                                                    : instances.length;
-                                                  return `View affected URLs (${displayedCount} shown${affectedCount > displayedCount ? ` of ${affectedCount}` : ''})`;
-                                                })()}
-                                              </button>
-                                              {expandedDetails.includes(finding.id || '') && (
-                                                <div className="mt-2">
+                                                  <svg
+                                                    className={`w-3 h-3 transition-transform ${expandedDetails.includes(finding.id || '') ? 'rotate-180' : ''}`}
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                  >
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                  </svg>
                                                   {(() => {
                                                     const findingId = finding.id;
-                                                    const isLoading = findingId && loadingInstances[findingId];
                                                     const loadedInstances = findingId ? expandedFindingInstances[findingId] : null;
-                                                    // Check if we have all instances by comparing with affected_count
-                                                    const hasAllInstances = loadedInstances && loadedInstances.length >= affectedCount;
-                                                    const showingAll = findingId && showAllUrls[findingId];
-                                                    
-                                                    // Use all instances if they're loaded, otherwise use sample
-                                                    // The key is: if we have loaded instances, show them (regardless of showingAll flag)
-                                                    const allInstances = (loadedInstances && loadedInstances.length > 0)
-                                                      ? loadedInstances 
-                                                      : instances;
-                                                    
-                                                    // Debug logging
-                                                    if (findingId && affectedCount > 1) {
-                                                      console.log('🔍 Rendering instances for', findingId, {
-                                                        hasAllInstances,
-                                                        loadedCount: loadedInstances?.length || 0,
-                                                        sampleCount: instances.length,
-                                                        allInstancesCount: allInstances.length,
-                                                        affectedCount,
-                                                        isLoading,
-                                                        expandedFindingInstances: Object.keys(expandedFindingInstances),
-                                                        findingInExpanded: findingId in expandedFindingInstances
-                                                      });
-                                                    }
-                                                    
-                                                    // Filter by search term if present
-                                                    const searchTerm = findingId ? (urlSearchTerm[findingId] || '').toLowerCase() : '';
-                                                    const filteredInstances = searchTerm
-                                                      ? allInstances.filter(inst => {
+                                                    const displayedCount = (loadedInstances && loadedInstances.length > 0)
+                                                      ? loadedInstances.length
+                                                      : instances.length;
+                                                    return `View affected URLs (${displayedCount} shown${affectedCount > displayedCount ? ` of ${affectedCount}` : ''})`;
+                                                  })()}
+                                                </button>
+                                                {expandedDetails.includes(finding.id || '') && (
+                                                  <div className="mt-2">
+                                                    {(() => {
+                                                      const findingId = finding.id;
+                                                      const isLoading = findingId && loadingInstances[findingId];
+                                                      const loadedInstances = findingId ? expandedFindingInstances[findingId] : null;
+                                                      // Check if we have all instances by comparing with affected_count
+                                                      const hasAllInstances = loadedInstances && loadedInstances.length >= affectedCount;
+                                                      const showingAll = findingId && showAllUrls[findingId];
+
+                                                      // Use all instances if they're loaded, otherwise use sample
+                                                      // The key is: if we have loaded instances, show them (regardless of showingAll flag)
+                                                      const allInstances = (loadedInstances && loadedInstances.length > 0)
+                                                        ? loadedInstances
+                                                        : instances;
+
+                                                      // Debug logging
+                                                      if (findingId && affectedCount > 1) {
+                                                        console.log('🔍 Rendering instances for', findingId, {
+                                                          hasAllInstances,
+                                                          loadedCount: loadedInstances?.length || 0,
+                                                          sampleCount: instances.length,
+                                                          allInstancesCount: allInstances.length,
+                                                          affectedCount,
+                                                          isLoading,
+                                                          expandedFindingInstances: Object.keys(expandedFindingInstances),
+                                                          findingInExpanded: findingId in expandedFindingInstances
+                                                        });
+                                                      }
+
+                                                      // Filter by search term if present
+                                                      const searchTerm = findingId ? (urlSearchTerm[findingId] || '').toLowerCase() : '';
+                                                      const filteredInstances = searchTerm
+                                                        ? allInstances.filter(inst => {
                                                           const url = (inst.url || inst.path || '').toLowerCase();
                                                           const param = (inst.parameter || '').toLowerCase();
                                                           return url.includes(searchTerm) || param.includes(searchTerm);
                                                         })
-                                                      : allInstances;
-                                                    
-                                                    // Copy all URLs function
-                                                    const copyAllUrls = () => {
-                                                      const urlsToCopy = allInstances
-                                                        .map(inst => inst.url || inst.path || '')
-                                                        .filter(Boolean)
-                                                        .join('\n');
-                                                      if (urlsToCopy) {
-                                                        navigator.clipboard.writeText(urlsToCopy).then(() => {
-                                                          alert(`Copied ${allInstances.length} URL${allInstances.length !== 1 ? 's' : ''} to clipboard`);
-                                                        }).catch(err => {
-                                                          console.error('Failed to copy:', err);
-                                                          alert('Failed to copy URLs to clipboard');
-                                                        });
-                                                      }
-                                                    };
-                                                    
-                                                    return (
-                                                      <>
-                                                        {/* Action buttons */}
-                                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                                          {!hasAllInstances && affectedCount > allInstances.length && (
-                                                            <button
-                                                              onClick={() => {
-                                                                if (findingId) {
-                                                                  setShowAllUrls(prev => ({ ...prev, [findingId]: true }));
-                                                                  if (!hasAllInstances && !isLoading) {
-                                                                    loadAllInstances(findingId, true);
+                                                        : allInstances;
+
+                                                      // Copy all URLs function
+                                                      const copyAllUrls = () => {
+                                                        const urlsToCopy = allInstances
+                                                          .map(inst => inst.url || inst.path || '')
+                                                          .filter(Boolean)
+                                                          .join('\n');
+                                                        if (urlsToCopy) {
+                                                          navigator.clipboard.writeText(urlsToCopy).then(() => {
+                                                            alert(`Copied ${allInstances.length} URL${allInstances.length !== 1 ? 's' : ''} to clipboard`);
+                                                          }).catch(err => {
+                                                            console.error('Failed to copy:', err);
+                                                            alert('Failed to copy URLs to clipboard');
+                                                          });
+                                                        }
+                                                      };
+
+                                                      return (
+                                                        <>
+                                                          {/* Action buttons */}
+                                                          <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                            {!hasAllInstances && affectedCount > allInstances.length && (
+                                                              <button
+                                                                onClick={() => {
+                                                                  if (findingId) {
+                                                                    setShowAllUrls(prev => ({ ...prev, [findingId]: true }));
+                                                                    if (!hasAllInstances && !isLoading) {
+                                                                      loadAllInstances(findingId, true);
+                                                                    }
                                                                   }
-                                                                }
-                                                              }}
-                                                              disabled={isLoading}
-                                                              className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
-                                                              style={{ 
-                                                                background: 'var(--surface)', 
-                                                                borderColor: 'var(--border)',
-                                                                color: 'var(--fg)'
-                                                              }}
-                                                            >
-                                                              {isLoading ? 'Loading...' : 'Show all URLs'}
-                                                            </button>
-                                                          )}
-                                                          {hasAllInstances && allInstances.length > 0 && (
-                                                            <button
-                                                              onClick={copyAllUrls}
-                                                              className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity"
-                                                              style={{ 
-                                                                background: 'var(--surface)', 
-                                                                borderColor: 'var(--border)',
-                                                                color: 'var(--fg)'
-                                                              }}
-                                                            >
-                                                              Copy all ({allInstances.length})
-                                                            </button>
-                                                          )}
-                                                          {hasAllInstances && (
-                                                            <input
-                                                              type="text"
-                                                              placeholder="Search URLs..."
-                                                              value={findingId ? (urlSearchTerm[findingId] || '') : ''}
-                                                              onChange={(e) => {
-                                                                if (findingId) {
-                                                                  setUrlSearchTerm(prev => ({ ...prev, [findingId]: e.target.value }));
-                                                                }
-                                                              }}
-                                                              className="text-xs px-2 py-1 rounded border flex-1 min-w-[150px]"
-                                                              style={{ 
-                                                                background: 'var(--surface)', 
-                                                                borderColor: 'var(--border)',
-                                                                color: 'var(--fg)'
-                                                              }}
-                                                            />
-                                                          )}
-                                                        </div>
-                                                        
-                                                        {/* Status message */}
-                                                        <div className="text-xs mb-2 font-medium" style={{ color: 'var(--muted)' }}>
-                                                          {isLoading && !hasAllInstances
-                                                            ? `Loading all URLs... (${allInstances.length} shown so far${allInstances.length < affectedCount ? ` of ${affectedCount}` : ''})`
-                                                            : hasAllInstances 
-                                                            ? `Showing all ${allInstances.length} of ${affectedCount} URL${affectedCount !== 1 ? 's' : ''}${searchTerm ? ` (${filteredInstances.length} filtered)` : ''}`
-                                                            : `Showing ${allInstances.length} of ${affectedCount} URL${affectedCount !== 1 ? 's' : ''}${searchTerm ? ` (${filteredInstances.length} filtered)` : ''}`
-                                                          }
-                                                        </div>
-                                                        
-                                                        {/* Loading state - show only if we have no instances yet */}
-                                                        {isLoading && filteredInstances.length === 0 && (
-                                                          <div className="text-xs text-center py-4" style={{ color: 'var(--muted)' }}>
-                                                            Loading all URLs...
+                                                                }}
+                                                                disabled={isLoading}
+                                                                className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                style={{
+                                                                  background: 'var(--surface)',
+                                                                  borderColor: 'var(--border)',
+                                                                  color: 'var(--fg)'
+                                                                }}
+                                                              >
+                                                                {isLoading ? 'Loading...' : 'Show all URLs'}
+                                                              </button>
+                                                            )}
+                                                            {hasAllInstances && allInstances.length > 0 && (
+                                                              <button
+                                                                onClick={copyAllUrls}
+                                                                className="text-xs px-2 py-1 rounded border hover:opacity-80 transition-opacity"
+                                                                style={{
+                                                                  background: 'var(--surface)',
+                                                                  borderColor: 'var(--border)',
+                                                                  color: 'var(--fg)'
+                                                                }}
+                                                              >
+                                                                Copy all ({allInstances.length})
+                                                              </button>
+                                                            )}
+                                                            {hasAllInstances && (
+                                                              <input
+                                                                type="text"
+                                                                placeholder="Search URLs..."
+                                                                value={findingId ? (urlSearchTerm[findingId] || '') : ''}
+                                                                onChange={(e) => {
+                                                                  if (findingId) {
+                                                                    setUrlSearchTerm(prev => ({ ...prev, [findingId]: e.target.value }));
+                                                                  }
+                                                                }}
+                                                                className="text-xs px-2 py-1 rounded border flex-1 min-w-[150px]"
+                                                                style={{
+                                                                  background: 'var(--surface)',
+                                                                  borderColor: 'var(--border)',
+                                                                  color: 'var(--fg)'
+                                                                }}
+                                                              />
+                                                            )}
                                                           </div>
-                                                        )}
-                                                        
-                                                        {/* Empty state */}
-                                                        {!isLoading && filteredInstances.length === 0 && allInstances.length === 0 && (
-                                                          <div className="text-xs text-center py-4" style={{ color: 'var(--muted)' }}>
-                                                            {searchTerm 
-                                                              ? 'No URLs match your search'
-                                                              : hasAllInstances && allInstances.length === 0
-                                                              ? `No URLs available in database. This finding affects ${affectedCount} URL${affectedCount !== 1 ? 's' : ''} but instance data was not fully stored.`
-                                                              : 'No URLs available'
+
+                                                          {/* Status message */}
+                                                          <div className="text-xs mb-2 font-medium" style={{ color: 'var(--muted)' }}>
+                                                            {isLoading && !hasAllInstances
+                                                              ? `Loading all URLs... (${allInstances.length} shown so far${allInstances.length < affectedCount ? ` of ${affectedCount}` : ''})`
+                                                              : hasAllInstances
+                                                                ? `Showing all ${allInstances.length} of ${affectedCount} URL${affectedCount !== 1 ? 's' : ''}${searchTerm ? ` (${filteredInstances.length} filtered)` : ''}`
+                                                                : `Showing ${allInstances.length} of ${affectedCount} URL${affectedCount !== 1 ? 's' : ''}${searchTerm ? ` (${filteredInstances.length} filtered)` : ''}`
                                                             }
                                                           </div>
-                                                        )}
-                                                        
-                                                        {/* URL list with virtualization for large lists */}
-                                                        {/* Show instances even while loading if we have any */}
-                                                        {filteredInstances.length > 0 && (
-                                                          <div 
-                                                            className="space-y-1 overflow-y-auto"
-                                                            style={{ 
-                                                              maxHeight: filteredInstances.length > 50 ? '400px' : '300px',
-                                                              // Basic virtualization: only render visible items for very large lists
-                                                              // For lists > 200, we'll use a simpler approach
-                                                            }}
-                                                          >
-                                                            {filteredInstances.length > 200 ? (
-                                                              // For very large lists, show first 100 + indicator
-                                                              <>
-                                                                {filteredInstances.slice(0, 100).map((inst, instIdx) => (
+
+                                                          {/* Loading state - show only if we have no instances yet */}
+                                                          {isLoading && filteredInstances.length === 0 && (
+                                                            <div className="text-xs text-center py-4" style={{ color: 'var(--muted)' }}>
+                                                              Loading all URLs...
+                                                            </div>
+                                                          )}
+
+                                                          {/* Empty state */}
+                                                          {!isLoading && filteredInstances.length === 0 && allInstances.length === 0 && (
+                                                            <div className="text-xs text-center py-4" style={{ color: 'var(--muted)' }}>
+                                                              {searchTerm
+                                                                ? 'No URLs match your search'
+                                                                : hasAllInstances && allInstances.length === 0
+                                                                  ? `No URLs available in database. This finding affects ${affectedCount} URL${affectedCount !== 1 ? 's' : ''} but instance data was not fully stored.`
+                                                                  : 'No URLs available'
+                                                              }
+                                                            </div>
+                                                          )}
+
+                                                          {/* URL list with virtualization for large lists */}
+                                                          {/* Show instances even while loading if we have any */}
+                                                          {filteredInstances.length > 0 && (
+                                                            <div
+                                                              className="space-y-1 overflow-y-auto"
+                                                              style={{
+                                                                maxHeight: filteredInstances.length > 50 ? '400px' : '300px',
+                                                                // Basic virtualization: only render visible items for very large lists
+                                                                // For lists > 200, we'll use a simpler approach
+                                                              }}
+                                                            >
+                                                              {filteredInstances.length > 200 ? (
+                                                                // For very large lists, show first 100 + indicator
+                                                                <>
+                                                                  {filteredInstances.slice(0, 100).map((inst, instIdx) => (
+                                                                    <div key={instIdx} className="text-xs font-mono p-2 rounded border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                                                                      <div className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
+                                                                        <span className="font-semibold">{inst.http_method || method}</span>{' '}
+                                                                        <span>{inst.url || inst.path || 'N/A'}</span>
+                                                                      </div>
+                                                                      {inst.parameter && (
+                                                                        <div className="text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
+                                                                          Parameter: <span className="font-mono">{inst.parameter}</span>
+                                                                        </div>
+                                                                      )}
+                                                                      {(inst.marker || inst.instance_severity || inst.payload_decoded || inst.payload_raw) && (
+                                                                        <div className="text-[10px] mt-1 break-all" style={{ color: 'var(--muted)' }}>
+                                                                          {inst.marker && <span>Marker: <span className="font-semibold">{inst.marker}</span></span>}
+                                                                          {inst.instance_severity && <span>{inst.marker ? ' | ' : ''}Severity: <span className="font-semibold">{inst.instance_severity.toUpperCase()}</span></span>}
+                                                                          {(inst.payload_decoded || inst.payload_raw) && (
+                                                                            <span>
+                                                                              {(inst.marker || inst.instance_severity) ? ' | ' : ''}
+                                                                              Payload: <span className="font-mono">{(inst.payload_decoded || inst.payload_raw || '').slice(0, 120)}{((inst.payload_decoded || inst.payload_raw || '').length > 120) ? '...' : ''}</span>
+                                                                            </span>
+                                                                          )}
+                                                                        </div>
+                                                                      )}
+                                                                      {inst.is_static_asset && (
+                                                                        <span className="text-[10px] px-1 py-0.5 rounded border ml-1" style={{ background: 'var(--surface-2)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                                                          Static
+                                                                        </span>
+                                                                      )}
+                                                                    </div>
+                                                                  ))}
+                                                                  <div className="text-xs text-center py-2 italic" style={{ color: 'var(--muted)' }}>
+                                                                    ... and {filteredInstances.length - 100} more URL{filteredInstances.length - 100 !== 1 ? 's' : ''} (showing first 100, use search to find specific URLs)
+                                                                  </div>
+                                                                </>
+                                                              ) : (
+                                                                // For smaller lists, show all
+                                                                filteredInstances.map((inst, instIdx) => (
                                                                   <div key={instIdx} className="text-xs font-mono p-2 rounded border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
                                                                     <div className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
                                                                       <span className="font-semibold">{inst.http_method || method}</span>{' '}
@@ -2212,563 +2312,455 @@ export default function ScanReportPage() {
                                                                         Parameter: <span className="font-mono">{inst.parameter}</span>
                                                                       </div>
                                                                     )}
+                                                                    {(inst.marker || inst.instance_severity || inst.payload_decoded || inst.payload_raw) && (
+                                                                      <div className="text-[10px] mt-1 break-all" style={{ color: 'var(--muted)' }}>
+                                                                        {inst.marker && <span>Marker: <span className="font-semibold">{inst.marker}</span></span>}
+                                                                        {inst.instance_severity && <span>{inst.marker ? ' | ' : ''}Severity: <span className="font-semibold">{inst.instance_severity.toUpperCase()}</span></span>}
+                                                                        {(inst.payload_decoded || inst.payload_raw) && (
+                                                                          <span>
+                                                                            {(inst.marker || inst.instance_severity) ? ' | ' : ''}
+                                                                            Payload: <span className="font-mono">{(inst.payload_decoded || inst.payload_raw || '').slice(0, 120)}{((inst.payload_decoded || inst.payload_raw || '').length > 120) ? '...' : ''}</span>
+                                                                          </span>
+                                                                        )}
+                                                                      </div>
+                                                                    )}
                                                                     {inst.is_static_asset && (
                                                                       <span className="text-[10px] px-1 py-0.5 rounded border ml-1" style={{ background: 'var(--surface-2)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
                                                                         Static
                                                                       </span>
                                                                     )}
                                                                   </div>
-                                                                ))}
-                                                                <div className="text-xs text-center py-2 italic" style={{ color: 'var(--muted)' }}>
-                                                                  ... and {filteredInstances.length - 100} more URL{filteredInstances.length - 100 !== 1 ? 's' : ''} (showing first 100, use search to find specific URLs)
-                                                                </div>
-                                                              </>
-                                                            ) : (
-                                                              // For smaller lists, show all
-                                                              filteredInstances.map((inst, instIdx) => (
-                                                                <div key={instIdx} className="text-xs font-mono p-2 rounded border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                                                                  <div className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>
-                                                                    <span className="font-semibold">{inst.http_method || method}</span>{' '}
-                                                                    <span>{inst.url || inst.path || 'N/A'}</span>
-                                                                  </div>
-                                                                  {inst.parameter && (
-                                                                    <div className="text-[10px] mt-1" style={{ color: 'var(--muted)' }}>
-                                                                      Parameter: <span className="font-mono">{inst.parameter}</span>
-                                                                    </div>
-                                                                  )}
-                                                                  {inst.is_static_asset && (
-                                                                    <span className="text-[10px] px-1 py-0.5 rounded border ml-1" style={{ background: 'var(--surface-2)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
-                                                                      Static
-                                                                    </span>
-                                                                  )}
-                                                                </div>
-                                                              ))
-                                                            )}
-                                                          </div>
-                                                        )}
-                                                      </>
-                                                    );
-                                                  })()}
-                                                </div>
-                                              )}
-                                            </div>
-                                          )}
-                                          {instances.length === 0 && url && (
-                                            <div className="text-xs font-mono break-all overflow-wrap-anywhere" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
-                                              <span className="font-semibold">{method}</span>{' '}
-                                              <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
-                                            </div>
-                                          )}
-                                        </>
-                                      );
-                                    }
+                                                                ))
+                                                              )}
+                                                            </div>
+                                                          )}
+                                                        </>
+                                                      );
+                                                    })()}
+                                                  </div>
+                                                )}
+                                              </div>
+                                            )}
+                                            {instances.length === 0 && url && (
+                                              <div className="text-xs font-mono break-all overflow-wrap-anywhere" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+                                                <span className="font-semibold">{method}</span>{' '}
+                                                <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
+                                              </div>
+                                            )}
+                                          </>
+                                        );
+                                      }
 
-                                    // Single finding (legacy behavior)
-                                    if (!url) {
-                                      return (
-                                        <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
-                                          Location information not available
-                                        </p>
-                                      );
-                                    }
+                                      // Single finding (legacy behavior)
+                                      if (!url) {
+                                        return (
+                                          <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                            Location information not available
+                                          </p>
+                                        );
+                                      }
 
-                                    return (
-                                      <>
-                                        <div className="text-xs font-mono break-all overflow-wrap-anywhere p-2 rounded" style={{ background: 'var(--bg)', color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
-                                          <span className="font-semibold">{method}</span>{' '}
-                                          <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
-                                        </div>
-                                        {param && (
-                                          <div className="text-xs break-words mt-1" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
-                                            Parameter: <span className="font-mono font-medium break-all" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{param}</span>
-                                          </div>
-                                        )}
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-
-                                {/* 2. What we found - ALWAYS SHOW */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    What we found
-                                  </div>
-                                  {finding.description ? (
-                                    <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                      {finding.description}
-                                    </p>
-                                  ) : (
-                                    <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
-                                      No description available
-                                    </p>
-                                  )}
-                                </div>
-
-                                {/* 3. Why it matters - ALWAYS SHOW with smart fallback */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    Why it matters
-                                  </div>
-                                  {(() => {
-                                    // Prefer backend impact_summary
-                                    if (finding.impact_summary) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          {finding.impact_summary}
-                                        </p>
-                                      );
-                                    }
-
-                                    // Derive from vuln_type if available
-                                    const vulnType = finding.vuln_type?.toLowerCase() || '';
-                                    if (vulnType.includes('xss')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          An attacker could run JavaScript in the user's browser, steal sessions, or act as the logged-in user.
-                                        </p>
-                                      );
-                                    }
-                                    if (vulnType.includes('sqli') || vulnType.includes('sql')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          An attacker could read or modify data in your database and potentially gain full control of the application.
-                                        </p>
-                                      );
-                                    }
-                                    if (vulnType.includes('open') && vulnType.includes('port')) {
-                                      return (
-                                        <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                          Exposed services can be attacked or abused if they are misconfigured, outdated, or unnecessary.
-                                        </p>
-                                      );
-                                    }
-
-                                    // Generic fallback
-                                    return (
-                                      <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                        This issue could pose a security risk to your application.
-                                      </p>
-                                    );
-                                  })()}
-                                </div>
-
-                                {/* 4. How to fix it - ALWAYS SHOW, prefer backend remediation */}
-                                <div className="space-y-1">
-                                  <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
-                                    How to fix it
-                                  </div>
-                                  {(() => {
-                                    // Prefer backend remediation fields
-                                    const hasRemediation = finding.remediation_summary || finding.remediation_steps || (finding as any).default_remediation_steps || finding.recommendation;
-
-                                    if (hasRemediation) {
                                       return (
                                         <>
-                                          {finding.remediation_summary && (
-                                            <p className="text-xs mb-1 break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                              {finding.remediation_summary}
-                                            </p>
-                                          )}
-                                          {(finding.remediation_steps || (finding as any).default_remediation_steps) && (
-                                            <ul className="text-xs list-disc list-inside space-y-0.5 break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                              {(finding.remediation_steps || (finding as any).default_remediation_steps || '')
-                                                .split('\n')
-                                                .filter(s => s.trim())
-                                                .map((step, idx) => (
-                                                  <li key={idx} className="break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{step.trim()}</li>
-                                                ))}
-                                            </ul>
-                                          )}
-                                          {finding.recommendation && !finding.remediation_summary && !finding.remediation_steps && (
-                                            <p className="text-xs italic break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.recommendation}</p>
+                                          <div className="text-xs font-mono break-all overflow-wrap-anywhere p-2 rounded" style={{ background: 'var(--bg)', color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere', maxWidth: '100%' }}>
+                                            <span className="font-semibold">{method}</span>{' '}
+                                            <span className="break-all" style={{ wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{url}</span>
+                                          </div>
+                                          {param && (
+                                            <div className="text-xs break-words mt-1" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                                              Parameter: <span className="font-mono font-medium break-all" style={{ color: 'var(--fg)', wordBreak: 'break-all', overflowWrap: 'anywhere' }}>{param}</span>
+                                            </div>
                                           )}
                                         </>
                                       );
-                                    }
+                                    })()}
+                                  </div>
 
-                                    // Only show fallback if truly no remediation available
-                                    return (
-                                      <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
-                                        Remediation guidance for this specific issue is not available yet. Review the technical details or consult your security team.
+                                  {/* 2. What we found - ALWAYS SHOW */}
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                      What we found
+                                    </div>
+                                    {finding.description ? (
+                                      <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                        {finding.description}
                                       </p>
-                                    );
-                                  })()}
-                                </div>
-                              </div>
-
-                              {/* CVE/CWE/CVSS badges */}
-                              {(finding.cve_id || finding.cwe_id || (finding.cvss_score !== null && finding.cvss_score !== undefined)) && (
-                                <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-                                  {finding.cve_id && (
-                                    <Link
-                                      href={`/dashboard/cve/${encodeURIComponent(finding.cve_id)}`}
-                                      className="px-2 py-1 text-xs font-mono rounded border hover:opacity-80 transition-opacity cursor-pointer"
-                                      style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
-                                      title={`View details for ${finding.cve_id}`}
-                                    >
-                                      CVE: {finding.cve_id}
-                                    </Link>
-                                  )}
-                                  {finding.cwe_id && (
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setSelectedCweId(finding.cwe_id || null);
-                                        setCweDrawerOpen(true);
-                                      }}
-                                      className="px-2 py-1 text-xs font-mono rounded border transition-colors cursor-pointer"
-                                      style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
-                                      onMouseEnter={(e) => {
-                                        e.currentTarget.style.background = 'var(--surface-2)';
-                                      }}
-                                      onMouseLeave={(e) => {
-                                        e.currentTarget.style.background = 'var(--surface)';
-                                      }}
-                                      aria-label={`View CWE-${String(finding.cwe_id).replace(/^CWE-/i, '')} details`}
-                                    >
-                                      CWE: {finding.cwe_id}
-                                    </button>
-                                  )}
-                                  {finding.cvss_score !== null && finding.cvss_score !== undefined && typeof finding.cvss_score === 'number' && (
-                                    <span className="px-2 py-1 text-xs rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
-                                      CVSS: {finding.cvss_score.toFixed(1)}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Lifecycle info */}
-                              {(finding.first_seen_at || finding.last_seen_at || finding.found_count) && (
-                                <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-                                  <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Lifecycle</p>
-                                  <div className="text-xs space-y-1" style={{ color: 'var(--muted)' }}>
-                                    {finding.first_seen_at && (
-                                      <p>First seen: {formatDateTime(finding.first_seen_at)}</p>
-                                    )}
-                                    {finding.last_seen_at && (
-                                      <p>Last seen: {formatDateTime(finding.last_seen_at)}</p>
-                                    )}
-                                    {finding.found_count && finding.found_count > 1 && (
-                                      <p>Seen in {finding.found_count} scans</p>
+                                    ) : (
+                                      <p className="text-xs italic" style={{ color: 'var(--muted)' }}>
+                                        No description available
+                                      </p>
                                     )}
                                   </div>
-                                </div>
-                              )}
 
-                              {/* Action Buttons */}
-                              <div className="flex items-center gap-2 mt-4 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
-                                {(finding.remediation_summary || finding.remediation_steps || finding.recommendation) && (
-                                  <button
-                                    className="px-3 py-1.5 text-xs font-medium rounded border transition hover:opacity-80"
-                                    style={{ background: 'var(--brand)', color: '#ffffff', borderColor: 'var(--brand)' }}
-                                    onClick={() => {
-                                      // Scroll to remediation section or open drawer
-                                      const details = document.querySelector(`[data-finding-id="${finding.id || findingKey}"] details`);
-                                      if (details) {
-                                        (details as HTMLDetailsElement).open = true;
-                                        details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                  {/* 3. Why it matters - ALWAYS SHOW with smart fallback */}
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                      Why it matters
+                                    </div>
+                                    {(() => {
+                                      // Prefer backend impact_summary
+                                      if (finding.impact_summary) {
+                                        return (
+                                          <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                            {finding.impact_summary}
+                                          </p>
+                                        );
                                       }
-                                    }}
-                                  >
-                                    View Remediation
-                                  </button>
+
+                                      // Derive from vuln_type if available
+                                      const vulnType = finding.vuln_type?.toLowerCase() || '';
+                                      if (vulnType.includes('xss')) {
+                                        return (
+                                          <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                            An attacker could run JavaScript in the user's browser, steal sessions, or act as the logged-in user.
+                                          </p>
+                                        );
+                                      }
+                                      if (vulnType.includes('sqli') || vulnType.includes('sql')) {
+                                        return (
+                                          <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                            An attacker could read or modify data in your database and potentially gain full control of the application.
+                                          </p>
+                                        );
+                                      }
+                                      if (vulnType.includes('open') && vulnType.includes('port')) {
+                                        return (
+                                          <p className="text-xs leading-relaxed break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                            Exposed services can be attacked or abused if they are misconfigured, outdated, or unnecessary.
+                                          </p>
+                                        );
+                                      }
+
+                                      // Generic fallback
+                                      return (
+                                        <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          This issue could pose a security risk to your application.
+                                        </p>
+                                      );
+                                    })()}
+                                  </div>
+
+                                  {/* 4. How to fix it - ALWAYS SHOW, prefer backend remediation */}
+                                  <div className="space-y-1">
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
+                                      How to fix it
+                                    </div>
+                                    {(() => {
+                                      // Prefer backend remediation fields
+                                      const hasRemediation = finding.remediation_summary || finding.remediation_steps || (finding as any).default_remediation_steps || finding.recommendation;
+
+                                      if (hasRemediation) {
+                                        return (
+                                          <>
+                                            {finding.remediation_summary && (
+                                              <p className="text-xs mb-1 break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                                {finding.remediation_summary}
+                                              </p>
+                                            )}
+                                            {(finding.remediation_steps || (finding as any).default_remediation_steps) && (
+                                              <ul className="text-xs list-disc list-inside space-y-0.5 break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                                {(finding.remediation_steps || (finding as any).default_remediation_steps || '')
+                                                  .split('\n')
+                                                  .filter(s => s.trim())
+                                                  .map((step, idx) => (
+                                                    <li key={idx} className="break-words" style={{ wordBreak: 'break-word', overflowWrap: 'break-word' }}>{step.trim()}</li>
+                                                  ))}
+                                              </ul>
+                                            )}
+                                            {finding.recommendation && !finding.remediation_summary && !finding.remediation_steps && (
+                                              <p className="text-xs italic break-words" style={{ color: 'var(--fg)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>{finding.recommendation}</p>
+                                            )}
+                                          </>
+                                        );
+                                      }
+
+                                      // Only show fallback if truly no remediation available
+                                      return (
+                                        <p className="text-xs italic break-words" style={{ color: 'var(--muted)', wordBreak: 'break-word', overflowWrap: 'break-word', maxWidth: '100%' }}>
+                                          Remediation guidance for this specific issue is not available yet. Review the technical details or consult your security team.
+                                        </p>
+                                      );
+                                    })()}
+                                  </div>
+                                </div>
+
+                                {/* CVE/CWE/CVSS badges */}
+                                {(finding.cve_id || finding.cwe_id || (finding.cvss_score !== null && finding.cvss_score !== undefined)) && (
+                                  <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                                    {finding.cve_id && (
+                                      <Link
+                                        href={`/dashboard/cve/${encodeURIComponent(finding.cve_id)}`}
+                                        className="px-2 py-1 text-xs font-mono rounded border hover:opacity-80 transition-opacity cursor-pointer"
+                                        style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                                        title={`View details for ${finding.cve_id}`}
+                                      >
+                                        CVE: {finding.cve_id}
+                                      </Link>
+                                    )}
+                                    {finding.cwe_id && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          setSelectedCweId(finding.cwe_id || null);
+                                          setCweDrawerOpen(true);
+                                        }}
+                                        className="px-2 py-1 text-xs font-mono rounded border transition-colors cursor-pointer"
+                                        style={{ background: 'var(--surface)', color: 'var(--brand)', borderColor: 'var(--border)' }}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.background = 'var(--surface-2)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.background = 'var(--surface)';
+                                        }}
+                                        aria-label={`View CWE-${String(finding.cwe_id).replace(/^CWE-/i, '')} details`}
+                                      >
+                                        CWE: {finding.cwe_id}
+                                      </button>
+                                    )}
+                                    {finding.cvss_score !== null && finding.cvss_score !== undefined && typeof finding.cvss_score === 'number' && (
+                                      <span className="px-2 py-1 text-xs rounded border" style={{ background: 'var(--surface)', color: 'var(--fg)', borderColor: 'var(--border)' }}>
+                                        CVSS: {finding.cvss_score.toFixed(1)}
+                                      </span>
+                                    )}
+                                  </div>
                                 )}
-                                <details>
-                                  <summary className="px-3 py-1.5 text-xs font-medium rounded border cursor-pointer list-none transition hover:opacity-80" style={{ background: 'transparent', color: 'var(--muted)', borderColor: 'var(--border)' }}>
-                                    <span className="flex items-center gap-1">
-                                      Technical details
-                                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                      </svg>
-                                    </span>
-                                  </summary>
-                                  <div className="mt-2 p-3 rounded-lg border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                                    <div className="space-y-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                      {finding.tool_name && (
-                                        <div>
-                                          <span className="font-medium" style={{ color: 'var(--fg)' }}>Detected by: </span>
-                                          <span className="font-mono">{finding.tool_name}</span>
-                                        </div>
+
+                                {/* Lifecycle info */}
+                                {(finding.first_seen_at || finding.last_seen_at || finding.found_count) && (
+                                  <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                                    <p className="text-xs font-medium mb-1" style={{ color: 'var(--fg)' }}>Lifecycle</p>
+                                    <div className="text-xs space-y-1" style={{ color: 'var(--muted)' }}>
+                                      {finding.first_seen_at && (
+                                        <p>First seen: {formatDateTime(finding.first_seen_at)}</p>
                                       )}
-                                      {finding.categories && finding.categories.length > 0 && (
-                                        <div>
-                                          <span className="font-medium" style={{ color: 'var(--fg)' }}>Categories: </span>
-                                          <span>{finding.categories.map(cat => formatCategory(cat)).join(', ')}</span>
-                                        </div>
+                                      {finding.last_seen_at && (
+                                        <p>Last seen: {formatDateTime(finding.last_seen_at)}</p>
                                       )}
-                                      {finding.path && (
-                                        <div>
-                                          <span className="font-medium" style={{ color: 'var(--fg)' }}>Path: </span>
-                                          <span className="font-mono">{finding.path}</span>
-                                          {finding.line_number && <span> (line {finding.line_number})</span>}
-                                        </div>
-                                      )}
-                                      {finding.url && (
-                                        <div>
-                                          <span className="font-medium" style={{ color: 'var(--fg)' }}>URL: </span>
-                                          <span className="font-mono break-all">{finding.url}</span>
-                                        </div>
+                                      {finding.found_count && finding.found_count > 1 && (
+                                        <p>Seen in {finding.found_count} scans</p>
                                       )}
                                     </div>
+                                  </div>
+                                )}
+
+                                {/* Action Buttons */}
+                                <div className="flex items-center gap-2 mt-4 pt-3 border-t" style={{ borderColor: 'var(--border)' }}>
+                                  {(finding.remediation_summary || finding.remediation_steps || finding.recommendation) && (
+                                    <button
+                                      className="px-3 py-1.5 text-xs font-medium rounded border transition hover:opacity-80"
+                                      style={{ background: 'var(--brand)', color: '#ffffff', borderColor: 'var(--brand)' }}
+                                      onClick={() => {
+                                        // Scroll to remediation section or open drawer
+                                        const details = document.querySelector(`[data-finding-id="${finding.id || findingKey}"] details`);
+                                        if (details) {
+                                          (details as HTMLDetailsElement).open = true;
+                                          details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                                        }
+                                      }}
+                                    >
+                                      View Remediation
+                                    </button>
+                                  )}
+                                  <details>
+                                    <summary className="px-3 py-1.5 text-xs font-medium rounded border cursor-pointer list-none transition hover:opacity-80" style={{ background: 'transparent', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                                      <span className="flex items-center gap-1">
+                                        Technical details
+                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                      </span>
+                                    </summary>
+                                    <div className="mt-2 p-3 rounded-lg border" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                                      <div className="space-y-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                        {finding.tool_name && (
+                                          <div>
+                                            <span className="font-medium" style={{ color: 'var(--fg)' }}>Detected by: </span>
+                                            <span className="font-mono">{finding.tool_name}</span>
+                                          </div>
+                                        )}
+                                        {finding.categories && finding.categories.length > 0 && (
+                                          <div>
+                                            <span className="font-medium" style={{ color: 'var(--fg)' }}>Categories: </span>
+                                            <span>{finding.categories.map(cat => formatCategory(cat)).join(', ')}</span>
+                                          </div>
+                                        )}
+                                        {finding.path && (
+                                          <div>
+                                            <span className="font-medium" style={{ color: 'var(--fg)' }}>Path: </span>
+                                            <span className="font-mono">{finding.path}</span>
+                                            {finding.line_number && <span> (line {finding.line_number})</span>}
+                                          </div>
+                                        )}
+                                        {finding.url && (
+                                          <div>
+                                            <span className="font-medium" style={{ color: 'var(--fg)' }}>URL: </span>
+                                            <span className="font-mono break-all">{finding.url}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </details>
+                                </div>
+
+                                {/* Technical details (collapsible) - includes tool name - hidden, used for View Remediation button */}
+                                <details data-finding-id={finding.id || findingKey} className="mt-3 pt-3 border-t hidden" style={{ borderColor: 'var(--border)' }}>
+                                  <summary className="text-xs cursor-pointer font-medium mb-2" style={{ color: 'var(--brand)' }}>
+                                    Technical details
+                                  </summary>
+                                  <div className="mt-2 space-y-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                    {finding.tool_name && (
+                                      <div>
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>Detected by: </span>
+                                        <span className="font-mono">{finding.tool_name}</span>
+                                      </div>
+                                    )}
+                                    {finding.categories && finding.categories.length > 0 && (
+                                      <div>
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>Categories: </span>
+                                        <span>{finding.categories.map(cat => formatCategory(cat)).join(', ')}</span>
+                                      </div>
+                                    )}
+                                    {finding.path && (
+                                      <div>
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>Path: </span>
+                                        <span className="font-mono">{finding.path}</span>
+                                        {finding.line_number && <span> (line {finding.line_number})</span>}
+                                      </div>
+                                    )}
+                                    {finding.url && (
+                                      <div>
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>URL: </span>
+                                        <span className="font-mono break-all">{finding.url}</span>
+                                      </div>
+                                    )}
                                   </div>
                                 </details>
                               </div>
-
-                              {/* Technical details (collapsible) - includes tool name - hidden, used for View Remediation button */}
-                              <details data-finding-id={finding.id || findingKey} className="mt-3 pt-3 border-t hidden" style={{ borderColor: 'var(--border)' }}>
-                                <summary className="text-xs cursor-pointer font-medium mb-2" style={{ color: 'var(--brand)' }}>
-                                  Technical details
-                                </summary>
-                                <div className="mt-2 space-y-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                  {finding.tool_name && (
-                                    <div>
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>Detected by: </span>
-                                      <span className="font-mono">{finding.tool_name}</span>
-                                    </div>
-                                  )}
-                                  {finding.categories && finding.categories.length > 0 && (
-                                    <div>
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>Categories: </span>
-                                      <span>{finding.categories.map(cat => formatCategory(cat)).join(', ')}</span>
-                                    </div>
-                                  )}
-                                  {finding.path && (
-                                    <div>
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>Path: </span>
-                                      <span className="font-mono">{finding.path}</span>
-                                      {finding.line_number && <span> (line {finding.line_number})</span>}
-                                    </div>
-                                  )}
-                                  {finding.url && (
-                                    <div>
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>URL: </span>
-                                      <span className="font-mono break-all">{finding.url}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </details>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Right column - Sidebar */}
-                <div className="space-y-6">
-                  {/* Scan Pipeline */}
-                  <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--fg)' }}>SCAN PIPELINE</h2>
-                      {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (
-                        <span className="px-2 py-0.5 text-xs font-medium rounded-full border" style={{ background: '#10b981', color: '#ffffff', borderColor: '#10b981' }}>
-                          LIVE
-                        </span>
-                      )}
-                    </div>
-                    {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') ? (
-                      <PhaseTimeline
-                        toolStates={toolStates}
-                        scanStatus={scan.status}
-                        scanLevel={scan.scan_level}
-                        isConnected={isConnected}
-                      />
-                    ) : (
-                      <div className="text-sm" style={{ color: 'var(--muted)' }}>
-                        Scan completed
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Surface Stats */}
-                  <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-                    <div className="flex items-center gap-2 mb-4">
-                      <svg className="w-4 h-4" style={{ color: 'var(--muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-                      </svg>
-                      <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--fg)' }}>SURFACE STATS</h2>
-                    </div>
-                    <div className="space-y-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <span style={{ color: 'var(--muted)' }}>OPEN PORTS</span>
-                        <span className="font-medium" style={{ color: 'var(--fg)' }}>{openPortsCount}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span style={{ color: 'var(--muted)' }}>TLS STATUS</span>
-                        <span className="font-medium" style={{ color: hasTlsIssues ? '#f59e0b' : '#10b981' }}>
-                          {hasTlsIssues ? 'ISSUES DETECTED' : 'SECURE'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Scan Details */}
-                  <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
-                    <h2 className="text-sm font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--fg)' }}>SCAN DETAILS</h2>
-                    <div className="space-y-3 text-sm">
-                      <div>
-                        <p className="mb-1" style={{ color: 'var(--muted)' }}>Created At:</p>
-                        <p style={{ color: 'var(--fg)' }}>{formatDateTime(scan.created_at)}</p>
-                      </div>
-                      {scan.started_at && (
-                        <div>
-                          <p className="mb-1" style={{ color: 'var(--muted)' }}>Started At:</p>
-                          <p style={{ color: 'var(--fg)' }}>{formatDateTime(scan.started_at)}</p>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
                   </div>
 
-                  {/* Legacy progress fallback - Show only if WebSocket not connected */}
-                  {!isConnected && (scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
-                    // Calculate timeout remaining (max timeout - elapsed time)
-                    const getTimeoutRemaining = () => {
-                      if (!scan.started_at) {
-                        return null;
-                      }
+                  {/* Right column - Sidebar */}
+                  <div className="space-y-6">
+                    {/* Scan Pipeline */}
+                    <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-sm font-semibold uppercase tracking-wider" style={{ color: 'var(--fg)' }}>SCAN PIPELINE</h2>
+                        {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (
+                          <span className="px-2 py-0.5 text-xs font-medium rounded-full border" style={{ background: '#10b981', color: '#ffffff', borderColor: '#10b981' }}>
+                            LIVE
+                          </span>
+                        )}
+                      </div>
+                      {(scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') ? (
+                        <PhaseTimeline
+                          toolStates={toolStates}
+                          scanStatus={scan.status}
+                          scanLevel={scan.scan_level}
+                          isConnected={isConnected}
+                        />
+                      ) : (
+                        <div className="text-sm" style={{ color: 'var(--muted)' }}>
+                          Scan completed
+                        </div>
+                      )}
+                    </div>
 
-                      // Max timeout per scan level (in seconds)
-                      const maxTimeouts: Record<string, number> = {
-                        'basic': 600,    // 10 minutes
-                        'pro': 3600,     // 60 minutes
-                        'advanced': 5400, // 90 minutes
+                    {/* Scan Details */}
+                    <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                      <h2 className="text-sm font-semibold uppercase tracking-wider mb-4" style={{ color: 'var(--fg)' }}>SCAN DETAILS</h2>
+                      <div className="space-y-3 text-sm">
+                        <div>
+                          <p className="mb-1" style={{ color: 'var(--muted)' }}>Created At:</p>
+                          <p style={{ color: 'var(--fg)' }}>{formatDateTime(scan.created_at)}</p>
+                        </div>
+                        {scan.started_at && (
+                          <div>
+                            <p className="mb-1" style={{ color: 'var(--muted)' }}>Started At:</p>
+                            <p style={{ color: 'var(--fg)' }}>{formatDateTime(scan.started_at)}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Legacy progress fallback - Show only if WebSocket not connected */}
+                    {!isConnected && (scan.status === 'running' || scan.status === 'queued' || scan.status === 'pending') && (() => {
+                      // Calculate timeout remaining (max timeout - elapsed time)
+                      const getTimeoutRemaining = () => {
+                        if (!scan.started_at) {
+                          return null;
+                        }
+
+                        // Max timeout per scan level (in seconds)
+                        const maxTimeouts: Record<string, number> = {
+                          'basic': 600,    // 10 minutes
+                          'pro': 3600,     // 60 minutes
+                          'advanced': 5400, // 90 minutes
+                        };
+
+                        const maxTimeout = maxTimeouts[scan.scan_level?.toLowerCase() || 'pro'] || 3600;
+                        const startedAt = new Date(scan.started_at).getTime();
+                        const now = currentTime; // Use currentTime state for real-time updates
+                        const elapsedSeconds = (now - startedAt) / 1000;
+                        const remainingSeconds = Math.max(0, maxTimeout - elapsedSeconds);
+
+                        if (remainingSeconds <= 0) {
+                          return 'Timeout reached';
+                        }
+
+                        const minutes = Math.floor(remainingSeconds / 60);
+                        const hours = Math.floor(minutes / 60);
+                        const remainingMinutes = minutes % 60;
+
+                        if (hours > 0) {
+                          return `${hours}h ${remainingMinutes}m`;
+                        }
+                        return `${minutes}m`;
                       };
 
-                      const maxTimeout = maxTimeouts[scan.scan_level?.toLowerCase() || 'pro'] || 3600;
-                      const startedAt = new Date(scan.started_at).getTime();
-                      const now = currentTime; // Use currentTime state for real-time updates
-                      const elapsedSeconds = (now - startedAt) / 1000;
-                      const remainingSeconds = Math.max(0, maxTimeout - elapsedSeconds);
+                      const progressPct = scan.progress_pct ?? 0;
+                      const timeRemaining = getTimeoutRemaining();
 
-                      if (remainingSeconds <= 0) {
-                        return 'Timeout reached';
-                      }
-
-                      const minutes = Math.floor(remainingSeconds / 60);
-                      const hours = Math.floor(minutes / 60);
-                      const remainingMinutes = minutes % 60;
-
-                      if (hours > 0) {
-                        return `${hours}h ${remainingMinutes}m`;
-                      }
-                      return `${minutes}m`;
-                    };
-
-                    const progressPct = scan.progress_pct ?? 0;
-                    const timeRemaining = getTimeoutRemaining();
-
-                    return (
-                      <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                        <div className="flex items-center justify-between mb-4">
-                          <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Scan Progress</h2>
-                          {timeRemaining && (
-                            <div className="flex items-center gap-2 px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)' }}>
-                              <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                              </svg>
-                              <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                                {timeRemaining} left
-                              </span>
-                            </div>
-                          )}
-                        </div>
-
-                        {/* Progress Bar */}
-                        {scan.progress_pct !== null && scan.progress_pct !== undefined && scan.total_tools !== null && scan.total_tools !== undefined && (
-                          <>
-                            <div className="mb-3 relative">
-                              <div className="w-full h-4 rounded-full overflow-hidden relative" style={{ background: 'var(--surface-2)' }}>
-                                {/* Animated progress bar with shimmer effect */}
-                                <div
-                                  className="h-full relative transition-all duration-500 ease-out"
-                                  style={{
-                                    width: `${progressPct}%`,
-                                    background: progressPct === 100
-                                      ? 'linear-gradient(90deg, #10b981 0%, #059669 50%, #10b981 100%)'
-                                      : 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
-                                    backgroundSize: '200% 100%',
-                                    animation: progressPct < 100 ? 'shimmer 2s infinite' : 'none',
-                                  }}
-                                >
-                                  {/* Shimmer overlay */}
-                                  {progressPct < 100 && (
-                                    <div
-                                      className="absolute inset-0 opacity-30"
-                                      style={{
-                                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
-                                        animation: 'shimmer-slide 2s infinite',
-                                      }}
-                                    />
-                                  )}
-                                </div>
-                                {/* Pulse effect on the edge */}
-                                {progressPct < 100 && progressPct > 0 && (
-                                  <div
-                                    className="absolute top-0 h-full w-1 rounded-full"
-                                    style={{
-                                      left: `${progressPct}%`,
-                                      background: 'rgba(59, 130, 246, 0.8)',
-                                      boxShadow: '0 0 8px rgba(59, 130, 246, 0.6)',
-                                      animation: 'pulse-edge 1.5s infinite',
-                                      transform: 'translateX(-50%)',
-                                    }}
-                                  />
-                                )}
+                      return (
+                        <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                          <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Scan Progress</h2>
+                            {timeRemaining && (
+                              <div className="flex items-center gap-2 px-3 py-1 rounded-full" style={{ background: 'var(--surface-2)' }}>
+                                <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
+                                  {timeRemaining} left
+                                </span>
                               </div>
-                              {/* Progress percentage label */}
-                              <div className="absolute top-0 right-0 text-xs font-medium mt-1" style={{ color: 'var(--muted)' }}>
-                                {Math.round(progressPct)}%
-                              </div>
-                            </div>
-                            <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                              {(() => {
-                                const total = scan.total_tools ?? 0;
-                                const completed = scan.completed_tools ?? 0;
-                                const running = (scan.tool_statuses || []).filter(t => t.status === 'running').length;
-                                const queued = (scan.tool_statuses || []).filter(t => t.status === 'pending').length;
-                                const parts = [`${completed} / ${total} checks completed`];
-                                if (running > 0) parts.push(`${running} running`);
-                                if (queued > 0) parts.push(`${queued} queued`);
-                                return parts.join(' • ');
-                              })()}
-                            </p>
-                          </>
-                        )}
+                            )}
+                          </div>
 
-                        {/* Fallback if progress_pct not available */}
-                        {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (() => {
-                          const fallbackProgress = (scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100;
-                          const fallbackTimeRemaining = getTimeoutRemaining();
-
-                          return (
+                          {/* Progress Bar */}
+                          {scan.progress_pct !== null && scan.progress_pct !== undefined && scan.total_tools !== null && scan.total_tools !== undefined && (
                             <>
-                              {fallbackTimeRemaining && (
-                                <div className="flex items-center gap-2 px-3 py-1 rounded-full mb-4" style={{ background: 'var(--surface-2)' }}>
-                                  <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                  </svg>
-                                  <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
-                                    {fallbackTimeRemaining} left
-                                  </span>
-                                </div>
-                              )}
                               <div className="mb-3 relative">
                                 <div className="w-full h-4 rounded-full overflow-hidden relative" style={{ background: 'var(--surface-2)' }}>
                                   {/* Animated progress bar with shimmer effect */}
                                   <div
                                     className="h-full relative transition-all duration-500 ease-out"
                                     style={{
-                                      width: `${fallbackProgress}%`,
-                                      background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+                                      width: `${progressPct}%`,
+                                      background: progressPct === 100
+                                        ? 'linear-gradient(90deg, #10b981 0%, #059669 50%, #10b981 100%)'
+                                        : 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
                                       backgroundSize: '200% 100%',
-                                      animation: fallbackProgress < 100 ? 'shimmer 2s infinite' : 'none',
+                                      animation: progressPct < 100 ? 'shimmer 2s infinite' : 'none',
                                     }}
                                   >
                                     {/* Shimmer overlay */}
-                                    {fallbackProgress < 100 && (
+                                    {progressPct < 100 && (
                                       <div
                                         className="absolute inset-0 opacity-30"
                                         style={{
@@ -2779,11 +2771,11 @@ export default function ScanReportPage() {
                                     )}
                                   </div>
                                   {/* Pulse effect on the edge */}
-                                  {fallbackProgress < 100 && fallbackProgress > 0 && (
+                                  {progressPct < 100 && progressPct > 0 && (
                                     <div
                                       className="absolute top-0 h-full w-1 rounded-full"
                                       style={{
-                                        left: `${fallbackProgress}%`,
+                                        left: `${progressPct}%`,
                                         background: 'rgba(59, 130, 246, 0.8)',
                                         boxShadow: '0 0 8px rgba(59, 130, 246, 0.6)',
                                         animation: 'pulse-edge 1.5s infinite',
@@ -2794,400 +2786,474 @@ export default function ScanReportPage() {
                                 </div>
                                 {/* Progress percentage label */}
                                 <div className="absolute top-0 right-0 text-xs font-medium mt-1" style={{ color: 'var(--muted)' }}>
-                                  {Math.round(fallbackProgress)}%
+                                  {Math.round(progressPct)}%
                                 </div>
                               </div>
                               <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
-                                {scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length} / {scan.tool_statuses.length} checks completed
+                                {(() => {
+                                  const total = scan.total_tools ?? 0;
+                                  const completed = scan.completed_tools ?? 0;
+                                  const running = (scan.tool_statuses || []).filter(t => t.status === 'running').length;
+                                  const queued = (scan.tool_statuses || []).filter(t => t.status === 'pending').length;
+                                  const parts = [`${completed} / ${total} checks completed`];
+                                  if (running > 0) parts.push(`${running} running`);
+                                  if (queued > 0) parts.push(`${queued} queued`);
+                                  return parts.join(' • ');
+                                })()}
                               </p>
                             </>
-                          );
-                        })()}
+                          )}
 
-                        {/* Technical Details Toggle */}
-                        {scan.tool_statuses && scan.tool_statuses.length > 0 && (
-                          <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
-                            <button
-                              onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
-                              className="flex items-center justify-between w-full text-sm font-medium transition-colors"
-                              style={{ color: 'var(--fg)' }}
-                            >
-                              <span>Show technical details</span>
-                              <svg
-                                className={`w-5 h-5 transition-transform ${showTechnicalDetails ? 'rotate-180' : ''}`}
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                              </svg>
-                            </button>
+                          {/* Fallback if progress_pct not available */}
+                          {(!scan.progress_pct && scan.progress_pct !== 0) && scan.tool_statuses && scan.tool_statuses.length > 0 && (() => {
+                            const fallbackProgress = (scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length / scan.tool_statuses.length) * 100;
+                            const fallbackTimeRemaining = getTimeoutRemaining();
 
-                            {/* Technical Details Panel */}
-                            {showTechnicalDetails && (
-                              <div className="mt-4 space-y-4">
-                                {/* Per-tool status list */}
-                                <div>
-                                  <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tool Execution Status</h3>
-                                  <div className="space-y-2">
-                                    {scan.tool_statuses.map((toolStatus) => {
-                                      const statusIcon = toolStatus.status === 'completed' ? '✅' :
-                                        toolStatus.status === 'running' ? '🟡' :
-                                          toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? '❌' : '⬜';
-                                      const statusLabel = toolStatus.status === 'completed' ? 'Completed' :
-                                        toolStatus.status === 'running' ? 'Running' :
-                                          toolStatus.status === 'failed' ? 'Failed' :
-                                            toolStatus.status === 'timed_out' ? 'Timed Out' :
-                                              toolStatus.status === 'skipped' ? 'Skipped' : 'Pending';
-                                      const statusColor = toolStatus.status === 'completed' ? 'text-emerald-300' :
-                                        toolStatus.status === 'running' ? 'text-blue-300' :
-                                          toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? 'text-red-300' : 'text-slate-400';
-
-                                      return (
+                            return (
+                              <>
+                                {fallbackTimeRemaining && (
+                                  <div className="flex items-center gap-2 px-3 py-1 rounded-full mb-4" style={{ background: 'var(--surface-2)' }}>
+                                    <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--muted)' }}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                    </svg>
+                                    <span className="text-sm font-medium" style={{ color: 'var(--fg)' }}>
+                                      {fallbackTimeRemaining} left
+                                    </span>
+                                  </div>
+                                )}
+                                <div className="mb-3 relative">
+                                  <div className="w-full h-4 rounded-full overflow-hidden relative" style={{ background: 'var(--surface-2)' }}>
+                                    {/* Animated progress bar with shimmer effect */}
+                                    <div
+                                      className="h-full relative transition-all duration-500 ease-out"
+                                      style={{
+                                        width: `${fallbackProgress}%`,
+                                        background: 'linear-gradient(90deg, #3b82f6 0%, #2563eb 50%, #3b82f6 100%)',
+                                        backgroundSize: '200% 100%',
+                                        animation: fallbackProgress < 100 ? 'shimmer 2s infinite' : 'none',
+                                      }}
+                                    >
+                                      {/* Shimmer overlay */}
+                                      {fallbackProgress < 100 && (
                                         <div
-                                          key={toolStatus.tool_name}
-                                          className="flex items-start justify-between p-3 rounded-lg border"
-                                          style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
-                                        >
-                                          <div className="flex items-start gap-3 flex-1">
-                                            <span className="text-lg mt-0.5">{statusIcon}</span>
-                                            <div className="flex-1">
-                                              <span className="font-medium text-sm block mb-1" style={{ color: 'var(--fg)' }}>
-                                                {toolStatus.tool_name.charAt(0).toUpperCase() + toolStatus.tool_name.slice(1)}
-                                              </span>
-                                              {toolStatus.error_message && (
-                                                <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
-                                                  {toolStatus.error_message}
-                                                </p>
-                                              )}
-                                            </div>
-                                          </div>
-                                          <span className={`text-xs font-medium ${statusColor} ml-2`}>
-                                            {statusLabel}
-                                          </span>
-                                        </div>
-                                      );
-                                    })}
+                                          className="absolute inset-0 opacity-30"
+                                          style={{
+                                            background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.4) 50%, transparent 100%)',
+                                            animation: 'shimmer-slide 2s infinite',
+                                          }}
+                                        />
+                                      )}
+                                    </div>
+                                    {/* Pulse effect on the edge */}
+                                    {fallbackProgress < 100 && fallbackProgress > 0 && (
+                                      <div
+                                        className="absolute top-0 h-full w-1 rounded-full"
+                                        style={{
+                                          left: `${fallbackProgress}%`,
+                                          background: 'rgba(59, 130, 246, 0.8)',
+                                          boxShadow: '0 0 8px rgba(59, 130, 246, 0.6)',
+                                          animation: 'pulse-edge 1.5s infinite',
+                                          transform: 'translateX(-50%)',
+                                        }}
+                                      />
+                                    )}
+                                  </div>
+                                  {/* Progress percentage label */}
+                                  <div className="absolute top-0 right-0 text-xs font-medium mt-1" style={{ color: 'var(--muted)' }}>
+                                    {Math.round(fallbackProgress)}%
                                   </div>
                                 </div>
+                                <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                                  {scan.tool_statuses.filter(t => t.status === 'completed' || t.status === 'failed' || t.status === 'timed_out' || t.status === 'skipped').length} / {scan.tool_statuses.length} checks completed
+                                </p>
+                              </>
+                            );
+                          })()}
 
-                                {/* Tools Used list (moved from separate card) */}
-                                {tools.length > 0 && (
+                          {/* Technical Details Toggle */}
+                          {scan.tool_statuses && scan.tool_statuses.length > 0 && (
+                            <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                              <button
+                                onClick={() => setShowTechnicalDetails(!showTechnicalDetails)}
+                                className="flex items-center justify-between w-full text-sm font-medium transition-colors"
+                                style={{ color: 'var(--fg)' }}
+                              >
+                                <span>Show technical details</span>
+                                <svg
+                                  className={`w-5 h-5 transition-transform ${showTechnicalDetails ? 'rotate-180' : ''}`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                </svg>
+                              </button>
+
+                              {/* Technical Details Panel */}
+                              {showTechnicalDetails && (
+                                <div className="mt-4 space-y-4">
+                                  {/* Per-tool status list */}
                                   <div>
-                                    <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tools Used</h3>
-                                    {toolsLoading ? (
-                                      <div className="text-xs" style={{ color: 'var(--muted)' }}>Loading...</div>
-                                    ) : toolsError ? (
-                                      <div className="text-xs text-red-400">{toolsError}</div>
-                                    ) : (
-                                      <div className="space-y-2">
-                                        {tools.map((tool) => {
-                                          const isSuccess = tool.exit_code === 0 && !tool.timed_out;
-                                          const isTimedOut = tool.timed_out;
-                                          const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
-                                          const runtime = tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
-                                          const outputSizeKB = tool.output_size > 0 ? (tool.output_size / 1024).toFixed(1) : '0';
+                                    <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tool Execution Status</h3>
+                                    <div className="space-y-2">
+                                      {scan.tool_statuses.map((toolStatus) => {
+                                        const statusIcon = toolStatus.status === 'completed' ? '✅' :
+                                          toolStatus.status === 'running' ? '🟡' :
+                                            toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? '❌' : '⬜';
+                                        const statusLabel = toolStatus.status === 'completed' ? 'Completed' :
+                                          toolStatus.status === 'running' ? 'Running' :
+                                            toolStatus.status === 'failed' ? 'Failed' :
+                                              toolStatus.status === 'timed_out' ? 'Timed Out' :
+                                                toolStatus.status === 'skipped' ? 'Skipped' : 'Pending';
+                                        const statusColor = toolStatus.status === 'completed' ? 'text-emerald-300' :
+                                          toolStatus.status === 'running' ? 'text-blue-300' :
+                                            toolStatus.status === 'failed' || toolStatus.status === 'timed_out' ? 'text-red-300' : 'text-slate-400';
 
-                                          return (
-                                            <div
-                                              key={tool.tool_name}
-                                              className="flex items-center justify-between p-2 rounded border"
-                                              style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
-                                            >
-                                              <div className="flex items-center gap-2 flex-1">
-                                                <span className="text-xs font-medium" style={{ color: 'var(--fg)' }}>
-                                                  {toolName}
+                                        return (
+                                          <div
+                                            key={toolStatus.tool_name}
+                                            className="flex items-start justify-between p-3 rounded-lg border"
+                                            style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                                          >
+                                            <div className="flex items-start gap-3 flex-1">
+                                              <span className="text-lg mt-0.5">{statusIcon}</span>
+                                              <div className="flex-1">
+                                                <span className="font-medium text-sm block mb-1" style={{ color: 'var(--fg)' }}>
+                                                  {toolStatus.tool_name.charAt(0).toUpperCase() + toolStatus.tool_name.slice(1)}
                                                 </span>
-                                                <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--muted)' }}>
-                                                  <span className="font-mono">{runtime}</span>
-                                                  {tool.output_size > 0 && (
-                                                    <>
-                                                      <span>•</span>
-                                                      <span className="font-mono">{outputSizeKB} KB</span>
-                                                    </>
+                                                {toolStatus.error_message && (
+                                                  <p className="text-xs mt-1" style={{ color: 'var(--muted)' }}>
+                                                    {toolStatus.error_message}
+                                                  </p>
+                                                )}
+                                              </div>
+                                            </div>
+                                            <span className={`text-xs font-medium ${statusColor} ml-2`}>
+                                              {statusLabel}
+                                            </span>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+
+                                  {/* Tools Used list (moved from separate card) */}
+                                  {tools.length > 0 && (
+                                    <div>
+                                      <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--fg)' }}>Tools Used</h3>
+                                      {toolsLoading ? (
+                                        <div className="text-xs" style={{ color: 'var(--muted)' }}>Loading...</div>
+                                      ) : toolsError ? (
+                                        <div className="text-xs text-red-400">{toolsError}</div>
+                                      ) : (
+                                        <div className="space-y-2">
+                                          {tools.map((tool) => {
+                                            const isSuccess = tool.exit_code === 0 && !tool.timed_out;
+                                            const isTimedOut = tool.timed_out;
+                                            const toolName = tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1);
+                                            const runtime = tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
+                                            const outputSizeKB = tool.output_size > 0 ? (tool.output_size / 1024).toFixed(1) : '0';
+
+                                            return (
+                                              <div
+                                                key={tool.tool_name}
+                                                className="flex items-center justify-between p-2 rounded border"
+                                                style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}
+                                              >
+                                                <div className="flex items-center gap-2 flex-1">
+                                                  <span className="text-xs font-medium" style={{ color: 'var(--fg)' }}>
+                                                    {toolName}
+                                                  </span>
+                                                  <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--muted)' }}>
+                                                    <span className="font-mono">{runtime}</span>
+                                                    {tool.output_size > 0 && (
+                                                      <>
+                                                        <span>•</span>
+                                                        <span className="font-mono">{outputSizeKB} KB</span>
+                                                      </>
+                                                    )}
+                                                  </div>
+                                                </div>
+                                                <div className="flex items-center gap-2">
+                                                  {isTimedOut && (
+                                                    <span className="text-xs text-amber-400">Timed out</span>
+                                                  )}
+                                                  {!isTimedOut && tool.error_message && (
+                                                    <span className="text-xs text-red-400 truncate max-w-[150px]" title={tool.error_message}>
+                                                      Error
+                                                    </span>
+                                                  )}
+                                                  {isSuccess && !isTimedOut && !tool.error_message && (
+                                                    <span className="text-xs text-emerald-400">Success</span>
                                                   )}
                                                 </div>
                                               </div>
-                                              <div className="flex items-center gap-2">
-                                                {isTimedOut && (
-                                                  <span className="text-xs text-amber-400">Timed out</span>
-                                                )}
-                                                {!isTimedOut && tool.error_message && (
-                                                  <span className="text-xs text-red-400 truncate max-w-[150px]" title={tool.error_message}>
-                                                    Error
-                                                  </span>
-                                                )}
-                                                {isSuccess && !isTimedOut && !tool.error_message && (
-                                                  <span className="text-xs text-emerald-400">Success</span>
-                                                )}
-                                              </div>
-                                            </div>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })()}
-
-
-                  {/* Tools Executed card */}
-                  <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                    <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Tools Executed</h2>
-                    {toolsLoading ? (
-                      <div className="text-sm" style={{ color: 'var(--muted)' }}>Loading tools...</div>
-                    ) : toolsError ? (
-                      <div className="text-sm text-red-400">{toolsError}</div>
-                    ) : tools.length === 0 ? (
-                      <div className="text-sm" style={{ color: 'var(--muted)' }}>No tool execution data available</div>
-                    ) : (
-                      <div className="space-y-2">
-                        {tools.map((tool) => {
-                          const isExpanded = expandedToolRows.has(tool.tool_name);
-                          // Use tool_name_display from API if available, otherwise capitalize tool_name
-                          const toolName = tool.tool_name_display || (tool.tool_name ? tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1) : 'Unknown');
-
-                          // Determine status
-                          const status = tool.status || (tool.exit_code === 0 && !tool.timed_out ? 'completed' : tool.timed_out ? 'timed_out' : 'failed');
-                          const statusLabel = status === 'completed' ? 'Success' :
-                            status === 'running' ? 'Running' :
-                              status === 'failed' ? 'Failed' :
-                                status === 'timed_out' ? 'Timed Out' :
-                                  status === 'skipped' ? 'Skipped' : 'Pending';
-                          const statusColor = status === 'completed' ? 'text-emerald-400' :
-                            status === 'running' ? 'text-blue-400' :
-                              status === 'failed' || status === 'timed_out' ? 'text-red-400' :
-                                status === 'skipped' ? 'text-amber-400' : 'text-slate-400';
-                          const statusBg = status === 'completed' ? 'bg-emerald-500/20' :
-                            status === 'running' ? 'bg-blue-500/20' :
-                              status === 'failed' || status === 'timed_out' ? 'bg-red-500/20' :
-                                status === 'skipped' ? 'bg-amber-500/20' : 'bg-slate-500/20';
-
-                          // Format duration
-                          const duration = tool.duration_ms ? `${(tool.duration_ms / 1000).toFixed(1)}s` :
-                            tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
-
-                          // Findings count display
-                          // Collapsed row: simple count (API guarantees values, coalesces NULL to 0)
-                          const createdCount = tool.created_findings_count ?? 0;
-                          const parsedCount = tool.parsed_findings_count ?? 0;
-                          const findingsDisplay = `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
-                          // Expanded row: detailed breakdown
-                          const findingsDetail = parsedCount !== createdCount
-                            ? `parsed ${parsedCount} / created ${createdCount}`
-                            : `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
-                          const skipReason = tool.skip_reason;
-
-                          return (
-                            <div
-                              key={tool.tool_name}
-                              className="border rounded-lg overflow-hidden"
-                              style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
-                            >
-                              <div
-                                className="flex items-center justify-between p-3 cursor-pointer hover:opacity-80 transition-opacity"
-                                onClick={() => {
-                                  const newExpanded = new Set(expandedToolRows);
-                                  if (isExpanded) {
-                                    newExpanded.delete(tool.tool_name);
-                                  } else {
-                                    newExpanded.add(tool.tool_name);
-                                  }
-                                  setExpandedToolRows(newExpanded);
-                                }}
-                              >
-                                <div className="flex items-center gap-3 flex-1">
-                                  <span className="font-medium text-sm" style={{ color: 'var(--fg)' }}>
-                                    {toolName}
-                                  </span>
-                                  <span className={`text-xs px-2 py-0.5 rounded ${statusBg} ${statusColor} font-medium`}>
-                                    {statusLabel}
-                                  </span>
-                                  {findingsDisplay && (
-                                    <span className="text-xs" style={{ color: 'var(--muted)' }}>
-                                      • {findingsDisplay}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
-                                  <span>Duration: {duration}</span>
-                                  {tool.exit_code !== null && (
-                                    <span>Exit: {tool.exit_code}</span>
-                                  )}
-                                  {skipReason && (
-                                    <span className="text-amber-400" title="Tool skipped / partial">
-                                      Skip: {skipReason.replace(/_/g, ' ')}
-                                    </span>
-                                  )}
-                                  <svg
-                                    className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
-                                    fill="none"
-                                    stroke="currentColor"
-                                    viewBox="0 0 24 24"
-                                  >
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                                  </svg>
-                                </div>
-                              </div>
-
-                              {/* Expanded content: findings detail, stdout/stderr previews */}
-                              {isExpanded && (
-                                <div className="border-t p-3 space-y-3" style={{ borderColor: 'var(--border)' }}>
-                                  {/* Findings detail: parsed/created breakdown */}
-                                  <div>
-                                    <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Findings</div>
-                                    <div className="text-xs" style={{ color: 'var(--fg)' }}>
-                                      {findingsDetail}
+                                            );
+                                          })}
+                                        </div>
+                                      )}
                                     </div>
-                                  </div>
-                                  {skipReason && (
-                                    <div>
-                                      <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Skip reason</div>
-                                      <div className="text-xs text-amber-300">{skipReason.replace(/_/g, ' ')}</div>
-                                    </div>
-                                  )}
-                                  {tool.stdout_preview && (
-                                    <div>
-                                      <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDOUT Preview</div>
-                                      <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
-                                        {tool.stdout_preview}
-                                      </pre>
-                                    </div>
-                                  )}
-                                  {tool.stderr_preview && (
-                                    <div>
-                                      <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDERR Preview</div>
-                                      <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
-                                        {tool.stderr_preview}
-                                      </pre>
-                                    </div>
-                                  )}
-                                  {!tool.stdout_preview && !tool.stderr_preview && (
-                                    <div className="text-xs" style={{ color: 'var(--muted)' }}>No output preview available</div>
                                   )}
                                 </div>
                               )}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
+                          )}
+                        </div>
+                      );
+                    })()}
 
 
-                  {/* Network & TLS Surface card */}
-                  <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                    <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Network & TLS Surface</h2>
-                    <dl className="space-y-3 text-sm">
-                      <div className="flex items-center justify-between">
-                        <dt style={{ color: 'var(--muted)' }}>Open ports</dt>
-                        <dd className="font-medium" style={{ color: 'var(--fg)' }}>{openPortsCount}</dd>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <dt style={{ color: 'var(--muted)' }}>TLS issues</dt>
-                        <dd className={hasTlsIssues ? 'font-medium text-amber-300' : 'font-medium text-emerald-300'}>
-                          {hasTlsIssues ? 'Detected' : 'None detected'}
-                        </dd>
-                      </div>
-                    </dl>
-                    {nmapFindings.length > 0 && (
-                      <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
-                        <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Sample ports</p>
-                        <ul className="space-y-1.5 text-xs" style={{ color: 'var(--fg)' }}>
-                          {nmapFindings.slice(0, 3).map((f, idx) => {
-                            // Generate stable key from finding properties
-                            const portKey = f.id || `${f.title || 'port'}-${f.url || ''}-${idx}`;
+                    {/* Tools Executed card */}
+                    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Tools Executed</h2>
+                      {toolsLoading ? (
+                        <div className="text-sm" style={{ color: 'var(--muted)' }}>Loading tools...</div>
+                      ) : toolsError ? (
+                        <div className="text-sm text-red-400">{toolsError}</div>
+                      ) : tools.length === 0 ? (
+                        <div className="text-sm" style={{ color: 'var(--muted)' }}>No tool execution data available</div>
+                      ) : (
+                        <div className="space-y-2">
+                          {tools.map((tool) => {
+                            const isExpanded = expandedToolRows.has(tool.tool_name);
+                            // Use tool_name_display from API if available, otherwise capitalize tool_name
+                            const toolName = tool.tool_name_display || (tool.tool_name ? tool.tool_name.charAt(0).toUpperCase() + tool.tool_name.slice(1) : 'Unknown');
+
+                            // Determine status
+                            const status = tool.status || (tool.exit_code === 0 && !tool.timed_out ? 'completed' : tool.timed_out ? 'timed_out' : 'failed');
+                            const statusLabel = status === 'completed' ? 'Success' :
+                              status === 'running' ? 'Running' :
+                                status === 'failed' ? 'Failed' :
+                                  status === 'timed_out' ? 'Timed Out' :
+                                    status === 'skipped' ? 'Skipped' : 'Pending';
+                            const statusColor = status === 'completed' ? 'text-emerald-400' :
+                              status === 'running' ? 'text-blue-400' :
+                                status === 'failed' || status === 'timed_out' ? 'text-red-400' :
+                                  status === 'skipped' ? 'text-amber-400' : 'text-slate-400';
+                            const statusBg = status === 'completed' ? 'bg-emerald-500/20' :
+                              status === 'running' ? 'bg-blue-500/20' :
+                                status === 'failed' || status === 'timed_out' ? 'bg-red-500/20' :
+                                  status === 'skipped' ? 'bg-amber-500/20' : 'bg-slate-500/20';
+
+                            // Format duration
+                            const duration = tool.duration_ms ? `${(tool.duration_ms / 1000).toFixed(1)}s` :
+                              tool.execution_time ? `${tool.execution_time.toFixed(1)}s` : 'N/A';
+
+                            // Findings count display
+                            // Collapsed row: simple count (API guarantees values, coalesces NULL to 0)
+                            const createdCount = tool.created_findings_count ?? 0;
+                            const parsedCount = tool.parsed_findings_count ?? 0;
+                            const findingsDisplay = `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
+                            // Expanded row: detailed breakdown
+                            const findingsDetail = parsedCount !== createdCount
+                              ? `parsed ${parsedCount} / created ${createdCount}`
+                              : `${createdCount} finding${createdCount !== 1 ? 's' : ''}`;
+                            const skipReason = tool.skip_reason;
+
                             return (
-                              <li key={portKey} className="truncate">
-                                • {f.title || 'Unknown port'}
-                              </li>
+                              <div
+                                key={tool.tool_name}
+                                className="border rounded-lg overflow-hidden"
+                                style={{ borderColor: 'var(--border)', background: 'var(--surface-2)' }}
+                              >
+                                <div
+                                  className="flex items-center justify-between p-3 cursor-pointer hover:opacity-80 transition-opacity"
+                                  onClick={() => {
+                                    const newExpanded = new Set(expandedToolRows);
+                                    if (isExpanded) {
+                                      newExpanded.delete(tool.tool_name);
+                                    } else {
+                                      newExpanded.add(tool.tool_name);
+                                    }
+                                    setExpandedToolRows(newExpanded);
+                                  }}
+                                >
+                                  <div className="flex items-center gap-3 flex-1">
+                                    <span className="font-medium text-sm" style={{ color: 'var(--fg)' }}>
+                                      {toolName}
+                                    </span>
+                                    <span className={`text-xs px-2 py-0.5 rounded ${statusBg} ${statusColor} font-medium`}>
+                                      {statusLabel}
+                                    </span>
+                                    {findingsDisplay && (
+                                      <span className="text-xs" style={{ color: 'var(--muted)' }}>
+                                        • {findingsDisplay}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-4 text-xs" style={{ color: 'var(--muted)' }}>
+                                    <span>Duration: {duration}</span>
+                                    {tool.exit_code !== null && (
+                                      <span>Exit: {tool.exit_code}</span>
+                                    )}
+                                    {skipReason && (
+                                      <span className="text-amber-400" title="Tool skipped / partial">
+                                        Skip: {skipReason.replace(/_/g, ' ')}
+                                      </span>
+                                    )}
+                                    <svg
+                                      className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`}
+                                      fill="none"
+                                      stroke="currentColor"
+                                      viewBox="0 0 24 24"
+                                    >
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                  </div>
+                                </div>
+
+                                {/* Expanded content: findings detail, stdout/stderr previews */}
+                                {isExpanded && (
+                                  <div className="border-t p-3 space-y-3" style={{ borderColor: 'var(--border)' }}>
+                                    {/* Findings detail: parsed/created breakdown */}
+                                    <div>
+                                      <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Findings</div>
+                                      <div className="text-xs" style={{ color: 'var(--fg)' }}>
+                                        {findingsDetail}
+                                      </div>
+                                    </div>
+                                    {skipReason && (
+                                      <div>
+                                        <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>Skip reason</div>
+                                        <div className="text-xs text-amber-300">{skipReason.replace(/_/g, ' ')}</div>
+                                      </div>
+                                    )}
+                                    {tool.stdout_preview && (
+                                      <div>
+                                        <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDOUT Preview</div>
+                                        <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
+                                          {tool.stdout_preview}
+                                        </pre>
+                                      </div>
+                                    )}
+                                    {tool.stderr_preview && (
+                                      <div>
+                                        <div className="text-xs font-semibold mb-1" style={{ color: 'var(--muted)' }}>STDERR Preview</div>
+                                        <pre className="text-xs p-2 rounded overflow-x-auto" style={{ background: 'var(--surface)', color: 'var(--fg)' }}>
+                                          {tool.stderr_preview}
+                                        </pre>
+                                      </div>
+                                    )}
+                                    {!tool.stdout_preview && !tool.stderr_preview && (
+                                      <div className="text-xs" style={{ color: 'var(--muted)' }}>No output preview available</div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             );
                           })}
-                        </ul>
+                        </div>
+                      )}
+                    </div>
+
+
+                    {/* Network & TLS Surface card */}
+                    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Network & TLS Surface</h2>
+                      <dl className="space-y-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <dt style={{ color: 'var(--muted)' }}>Open ports</dt>
+                          <dd className="font-medium" style={{ color: 'var(--fg)' }}>{openPortsCount}</dd>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <dt style={{ color: 'var(--muted)' }}>TLS issues</dt>
+                          <dd className={hasTlsIssues ? 'font-medium text-amber-300' : 'font-medium text-emerald-300'}>
+                            {hasTlsIssues ? 'Detected' : 'None detected'}
+                          </dd>
+                        </div>
+                      </dl>
+                      {nmapFindings.length > 0 && (
+                        <div className="mt-4 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+                          <p className="text-xs mb-2" style={{ color: 'var(--muted)' }}>Sample ports</p>
+                          <ul className="space-y-1.5 text-xs" style={{ color: 'var(--fg)' }}>
+                            {nmapFindings.slice(0, 3).map((f, idx) => {
+                              // Generate stable key from finding properties
+                              const portKey = f.id || `${f.title || 'port'}-${f.url || ''}-${idx}`;
+                              return (
+                                <li key={portKey} className="truncate">
+                                  • {f.title || 'Unknown port'}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Stack fingerprint card */}
+                    {scan.stack_info && (
+                      <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                        <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Stack Fingerprint</h2>
+                        <div className="space-y-3 text-sm">
+                          {scan.stack_info.target_url && (
+                            <div>
+                              <p className="mb-1" style={{ color: 'var(--muted)' }}>Target URL</p>
+                              <p className="break-all" style={{ color: 'var(--fg)' }}>{scan.stack_info.target_url}</p>
+                            </div>
+                          )}
+                          {scan.stack_info.scan_level && (
+                            <div>
+                              <p className="mb-1" style={{ color: 'var(--muted)' }}>Scan Level</p>
+                              <p style={{ color: 'var(--fg)' }}>{scan.stack_info.scan_level}</p>
+                            </div>
+                          )}
+                          {scan.stack_info.http && (
+                            <>
+                              {scan.stack_info.http.status_code !== null && scan.stack_info.http.status_code !== undefined && (
+                                <div>
+                                  <p className="mb-1" style={{ color: 'var(--muted)' }}>HTTP Status</p>
+                                  <p style={{ color: 'var(--fg)' }}>{scan.stack_info.http.status_code}</p>
+                                </div>
+                              )}
+                              {scan.stack_info.http.headers && (
+                                <div>
+                                  <p className="mb-2" style={{ color: 'var(--muted)' }}>HTTP Headers</p>
+                                  <div className="space-y-1">
+                                    {scan.stack_info.http.headers.server && (
+                                      <div className="text-xs">
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>Server:</span>{' '}
+                                        <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.server}</span>
+                                      </div>
+                                    )}
+                                    {scan.stack_info.http.headers.content_type && (
+                                      <div className="text-xs">
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>Content-Type:</span>{' '}
+                                        <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.content_type}</span>
+                                      </div>
+                                    )}
+                                    {scan.stack_info.http.headers.x_powered_by && (
+                                      <div className="text-xs">
+                                        <span className="font-medium" style={{ color: 'var(--fg)' }}>X-Powered-By:</span>{' '}
+                                        <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.x_powered_by}</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Error card - Keep in sidebar for reference, but main error is shown at top */}
+                    {scan.error_message && (
+                      <div className="rounded-xl border border-red-500/50 bg-red-900/20 p-4">
+                        <div className="font-semibold mb-1 text-xs text-red-300">Error Details</div>
+                        <pre className="whitespace-pre-wrap text-xs text-red-200">{scan.error_message}</pre>
+                      </div>
+                    )}
+
+                    {/* Remediation Overview */}
+                    {scan.summary?.remediation_overview && (
+                      <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
+                        <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Remediation Overview</h2>
+                        <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
+                          {scan.summary.remediation_overview}
+                        </p>
                       </div>
                     )}
                   </div>
-
-                  {/* Stack fingerprint card */}
-                  {scan.stack_info && (
-                    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Stack Fingerprint</h2>
-                      <div className="space-y-3 text-sm">
-                        {scan.stack_info.target_url && (
-                          <div>
-                            <p className="mb-1" style={{ color: 'var(--muted)' }}>Target URL</p>
-                            <p className="break-all" style={{ color: 'var(--fg)' }}>{scan.stack_info.target_url}</p>
-                          </div>
-                        )}
-                        {scan.stack_info.scan_level && (
-                          <div>
-                            <p className="mb-1" style={{ color: 'var(--muted)' }}>Scan Level</p>
-                            <p style={{ color: 'var(--fg)' }}>{scan.stack_info.scan_level}</p>
-                          </div>
-                        )}
-                        {scan.stack_info.http && (
-                          <>
-                            {scan.stack_info.http.status_code !== null && scan.stack_info.http.status_code !== undefined && (
-                              <div>
-                                <p className="mb-1" style={{ color: 'var(--muted)' }}>HTTP Status</p>
-                                <p style={{ color: 'var(--fg)' }}>{scan.stack_info.http.status_code}</p>
-                              </div>
-                            )}
-                            {scan.stack_info.http.headers && (
-                              <div>
-                                <p className="mb-2" style={{ color: 'var(--muted)' }}>HTTP Headers</p>
-                                <div className="space-y-1">
-                                  {scan.stack_info.http.headers.server && (
-                                    <div className="text-xs">
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>Server:</span>{' '}
-                                      <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.server}</span>
-                                    </div>
-                                  )}
-                                  {scan.stack_info.http.headers.content_type && (
-                                    <div className="text-xs">
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>Content-Type:</span>{' '}
-                                      <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.content_type}</span>
-                                    </div>
-                                  )}
-                                  {scan.stack_info.http.headers.x_powered_by && (
-                                    <div className="text-xs">
-                                      <span className="font-medium" style={{ color: 'var(--fg)' }}>X-Powered-By:</span>{' '}
-                                      <span style={{ color: 'var(--muted)' }}>{scan.stack_info.http.headers.x_powered_by}</span>
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Error card - Keep in sidebar for reference, but main error is shown at top */}
-                  {scan.error_message && (
-                    <div className="rounded-xl border border-red-500/50 bg-red-900/20 p-4">
-                      <div className="font-semibold mb-1 text-xs text-red-300">Error Details</div>
-                      <pre className="whitespace-pre-wrap text-xs text-red-200">{scan.error_message}</pre>
-                    </div>
-                  )}
-
-                  {/* Remediation Overview */}
-                  {scan.summary?.remediation_overview && (
-                    <div className="rounded-2xl border shadow-lg p-6" style={{ background: 'var(--surface)', borderColor: 'var(--border)' }}>
-                      <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--fg)' }}>Remediation Overview</h2>
-                      <p className="text-sm leading-relaxed" style={{ color: 'var(--fg)' }}>
-                        {scan.summary.remediation_overview}
-                      </p>
-                    </div>
-                  )}
-                </div>
                 </div>
               </div>
             )}
@@ -3266,14 +3332,49 @@ export default function ScanReportPage() {
                   ) : findingsError ? (
                     <div className="text-sm text-red-400 py-4">{findingsError}</div>
                   ) : findings.length === 0 ? (
-                    <div className="text-center py-8">
-                      <p className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>No findings detected</p>
-                      <p className="text-xs" style={{ color: 'var(--muted)' }}>
-                        {scan?.status === 'running' || scan?.status === 'queued'
-                          ? 'Findings will appear here once the scan completes.'
-                          : 'No security vulnerabilities or issues were detected during this scan.'}
-                      </p>
-                    </div>
+                    httpxSurfaceArtifacts && httpxSurfaceArtifacts.payload ? (
+                      <div className="text-left py-6">
+                        <p className="text-sm font-medium mb-2" style={{ color: 'var(--fg)' }}>
+                          HTTPX discovered web endpoints for this target.
+                        </p>
+                        <p className="text-xs mb-4" style={{ color: 'var(--muted)' }}>
+                          These are surface discovery results (URLs and endpoints) rather than security vulnerabilities. Detailed HTTPX output is available under the Enumeration tab.
+                        </p>
+                        {httpxSurfaceArtifacts.payload.in_scope && (
+                          <div className="mb-3 text-xs" style={{ color: 'var(--muted)' }}>
+                            In-scope endpoints:{' '}
+                            {(httpxSurfaceArtifacts.payload.in_scope['404_groups'] || []).reduce(
+                              (sum: number, g: any) => sum + (g.count || 0),
+                              0
+                            ) +
+                              (httpxSurfaceArtifacts.payload.in_scope.other_endpoints
+                                ? httpxSurfaceArtifacts.payload.in_scope.other_endpoints.length
+                                : 0)}
+                          </div>
+                        )}
+                        {httpxSurfaceArtifacts.payload.out_of_scope && (
+                          <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                            Out-of-scope endpoints:{' '}
+                            {(httpxSurfaceArtifacts.payload.out_of_scope['404_groups'] || []).reduce(
+                              (sum: number, g: any) => sum + (g.count || 0),
+                              0
+                            ) +
+                              (httpxSurfaceArtifacts.payload.out_of_scope.other_endpoints
+                                ? httpxSurfaceArtifacts.payload.out_of_scope.other_endpoints.length
+                                : 0)}
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8">
+                        <p className="text-sm font-medium mb-1" style={{ color: 'var(--fg)' }}>No findings detected</p>
+                        <p className="text-xs" style={{ color: 'var(--muted)' }}>
+                          {scan?.status === 'running' || scan?.status === 'queued'
+                            ? 'Findings will appear here once the scan completes.'
+                            : 'No security vulnerabilities or issues were detected during this scan.'}
+                        </p>
+                      </div>
+                    )
                   ) : (
                     <div className="space-y-4">
                       {findings.filter(f => showInfoFindings || f.severity?.toLowerCase() !== 'info').map((finding, idx) => {
@@ -3322,9 +3423,9 @@ export default function ScanReportPage() {
                           {/* Progress Bar */}
                           {(scan?.status === 'running' || scan?.status === 'queued') && (
                             <div className="mt-2 w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface-2)' }}>
-                              <div 
+                              <div
                                 className="h-full transition-all duration-300"
-                                style={{ 
+                                style={{
                                   background: 'var(--brand)',
                                   width: `${scan?.progress_pct || 0}%`
                                 }}
@@ -3535,7 +3636,7 @@ export default function ScanReportPage() {
                             </span>
                           </div>
                         )}
-                        
+
                         {/* Katana - Always show if inventory exists */}
                         {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
@@ -3546,7 +3647,7 @@ export default function ScanReportPage() {
                                 </svg>
                               </div>
                               <div>
-                              <div className="font-medium" style={{ color: 'var(--fg)' }}>Katana (Live Crawl)</div>
+                                <div className="font-medium" style={{ color: 'var(--fg)' }}>Katana (Live Crawl)</div>
                                 {inventory.discovery.katana?.error && (
                                   <div className="text-xs" style={{ color: 'var(--error)' }}>
                                     {inventory.discovery.katana.error}
@@ -3559,7 +3660,7 @@ export default function ScanReportPage() {
                             </span>
                           </div>
                         )}
-                        
+
                         {/* GAU - Always show if inventory exists */}
                         {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
@@ -3576,7 +3677,72 @@ export default function ScanReportPage() {
                             </span>
                           </div>
                         )}
-                        
+
+                        {/* FFuf - Show if ffuf data exists */}
+                        {inventory.discovery?.ffuf && (
+                          <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
+                                <svg className="w-5 h-5" style={{ color: '#ec4899' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                                </svg>
+                              </div>
+                              <div>
+                                <div className="font-medium" style={{ color: 'var(--fg)' }}>FFuf (Path Fuzzing)</div>
+                                {inventory.discovery.ffuf?.error && (
+                                  <div className="text-xs" style={{ color: 'var(--muted)' }}>
+                                    {inventory.discovery.ffuf.error}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: '#ec4899', color: '#ffffff' }}>
+                              {inventory.discovery.ffuf?.urls_count || 0} paths
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Liveness Check - Show if data exists */}
+                        {inventory.discovery?.liveness && (
+                          <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
+                                <svg className="w-5 h-5" style={{ color: '#22d3ee' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                              </div>
+                              <div className="font-medium" style={{ color: 'var(--fg)' }}>Liveness Check</div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: '#22d3ee', color: '#0e7490' }}>
+                                {inventory.discovery.liveness.live_count || 0} live
+                              </span>
+                              {(inventory.discovery.liveness.dead_count || 0) > 0 && (
+                                <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
+                                  {inventory.discovery.liveness.dead_count} dead
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Soft-404 Filter - Show if data exists */}
+                        {inventory.discovery?.soft404 && (
+                          <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--surface-2)' }}>
+                                <svg className="w-5 h-5" style={{ color: '#facc15' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                              </div>
+                              <div className="font-medium" style={{ color: 'var(--fg)' }}>Soft-404 Filter</div>
+                            </div>
+                            <span className="px-3 py-1 text-xs font-medium rounded-full" style={{ background: 'var(--surface-2)', color: 'var(--muted)' }}>
+                              {inventory.discovery.soft404.soft_404_count || 0} filtered
+                            </span>
+                          </div>
+                        )}
+
                         {/* Arjun - Always show if inventory exists */}
                         {inventory.discovery && (
                           <div className="flex items-center justify-between p-3 rounded-lg" style={{ background: 'var(--bg)' }}>
@@ -3614,6 +3780,95 @@ export default function ScanReportPage() {
                       </div>
                     </div>
 
+                    {/* Smart Scan Routing */}
+                    <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-semibold" style={{ color: 'var(--fg)' }}>Smart Scan Routing</h3>
+                        <span className="px-3 py-1 text-xs font-medium rounded-full border" style={{ background: 'var(--surface-2)', color: 'var(--muted)', borderColor: 'var(--border)' }}>
+                          Tool Dispatch Logic
+                        </span>
+                      </div>
+                      <div className="space-y-3">
+                        <p className="text-sm mb-4" style={{ color: 'var(--muted)' }}>
+                          Discovered assets are intelligently routed to specific tools based on their capabilities and target requirements.
+                        </p>
+
+                        {/* Dalfox Routing */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border" style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}>
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded flex items-center justify-center shrink-0" style={{ background: '#3b82f620', color: '#60a5fa' }}>
+                              <span className="font-bold text-xs">DAL</span>
+                            </div>
+                            <div>
+                              <div className="font-medium text-sm" style={{ color: 'var(--fg)' }}>Dalfox</div>
+                              <div className="text-xs" style={{ color: 'var(--muted)' }}>Targeting XSS, SQLi, Open Redirects</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className="text-sm font-mono" style={{ color: 'var(--fg)' }}>
+                                {inventory.discovery.merged?.param_urls_count || 0}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Param Targets</div>
+                            </div>
+                            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                            </svg>
+                          </div>
+                        </div>
+
+                        {/* Nuclei Routing */}
+                        <div className="flex items-center justify-between p-3 rounded-lg border" style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}>
+                          <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded flex items-center justify-center shrink-0" style={{ background: '#10b98120', color: '#34d399' }}>
+                              <span className="font-bold text-xs">NUC</span>
+                            </div>
+                            <div>
+                              <div className="font-medium text-sm" style={{ color: 'var(--fg)' }}>Nuclei</div>
+                              <div className="text-xs" style={{ color: 'var(--muted)' }}>Targeting known vulnerabilities & misconfigs</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                              <div className="text-sm font-mono" style={{ color: 'var(--fg)' }}>
+                                {inventory.discovery.merged?.unique_urls_count || 0}
+                              </div>
+                              <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Total Targets</div>
+                            </div>
+                            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                            </svg>
+                          </div>
+                        </div>
+
+                        {/* ZAP Routing */}
+                        {['pro', 'advanced'].includes(scan?.scan_level || '') && (
+                          <div className="flex items-center justify-between p-3 rounded-lg border" style={{ background: 'var(--bg)', borderColor: 'var(--border)' }}>
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded flex items-center justify-center shrink-0" style={{ background: '#a855f720', color: '#c084fc' }}>
+                                <span className="font-bold text-xs">ZAP</span>
+                              </div>
+                              <div>
+                                <div className="font-medium text-sm" style={{ color: 'var(--fg)' }}>ZAP Active Scan</div>
+                                <div className="text-xs" style={{ color: 'var(--muted)' }}>Deep active scanning for vulnerabilities</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                              <div className="text-right">
+                                <div className="text-sm font-mono" style={{ color: 'var(--fg)' }}>
+                                  {inventory.discovery.merged?.unique_urls_count || 0}
+                                </div>
+                                <div className="text-[10px] uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Total Targets</div>
+                              </div>
+                              <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                              </svg>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     {/* Parameterized URLs */}
                     {inventory.discovery?.merged?.param_urls && inventory.discovery.merged.param_urls.length > 0 && (
                       <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
@@ -3646,12 +3901,12 @@ export default function ScanReportPage() {
                             // Extract parameter value from URL for highlighting
                             // Try to find the first parameter value after = sign
                             const paramMatch = url.match(/([?&][^=]+=)([^&]+)/);
-                            
+
                             if (paramMatch) {
                               const beforeParam = url.substring(0, paramMatch.index! + paramMatch[1].length);
                               const paramValue = paramMatch[2];
                               const afterParam = url.substring(paramMatch.index! + paramMatch[0].length);
-                              
+
                               return (
                                 <div
                                   key={idx}
@@ -3665,7 +3920,7 @@ export default function ScanReportPage() {
                                 </div>
                               );
                             }
-                            
+
                             return (
                               <div
                                 key={idx}
@@ -3689,7 +3944,7 @@ export default function ScanReportPage() {
                       const paramUrlSet = new Set(paramUrls);
                       // Filter out parameterized URLs to show only non-parameterized ones
                       const nonParamUrls = uniqueUrls.filter((url: string) => !paramUrlSet.has(url));
-                      
+
                       return nonParamUrls.length > 0 ? (
                         <div className="rounded-lg border p-6" style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}>
                           <div className="flex items-center justify-between mb-4">
@@ -3745,7 +4000,7 @@ export default function ScanReportPage() {
                         {httpxSurfaceArtifacts.payload.in_scope && (
                           <div className="mb-6">
                             <h4 className="text-sm font-semibold mb-3" style={{ color: 'var(--fg)' }}>In-Scope Endpoints</h4>
-                            
+
                             {/* In-Scope 404 Groups */}
                             {httpxSurfaceArtifacts.payload.in_scope['404_groups'] && httpxSurfaceArtifacts.payload.in_scope['404_groups'].length > 0 && (
                               <div className="mb-4">

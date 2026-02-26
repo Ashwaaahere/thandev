@@ -4,7 +4,7 @@ Scans API router
 import os
 import json
 import logging
-from typing import Optional
+from typing import Optional, Any
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Header, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -41,6 +41,7 @@ from app.services.domain_verification import (
 )
 from app.services.scan_enforcement import enforce_scan_permissions
 from app.utils.raw_data_parser import parse_raw_json, extract_zap_metadata, normalize_cwe_id
+from app.utils.dalfox_instance_meta import parse_dalfox_evidence_snippet
 from app.core.severity import zap_to_severity
 
 router = APIRouter(
@@ -107,6 +108,40 @@ def _extract_summary_fields(summary: Optional[dict]) -> tuple[Optional[float], O
             findings_count = None
     
     return (risk_score, findings_count)
+
+
+def _serialize_finding_instance(instance: Any, tool_name: Optional[str]) -> dict:
+    evidence_snippet = instance.evidence_snippet
+    display_snippet = evidence_snippet
+    payload_raw = None
+    payload_decoded = None
+    message = None
+    marker = None
+    instance_severity = None
+
+    if (tool_name or "").lower() == "dalfox":
+        parsed = parse_dalfox_evidence_snippet(evidence_snippet)
+        display_snippet = parsed.get("display_snippet")
+        payload_raw = parsed.get("payload_raw")
+        payload_decoded = parsed.get("payload_decoded")
+        message = parsed.get("message")
+        marker = parsed.get("marker")
+        instance_severity = parsed.get("instance_severity")
+
+    return {
+        "url": instance.url,
+        "path": instance.path,
+        "http_method": instance.http_method,
+        "parameter": instance.parameter,
+        "evidence_snippet": display_snippet,
+        "display_snippet": display_snippet,
+        "payload_raw": payload_raw,
+        "payload_decoded": payload_decoded,
+        "message": message,
+        "marker": marker,
+        "instance_severity": instance_severity,
+        "is_static_asset": instance.is_static_asset,
+    }
 
 
 @router.get("", response_model=ScanJobListResponse)
@@ -3317,14 +3352,7 @@ async def get_scan_findings(
                     mostly_static = (static_count / len(instances)) > 0.8
                     # Create instances_sample (up to 10 instances)
                     instances_sample = [
-                        {
-                            "url": inst.url,
-                            "path": inst.path,
-                            "http_method": inst.http_method,
-                            "parameter": inst.parameter,
-                            "evidence_snippet": inst.evidence_snippet,
-                            "is_static_asset": inst.is_static_asset,
-                        }
+                        _serialize_finding_instance(inst, finding.tool_name)
                         for inst in instances[:10]  # Limit to 10 instances
                     ]
             elif hasattr(finding, 'affected_count') and finding.affected_count and finding.affected_count > 1:
@@ -3562,14 +3590,7 @@ async def get_finding_instances(
     
     # Convert to response format
     instances_data = [
-        {
-            "url": inst.url,
-            "path": inst.path,
-            "http_method": inst.http_method,
-            "parameter": inst.parameter,
-            "evidence_snippet": inst.evidence_snippet,
-            "is_static_asset": inst.is_static_asset,
-        }
+        _serialize_finding_instance(inst, finding.tool_name)
         for inst in instances
     ]
     
@@ -4056,5 +4077,3 @@ async def create_advanced_scan(
         findings=[],
         tool_statuses=[],
     )
-
-

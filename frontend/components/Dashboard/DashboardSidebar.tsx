@@ -34,7 +34,8 @@ export default function DashboardSidebar({
   const corePlatformNav = [
     { name: 'Overview', href: '/dashboard', icon: 'M3 3h8v8H3V3zm10 0h8v8h-8V3zM3 13h8v8H3v-8zm10 0h8v8h-8v-8z' }, // Grid icon (4 squares in 2x2)
     { name: 'Projects', href: '/projects', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-4l-2-2H5a2 2 0 00-2 2z' }, // Folder icon
-    { name: 'Security Scanner', href: '/dashboard/scan', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z' }, // Target/scanner icon (circle with dot in center)
+    { name: 'Web Spy', href: '/dashboard/scan', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 8c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z' }, // Target/scanner icon (circle with dot in center)
+    { name: 'Code Scan', href: '/dashboard/code-scan', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4' }, // Code/bracket icon
     { name: 'History', href: '/dashboard/history', icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z' }, // Clock icon
     { name: 'Reports', href: '/dashboard/reports', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' }, // Bar chart icon (3 vertical bars)
     { name: 'Vulnerabilities', href: '/dashboard/vulnerabilities', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z' }, // Bug icon

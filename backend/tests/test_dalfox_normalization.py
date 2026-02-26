@@ -6,8 +6,11 @@ import json
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from app.models.finding import Finding, Severity
 from app.services.scan_orchestrator import _normalize_dalfox_output
 from app.services.findings_ingestor import parse_dalfox_output, ingest_dalfox_findings
+from app.services import findings_ingestor as ingestor_module
+from app.utils.dalfox_instance_meta import parse_dalfox_evidence_snippet
 
 
 class TestDalfoxOutputNormalization:
@@ -221,6 +224,46 @@ class TestDalfoxIngestion:
         assert findings[0].parameter == "test"
         assert findings[0].vuln_type == "xss"
         assert findings[0].tool_name == "dalfox"
+
+    def test_ingest_groups_open_redirect_variants(self, db_session, scan_job):
+        """Open redirect payload variants on same sink+param should group into one finding with multiple instances."""
+        base = "http://example.com/vuln/open_redirect.php"
+        dalfox_results = [
+            {
+                "type": "V",
+                "param": "redirect",
+                "payload": "//google.com",
+                "data": f"{base}?redirect=%2F%2Fgoogle.com",
+                "message": "Found Open Redirect. Payload: //google.com",
+                "cwe": "CWE-601",
+            },
+            {
+                "type": "V",
+                "param": "redirect",
+                "payload": "//google.com/",
+                "data": f"{base}?redirect=%2F%2Fgoogle.com%2F",
+                "message": "Found Open Redirect. Payload: //google.com/",
+                "cwe": "CWE-601",
+            },
+            {
+                "type": "V",
+                "param": "redirect",
+                "payload": "https://google.com",
+                "data": f"{base}?redirect=https%3A%2F%2Fgoogle.com",
+                "message": "Found Open Redirect. Payload: https://google.com",
+                "cwe": "CWE-601",
+            },
+        ]
+        
+        findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+        
+        # Only one canonical finding should be created
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.vuln_type == "open_redirect"
+        assert f.parameter == "redirect"
+        # Instances should reflect all payload variants
+        assert len(f.instances) == 3
     
     def test_ingest_handles_data_field(self, db_session, scan_job):
         """Test that 'data' field is recognized as URL source"""
@@ -233,7 +276,140 @@ class TestDalfoxIngestion:
         findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
         
         assert len(findings) == 1
-        assert findings[0].url is not None
+        assert len(findings[0].instances) == 1
+        assert findings[0].instances[0].url is not None
+
+    def test_ingest_20_payloads_same_sink_groups_to_one_finding(self, db_session, scan_job):
+        base = "https://example.com/search"
+        dalfox_results = []
+        for i in range(20):
+            payload = f"<svg/onload=alert({i})>"
+            dalfox_results.append(
+                {
+                    "type": "R",
+                    "param": "uid",
+                    "payload": payload,
+                    "data": f"{base}?uid=%3Csvg%2Fonload%3Dalert({i})%3E",
+                    "message": f"Reflected XSS payload {i}",
+                }
+            )
+
+        findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.affected_count == 20
+        assert len(finding.instances) == 20
+
+    def test_ingest_same_host_param_different_path_creates_two_findings(self, db_session, scan_job):
+        dalfox_results = [
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": "<script>alert(1)</script>",
+                "data": "https://example.com/search?uid=%3Cscript%3Ealert(1)%3C/script%3E",
+                "message": "Reflected XSS",
+            },
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": "<script>alert(2)</script>",
+                "data": "https://example.com/profile?uid=%3Cscript%3Ealert(2)%3C/script%3E",
+                "message": "Reflected XSS",
+            },
+        ]
+        ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+
+        all_findings = (
+            db_session.query(Finding)
+            .filter(Finding.scan_job_id == scan_job.id, Finding.tool_name == "dalfox")
+            .all()
+        )
+        assert len(all_findings) == 2
+
+    def test_dalfox_title_never_contains_payload_substring(self, db_session, scan_job):
+        payload = "<svg/onload=alert(1)>"
+        dalfox_results = [
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": payload,
+                "data": "https://example.com/search?uid=%3Csvg%2Fonload%3Dalert(1)%3E",
+                "message": "Reflected XSS",
+            }
+        ]
+        findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+        assert len(findings) == 1
+        assert payload not in findings[0].title
+
+    def test_dalfox_instance_severity_mapping_triggered_and_dom(self, db_session, scan_job):
+        dalfox_results = [
+            {
+                "type": "V",
+                "param": "uid",
+                "payload": "<script>alert(1)</script>",
+                "data": "https://example.com/search?uid=%3Cscript%3Ealert(1)%3C/script%3E",
+                "message": "Triggered XSS execution",
+            },
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": "<img src=x onerror=alert(2)>",
+                "data": "https://example.com/search?uid=%3Cimg%20src%3Dx%20onerror%3Dalert(2)%3E",
+                "message": "Found DOM object",
+            },
+        ]
+        findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.severity == Severity.HIGH
+        severities = {
+            parse_dalfox_evidence_snippet(inst.evidence_snippet).get("instance_severity")
+            for inst in finding.instances
+        }
+        assert "high" in severities
+        assert "medium" in severities
+
+    def test_dalfox_url_only_instance_dedup(self, db_session, scan_job):
+        url = "https://example.com/search?uid=%3Cscript%3Ealert(1)%3C/script%3E"
+        dalfox_results = [
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": "<script>alert(1)</script>",
+                "data": url,
+                "message": "Reflected XSS",
+            },
+            {
+                "type": "R",
+                "param": "uid",
+                "payload": "<script>alert(1)</script>",
+                "data": url,
+                "message": "Reflected XSS duplicate line",
+            },
+        ]
+        findings = ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+        assert len(findings) == 1
+        finding = findings[0]
+        assert finding.affected_count == 1
+        assert len(finding.instances) == 1
+
+    def test_ingest_dalfox_uses_normalizer_path(self, db_session, scan_job, monkeypatch):
+        original = ingestor_module.create_or_update_finding_with_normalizer
+        calls = []
+
+        def _spy(*args, **kwargs):
+            calls.append(kwargs.get("finding_data", {}))
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(ingestor_module, "create_or_update_finding_with_normalizer", _spy)
+
+        dalfox_results = [
+            {"type": "R", "param": "uid", "payload": "<a>", "data": "https://example.com/search?uid=%3Ca%3E", "message": "Reflected XSS"},
+            {"type": "R", "param": "uid", "payload": "<b>", "data": "https://example.com/search?uid=%3Cb%3E", "message": "Reflected XSS"},
+        ]
+        ingest_dalfox_findings(db_session, scan_job.id, dalfox_results)
+        assert len(calls) == 2
 
 
 # Pytest fixtures for database tests
@@ -282,4 +458,3 @@ def scan_job(db_session):
     db_session.commit()
     
     return scan_job
-
