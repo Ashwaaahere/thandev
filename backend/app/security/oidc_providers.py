@@ -20,6 +20,13 @@ from jwt import algorithms
 
 logger = logging.getLogger(__name__)
 
+# Runtime sanity check to ensure we are using PyJWT (not the incompatible 'jwt' package).
+if not hasattr(jwt, "algorithms") or not hasattr(jwt.algorithms, "RSAAlgorithm"):
+    raise RuntimeError(
+        "Incompatible 'jwt' package detected. Expected PyJWT with algorithms.RSAAlgorithm.\n"
+        "Ensure PyJWT[crypto]>=2.8.0,<3 is installed and any 'jwt' package is removed."
+    )
+
 # Supported provider slugs (path segment)
 SUPPORTED_PROVIDERS = frozenset({"github", "bitbucket", "gitlab", "circleci", "azuredevops"})
 

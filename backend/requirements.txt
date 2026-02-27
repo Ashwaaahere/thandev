@@ -54,7 +54,8 @@ pytest==9.0.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 python-multipart==0.0.9
-PyJWT==2.8.0
+PyJWT[crypto]>=2.8.0,<3
+cryptography>=41
 PyYAML==6.0.1
 redis==5.0.8
 referencing==0.37.0
