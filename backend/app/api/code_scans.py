@@ -172,6 +172,7 @@ async def oidc_exchange(
             verify_oidc_token_and_extract,
             get_provider_config,
             SUPPORTED_PROVIDERS,
+            OIDCJWKSFetchError,
         )
         if provider_lower not in SUPPORTED_PROVIDERS:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported provider: {provider}")
@@ -185,8 +186,18 @@ async def oidc_exchange(
             claims = verify_oidc_token_and_extract(provider_lower, body.oidc_token)
         except NotImplementedError as e:
             raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(e))
+        except OIDCJWKSFetchError as e:
+            # Upstream JWKS/discovery failure – treat as backend service issue
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"OIDC JWKS unavailable: {e}",
+            )
         except ValueError as e:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(e))
+            # Signature/claims/issuer/audience problems – invalid token
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"OIDC verification failed: {e}",
+            )
         repo_full_name = claims.get("repo_full_name")
         if not repo_full_name:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="OIDC token missing repository identity")
@@ -220,6 +231,29 @@ async def oidc_exchange(
     value = json.dumps({"project_id": project_id, "provider": provider_lower, "repo_full_name": payload_repo})
     redis_client.setex(key, CODE_INGEST_TTL, value)
     return OIDCExchangeResponse(access_token=token, expires_in=CODE_INGEST_TTL)
+
+
+@router.get("/debug-token")
+async def debug_token(token: str = Query(..., description="JWT to decode without verification")):
+    """
+    Decode a JWT without verifying its signature.
+
+    This endpoint is only available when OIDC_DEBUG=1 and is intended for local debugging.
+    """
+    if (os.getenv("OIDC_DEBUG") or "").strip().lower() not in ("1", "true", "yes"):
+        # Hide existence of this endpoint when not explicitly enabled.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    try:
+        import jwt  # Local import to avoid hard dependency if unused
+
+        header = jwt.get_unverified_header(token)
+        payload = jwt.decode(token, options={"verify_signature": False})
+        return {"header": header, "payload": payload}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse token: {type(e).__name__}",
+        ) from e
 
 
 def _get_ingest_payload(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
