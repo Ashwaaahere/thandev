@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
 import DashboardHeader from '@/components/Dashboard/DashboardHeader';
@@ -371,12 +372,24 @@ export default function CodeScanPage() {
               ) : (
                 <ul className="space-y-2">
                   {codeScans.map((s) => (
-                    <li key={s.id} className="flex items-center gap-2 flex-wrap text-slate-200">
-                      <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-600">{s.provider}</span>
-                      <span className="font-mono text-sm">{s.repo_full_name}</span>
-                      {s.ref && <span className="text-slate-400 text-xs">{s.ref}</span>}
-                      {s.sha && <span className="text-slate-500 font-mono text-xs truncate max-w-[8ch]" title={s.sha}>{s.sha.slice(0, 7)}</span>}
-                      <span className="text-xs text-slate-500">{s.status}</span>
+                    <li key={s.id}>
+                      <Link
+                        href={`/dashboard/code-scan/${encodeURIComponent(s.id)}`}
+                        className="flex items-center gap-2 flex-wrap text-slate-200 hover:text-white hover:bg-slate-700/40 rounded-lg px-2 py-1 transition-colors"
+                      >
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-600">{s.provider}</span>
+                        <span className="font-mono text-sm">{s.repo_full_name}</span>
+                        {s.ref && <span className="text-slate-400 text-xs">{s.ref}</span>}
+                        {s.sha && (
+                          <span
+                            className="text-slate-500 font-mono text-xs truncate max-w-[8ch]"
+                            title={s.sha}
+                          >
+                            {s.sha.slice(0, 7)}
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-500">{s.status}</span>
+                      </Link>
                     </li>
                   ))}
                 </ul>

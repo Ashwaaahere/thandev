@@ -360,6 +360,10 @@ async def ingest(
         if data is not None:
             artifacts[name] = data
 
+    # If workflow only uploaded SARIF (e.g. gitleaks action outputs results.sarif), use it for gitleaks tab
+    if "gitleaks" not in artifacts and "sarif" in artifacts:
+        artifacts["gitleaks"] = artifacts["sarif"]
+
     meta["artifacts"] = artifacts
 
     # Summary counts (placeholder; can be refined from artifact contents later)
@@ -512,6 +516,53 @@ async def list_code_scans(
         for r in rows
     ]
     return CodeScansListResponse(items=items, total=total)
+
+
+@router.get("/scans/{scan_id}", response_model=CodeScanItem)
+async def get_code_scan(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(require_approved_user),
+):
+    """
+    Return details for a single code scan, including summary and meta (artifacts).
+    """
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
+    scan = db.query(CodeScan).filter(CodeScan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code scan not found")
+
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == scan.project_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        # Either project does not exist or user is not allowed to see it
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code scan not found")
+
+    return CodeScanItem(
+        id=scan.id,
+        project_id=scan.project_id,
+        scan_type=scan.scan_type or "code",
+        provider=scan.provider,
+        repo_full_name=scan.repo_full_name,
+        ref=scan.ref,
+        sha=scan.sha,
+        run_id=scan.run_id,
+        status=scan.status,
+        summary_json=scan.summary_json,
+        meta_json=scan.meta_json,
+        created_at=scan.created_at.isoformat(),
+        completed_at=scan.completed_at.isoformat() if scan.completed_at else None,
+    )
 
 
 def _unlink_repo_by_id(

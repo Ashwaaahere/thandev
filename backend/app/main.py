@@ -542,6 +542,47 @@ app.include_router(callback_router, prefix="/api/runner")
 app.include_router(websocket.router)
 
 
+@app.get(f"{settings.API_V1_PREFIX}/debug/code-scans")
+async def debug_code_scans(repo: Optional[str] = None, limit: int = 20):
+    """
+    Debug endpoint: list recent code scans (IDs + basic metadata) for a repo.
+
+    Only enabled when OIDC_DEBUG=1 (or 'true'/'yes'); otherwise returns 404.
+    """
+    import os
+    from sqlalchemy.orm import Session
+    from app.core.database import SessionLocal
+    from app.models.code_scan import CodeScan
+
+    if os.getenv("OIDC_DEBUG", "").strip().lower() not in ("1", "true", "yes"):
+        # Hide existence when not explicitly enabled
+        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "Not found"})
+
+    session: Session = SessionLocal()
+    try:
+        q = session.query(CodeScan).order_by(CodeScan.created_at.desc())
+        if repo:
+            q = q.filter(CodeScan.repo_full_name == repo)
+        rows = q.limit(limit).all()
+        data = [
+            {
+                "id": r.id,
+                "project_id": r.project_id,
+                "provider": r.provider,
+                "repo_full_name": r.repo_full_name,
+                "ref": r.ref,
+                "sha": r.sha,
+                "run_id": r.run_id,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ]
+        return {"items": data, "total": len(data)}
+    finally:
+        session.close()
+
+
 # Custom OpenAPI schema
 def custom_openapi():
     if app.openapi_schema:
