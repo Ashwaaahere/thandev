@@ -53,10 +53,16 @@ function computeSecuritySummary(artifacts: Record<string, unknown> | null | unde
   const counts: SeverityCounts = { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, secrets: 0 };
   if (!artifacts || typeof artifacts !== 'object') return counts;
 
-  // Semgrep: results[].extra.severity
-  const semgrep = artifacts.semgrep as Record<string, unknown> | undefined;
-  if (semgrep && Array.isArray(semgrep.results)) {
-    for (const r of semgrep.results as Record<string, unknown>[]) {
+  // Semgrep: results[].extra.severity (or top-level array / matches)
+  const semgrep = artifacts.semgrep;
+  if (semgrep !== undefined && semgrep !== null) {
+    let semgrepResults: Record<string, unknown>[] = [];
+    if (Array.isArray(semgrep)) semgrepResults = semgrep as Record<string, unknown>[];
+    else if (typeof semgrep === 'object') {
+      const obj = semgrep as Record<string, unknown>;
+      semgrepResults = (obj.results as Record<string, unknown>[] | undefined) ?? (obj.matches as Record<string, unknown>[] | undefined) ?? [];
+    }
+    for (const r of semgrepResults) {
       const extra = r?.extra as Record<string, unknown> | undefined;
       const sev = (extra?.severity ?? (extra?.metadata as Record<string, unknown>)?.severity) as string | undefined;
       counts[normalizeSeverity(sev)]++;
@@ -129,15 +135,22 @@ function computeSecuritySummary(artifacts: Record<string, unknown> | null | unde
 // --- Structured row types and extractors ---
 type SemgrepRow = { ruleId: string; severity: string; file: string; line: number; message: string };
 function getSemgrepRows(data: unknown): SemgrepRow[] {
-  const obj = data as Record<string, unknown> | null;
-  const results = (obj?.results as Record<string, unknown>[] | undefined) ?? [];
+  let results: Record<string, unknown>[] = [];
+  if (Array.isArray(data)) {
+    results = data as Record<string, unknown>[];
+  } else if (data && typeof data === 'object') {
+    const obj = data as Record<string, unknown>;
+    results = (obj.results as Record<string, unknown>[] | undefined) ??
+      (obj.matches as Record<string, unknown>[] | undefined) ??
+      [];
+  }
   return results.map((r) => {
     const extra = (r.extra as Record<string, unknown>) ?? {};
     const start = (r.start as Record<string, unknown>) ?? {};
     return {
-      ruleId: String(r.check_id ?? r.rule_id ?? '—'),
+      ruleId: String(r.check_id ?? r.rule_id ?? r.ruleID ?? '—'),
       severity: String(extra.severity ?? (extra.metadata as Record<string, unknown>)?.severity ?? 'INFO').toUpperCase(),
-      file: String(r.path ?? '—'),
+      file: String(r.path ?? r.file ?? r.filename ?? '—'),
       line: Number(start.line ?? r.line ?? 0) || 0,
       message: String(extra.message ?? r.message ?? '—'),
     };
