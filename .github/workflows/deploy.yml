@@ -1,14 +1,8 @@
+# Fly.io deploy disabled here — deploy from CLI instead (see backend/scripts/fly-deploy.sh)
 name: Deploy to Fly.io
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - 'services/thandev-brain/**'
-      - 'services/thandev-runner/**'
-      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
 
 jobs:
   detect-changes:
@@ -35,7 +29,7 @@ jobs:
     name: Deploy Backend
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: needs.detect-changes.outputs.backend == 'true' || contains(github.event.head_commit.message, '[deploy backend]') || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, 'deploy') || contains(github.event.head_commit.message, 'Deploy')
+    if: github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.backend == 'true'
     steps:
       - uses: actions/checkout@v4
       
@@ -51,7 +45,7 @@ jobs:
     name: Deploy Brain Service
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: needs.detect-changes.outputs.brain == 'true' || contains(github.event.head_commit.message, '[deploy brain]') || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, 'deploy') || contains(github.event.head_commit.message, 'Deploy')
+    if: github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.brain == 'true'
     steps:
       - uses: actions/checkout@v4
       
@@ -67,7 +61,7 @@ jobs:
     name: Deploy Runner Service
     runs-on: ubuntu-latest
     needs: detect-changes
-    if: needs.detect-changes.outputs.runner == 'true' || contains(github.event.head_commit.message, '[deploy runner]') || contains(github.event.head_commit.message, '[deploy all]') || contains(github.event.head_commit.message, 'deploy') || contains(github.event.head_commit.message, 'Deploy')
+    if: github.event_name == 'workflow_dispatch' || needs.detect-changes.outputs.runner == 'true'
     steps:
       - uses: actions/checkout@v4
       
