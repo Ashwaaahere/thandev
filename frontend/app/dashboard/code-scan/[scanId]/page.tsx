@@ -10,7 +10,14 @@ import Badge from '@/components/ui/Badge';
 import { TabList, Tab, TabPanel } from '@/components/ui/Tabs';
 import JsonViewerPanel from '@/components/ui/JsonViewerPanel';
 import SeverityBadge from '@/components/Scans/SeverityBadge';
+import CodeScanFindingDetailsDrawer, { type CodeFindingOut } from '@/components/Dashboard/CodeScanFindingDetailsDrawer';
 import { thandevFetchJSON } from '@/lib/thandevApi';
+
+type FindingsListResponse = {
+  counts: { total: number; critical: number; high: number; medium: number; low: number; info: number; secrets: number };
+  findings: CodeFindingOut[];
+};
+type SbomResponse = { scan_id: string; total: number; components: { name: string; version: string; purl: string; license: string }[] };
 
 type CodeScanDetail = {
   id: string;
@@ -326,6 +333,13 @@ export default function CodeScanDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ToolKey>('semgrep');
+  const [findingsResponse, setFindingsResponse] = useState<FindingsListResponse | null>(null);
+  const [sbomData, setSbomData] = useState<SbomResponse | null>(null);
+  const [selectedFinding, setSelectedFinding] = useState<CodeFindingOut | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [severityFilter, setSeverityFilter] = useState<string>('');
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
 
   useEffect(() => {
     if (!session || !scanId) return;
@@ -352,8 +366,37 @@ export default function CodeScanDetailPage() {
     };
   }, [session, scanId]);
 
+  useEffect(() => {
+    if (!session || !scanId || !scan) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await thandevFetchJSON<FindingsListResponse>(`/api/code-scans/scans/${encodeURIComponent(scanId)}/findings`, session);
+        if (!cancelled) setFindingsResponse(data);
+      } catch {
+        if (!cancelled) setFindingsResponse(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session, scanId, scan?.id]);
+
+  useEffect(() => {
+    if (!session || !scanId || activeTab !== 'sbom') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await thandevFetchJSON<SbomResponse>(`/api/code-scans/scans/${encodeURIComponent(scanId)}/sbom`, session);
+        if (!cancelled) setSbomData(data);
+      } catch {
+        if (!cancelled) setSbomData(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session, scanId, activeTab]);
+
   const artifacts = (scan?.meta_json && scan.meta_json.artifacts) as Record<string, unknown> | undefined;
-  const summary = computeSecuritySummary(artifacts);
+  const summaryFromArtifacts = computeSecuritySummary(artifacts);
+  const summary = findingsResponse?.counts ?? summaryFromArtifacts;
 
   const postureBadge =
     summary.critical > 0 ? 'critical' : summary.high > 0 ? 'high' : 'normal';
@@ -365,7 +408,31 @@ export default function CodeScanDetailPage() {
 
   const currentToolData = (activeTab && artifacts?.[activeTab]) ?? null;
 
+  const normalizedToolTabs = ['semgrep', 'gitleaks', 'osv', 'trivy'] as const;
+  const findingsForTool = (tool: string): CodeFindingOut[] => {
+    const list = findingsResponse?.findings ?? [];
+    return list.filter((f) => (f.source_tool || '').toLowerCase() === tool.toLowerCase());
+  };
+  const activeToolFindings = normalizedToolTabs.includes(activeTab as typeof normalizedToolTabs[number])
+    ? findingsForTool(activeTab)
+    : [];
+  const searchLower = searchQuery.trim().toLowerCase();
+  const filteredFindings = activeToolFindings.filter((f) => {
+    if (severityFilter && (f.severity || '').toLowerCase() !== severityFilter.toLowerCase()) return false;
+    if (categoryFilter && (f.category || '').toLowerCase() !== categoryFilter.toLowerCase()) return false;
+    if (!searchLower) return true;
+    const title = (f.title || '').toLowerCase();
+    const sum = (f.summary || '').toLowerCase();
+    const path = (f.location?.file_path || f.location?.manifest_path || '').toLowerCase();
+    const pkg = (f.dependency?.package || '').toLowerCase();
+    const ids = [...(f.identifiers?.cve || []), ...(f.identifiers?.ghsa || []), f.identifiers?.rule_id || ''].join(' ').toLowerCase();
+    return title.includes(searchLower) || sum.includes(searchLower) || path.includes(searchLower) || pkg.includes(searchLower) || ids.includes(searchLower);
+  });
+
   function getTabCount(tool: ToolKey): number {
+    if (findingsResponse && ['semgrep', 'gitleaks', 'osv', 'trivy'].includes(tool)) {
+      return (findingsResponse.findings || []).filter((f) => (f.source_tool || '').toLowerCase() === tool).length;
+    }
     const data = artifacts?.[tool];
     if (data == null) return 0;
     if (tool === 'semgrep') return getSemgrepRows(data).length;
@@ -484,11 +551,131 @@ export default function CodeScanDetailPage() {
                 })}
               </TabList>
               <TabPanel className="space-y-4">
-                {!currentToolData ? (
-                  <p className="text-sm" style={{ color: 'var(--muted)' }}>No data uploaded for this tool.</p>
-                ) : (
+                {/* Normalized findings table for semgrep / gitleaks / osv / trivy */}
+                {normalizedToolTabs.includes(activeTab as typeof normalizedToolTabs[number]) && (
+                  <>
+                    <div className="flex flex-wrap gap-3 items-center">
+                      <input
+                        type="text"
+                        placeholder="Search by title, path, package, ID…"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="flex-1 min-w-[200px] px-3 py-2 text-sm rounded-lg border"
+                        style={{ borderColor: 'var(--border)', background: 'var(--card-2)', color: 'var(--text)' }}
+                      />
+                      <select
+                        value={severityFilter}
+                        onChange={(e) => setSeverityFilter(e.target.value)}
+                        className="px-3 py-2 text-sm rounded-lg border"
+                        style={{ borderColor: 'var(--border)', background: 'var(--card-2)', color: 'var(--text)' }}
+                      >
+                        <option value="">Severity: All</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                        <option value="info">Info</option>
+                      </select>
+                      <select
+                        value={categoryFilter}
+                        onChange={(e) => setCategoryFilter(e.target.value)}
+                        className="px-3 py-2 text-sm rounded-lg border"
+                        style={{ borderColor: 'var(--border)', background: 'var(--card-2)', color: 'var(--text)' }}
+                      >
+                        <option value="">Category: All</option>
+                        <option value="sast">SAST</option>
+                        <option value="secret">Secret</option>
+                        <option value="dependency">Dependency</option>
+                        <option value="misconfig">Misconfig</option>
+                      </select>
+                    </div>
+                    {filteredFindings.length === 0 ? (
+                      <EmptyState />
+                    ) : (
+                      <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
+                        <table className="w-full text-left text-sm">
+                          <thead className="border-b" style={tableHeaderStyle}>
+                            <tr>
+                              <th className="px-3 py-2 font-medium">Title</th>
+                              <th className="px-3 py-2 font-medium w-24">Severity</th>
+                              <th className="px-3 py-2 font-medium">Where</th>
+                              <th className="px-3 py-2 font-medium">Package</th>
+                              <th className="px-3 py-2 font-medium">Installed / Fixed</th>
+                              <th className="px-3 py-2 font-medium">Identifier</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
+                            {filteredFindings.map((f) => (
+                              <tr
+                                key={f.id}
+                                className="hover:opacity-90 transition-opacity cursor-pointer"
+                                onClick={() => { setSelectedFinding(f); setDrawerOpen(true); }}
+                              >
+                                <td className="px-3 py-2 max-w-[220px] truncate" title={f.title}>{f.title}</td>
+                                <td className="px-3 py-2">
+                                  <SeverityBadge severity={f.severity} size="sm" />
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs truncate max-w-[180px]" title={f.location?.file_path || f.location?.manifest_path || ''}>
+                                  {f.location?.file_path || f.location?.manifest_path || '—'}
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs truncate max-w-[140px]" title={f.dependency?.package || ''}>{f.dependency?.package || '—'}</td>
+                                <td className="px-3 py-2 text-xs" style={tableCellMutedStyle}>
+                                  {f.dependency?.installed_version || '—'} / {f.dependency?.fixed_version || '—'}
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs">
+                                  {f.identifiers?.rule_id || f.identifiers?.cve?.[0] || f.identifiers?.ghsa?.[0] || '—'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    {currentToolData && (
+                      <JsonViewerPanel data={currentToolData} title="View Raw JSON" maxHeight="400px" />
+                    )}
+                  </>
+                )}
+
+                {activeTab === 'sbom' && (
+                  <>
+                    {sbomData === null && !currentToolData ? (
+                      <p className="text-sm" style={{ color: 'var(--muted)' }}>No SBOM data.</p>
+                    ) : sbomData && sbomData.components && sbomData.components.length > 0 ? (
+                      <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
+                        <table className="w-full text-left text-sm">
+                          <thead className="border-b" style={tableHeaderStyle}>
+                            <tr>
+                              <th className="px-3 py-2 font-medium">Name</th>
+                              <th className="px-3 py-2 font-medium">Version</th>
+                              <th className="px-3 py-2 font-medium">License</th>
+                              <th className="px-3 py-2 font-medium">PURL</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
+                            {sbomData.components.map((c, i) => (
+                              <tr key={i} className="hover:opacity-90 transition-opacity">
+                                <td className="px-3 py-2 font-mono text-xs">{c.name}</td>
+                                <td className="px-3 py-2" style={tableCellMutedStyle}>{c.version}</td>
+                                <td className="px-3 py-2" style={tableCellMutedStyle}>{c.license || '—'}</td>
+                                <td className="px-3 py-2 font-mono text-xs truncate max-w-[200px]" title={c.purl}>{c.purl || '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : sbomData && sbomData.total === 0 ? (
+                      <EmptyState />
+                    ) : (
+                      <p className="text-sm" style={{ color: 'var(--muted)' }}>Loading SBOM…</p>
+                    )}
+                  </>
+                )}
+
+                {/* Fallback: raw artifact tables when not using normalized view */}
+                {!normalizedToolTabs.includes(activeTab as typeof normalizedToolTabs[number]) && activeTab !== 'sbom' && (
+                  currentToolData ? (
                       <>
-                        {/* Structured view per tool */}
                         {activeTab === 'semgrep' && (() => {
                           const rows = getSemgrepRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
@@ -611,36 +798,6 @@ export default function CodeScanDetailPage() {
                             </div>
                           );
                         })()}
-                        {activeTab === 'sbom' && (() => {
-                          const sbom = getSbomSummary(currentToolData);
-                          const ecosystems = Object.entries(sbom.byEcosystem).sort((a, b) => b[1] - a[1]);
-                          return (
-                            <div className="space-y-4">
-                              <div className="flex flex-wrap items-center gap-4">
-                                <div className="rounded-xl border px-4 py-3" style={{ background: 'var(--card-2)', borderColor: 'var(--border)' }}>
-                                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Total components</p>
-                                  <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>{sbom.totalComponents}</p>
-                                </div>
-                                {ecosystems.length > 0 && (
-                                  <div className="flex flex-wrap gap-2">
-                                    {ecosystems.map(([name, count]) => (
-                                      <Badge key={name} variant="neutral" size="md">{name}: {count}</Badge>
-                                    ))}
-                                  </div>
-                                )}
-                                <a
-                                  href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(currentToolData, null, 2))}`}
-                                  download={`sbom-${scanId}.json`}
-                                  className="inline-flex items-center px-3 py-2 rounded-lg border text-sm transition-colors hover:opacity-90"
-                                  style={{ borderColor: 'var(--border)', background: 'var(--card-2)', color: 'var(--text)' }}
-                                >
-                                  Download SBOM
-                                </a>
-                              </div>
-                              {sbom.totalComponents === 0 && <EmptyState />}
-                            </div>
-                          );
-                        })()}
                         {activeTab === 'sarif' && (() => {
                           const rows = getSarifRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
@@ -676,12 +833,21 @@ export default function CodeScanDetailPage() {
 
                         <JsonViewerPanel data={currentToolData} title="View Raw JSON" maxHeight="400px" />
                       </>
+                    ) : (
+                      <p className="text-sm" style={{ color: 'var(--muted)' }}>No data uploaded for this tool.</p>
+                    )
                 )}
               </TabPanel>
             </Card>
           </>
         )}
       </div>
+
+      <CodeScanFindingDetailsDrawer
+        finding={selectedFinding}
+        open={drawerOpen}
+        onClose={() => { setDrawerOpen(false); setSelectedFinding(null); }}
+      />
     </AppShell>
   );
 }

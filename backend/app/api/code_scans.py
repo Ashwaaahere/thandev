@@ -98,6 +98,75 @@ class CodeScansListResponse(BaseModel):
     total: int
 
 
+# ---- Normalized findings schemas ----
+
+class FindingLocationOut(BaseModel):
+    file_path: Optional[str] = None
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    start_col: Optional[int] = None
+    end_col: Optional[int] = None
+    manifest_path: Optional[str] = None
+
+
+class FindingDependencyOut(BaseModel):
+    package: Optional[str] = None
+    ecosystem: Optional[str] = None
+    installed_version: Optional[str] = None
+    fixed_version: Optional[str] = None
+    dependency_chain: Optional[List[str]] = None
+
+
+class FindingRemediationOut(BaseModel):
+    recommendation: Optional[str] = None
+    command: Optional[str] = None
+
+
+class FindingEvidenceOut(BaseModel):
+    snippet: Optional[str] = None
+    snippet_start_line: Optional[int] = None
+    raw: Optional[Dict[str, Any]] = None
+
+
+class FindingIdentifiersOut(BaseModel):
+    cve: List[str] = []
+    ghsa: List[str] = []
+    osv: List[str] = []
+    rule_id: Optional[str] = None
+
+
+class CodeFindingOut(BaseModel):
+    id: str
+    scan_id: str
+    source_tool: str  # semgrep | gitleaks | osv | trivy
+    category: str  # sast | secret | dependency | misconfig | sbom
+    severity: str
+    confidence: Optional[str] = None
+    title: str
+    summary: Optional[str] = None
+    identifiers: FindingIdentifiersOut
+    location: FindingLocationOut
+    dependency: FindingDependencyOut
+    remediation: FindingRemediationOut
+    references: List[str] = []
+    evidence: FindingEvidenceOut
+
+
+class FindingsCountsOut(BaseModel):
+    total: int
+    critical: int
+    high: int
+    medium: int
+    low: int
+    info: int
+    secrets: int
+
+
+class FindingsListResponse(BaseModel):
+    counts: FindingsCountsOut
+    findings: List[CodeFindingOut]
+
+
 # ---- Router ----
 
 router = APIRouter(
@@ -563,6 +632,107 @@ async def get_code_scan(
         created_at=scan.created_at.isoformat(),
         completed_at=scan.completed_at.isoformat() if scan.completed_at else None,
     )
+
+
+def _get_scan_and_ensure_access(
+    scan_id: str,
+    db: Session,
+    tenant: Tenant,
+    current_user: User,
+) -> CodeScan:
+    """Return CodeScan if exists and user has access via project. Raises 404/403 otherwise."""
+    scan = db.query(CodeScan).filter(CodeScan.id == scan_id).first()
+    if not scan:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code scan not found")
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == scan.project_id,
+            Project.tenant_id == tenant.id,
+            Project.owner_id == current_user.id,
+        )
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Code scan not found")
+    return scan
+
+
+# In-memory cache for normalized findings per scan_id (no TTL for simplicity; can add later)
+_findings_cache: Dict[str, List[Dict[str, Any]]] = {}
+
+
+@router.get("/scans/{scan_id}/findings", response_model=FindingsListResponse)
+async def get_scan_findings(
+    scan_id: str,
+    source_tool: Optional[str] = Query(None, description="Filter by tool: semgrep, gitleaks, osv, trivy"),
+    category: Optional[str] = Query(None, description="Filter by category: sast, secret, dependency, misconfig"),
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(require_approved_user),
+):
+    """Return normalized findings for a code scan. Counts and list; optional filters."""
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    scan = _get_scan_and_ensure_access(scan_id, db, tenant, current_user)
+    artifacts = (scan.meta_json or {}).get("artifacts") or {}
+    from app.services.code_scan_normalizer import normalize_all_findings, get_counts
+    if scan_id not in _findings_cache:
+        _findings_cache[scan_id] = normalize_all_findings(artifacts, scan_id)
+    findings = list(_findings_cache[scan_id])
+    if source_tool:
+        tool_lower = source_tool.lower().strip()
+        findings = [f for f in findings if (f.get("source_tool") or "").lower() == tool_lower]
+    if category:
+        cat_lower = category.lower().strip()
+        findings = [f for f in findings if (f.get("category") or "").lower() == cat_lower]
+    all_cached = _findings_cache.get(scan_id) or []
+    counts_dict = get_counts(all_cached)
+    findings_out = [CodeFindingOut(**f) for f in findings]
+    return FindingsListResponse(
+        counts=FindingsCountsOut(**counts_dict),
+        findings=findings_out,
+    )
+
+
+@router.get("/scans/{scan_id}/findings/{finding_id}", response_model=CodeFindingOut)
+async def get_scan_finding(
+    scan_id: str,
+    finding_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(require_approved_user),
+):
+    """Return a single normalized finding by id."""
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    scan = _get_scan_and_ensure_access(scan_id, db, tenant, current_user)
+    if scan_id not in _findings_cache:
+        from app.services.code_scan_normalizer import normalize_all_findings
+        artifacts = (scan.meta_json or {}).get("artifacts") or {}
+        _findings_cache[scan_id] = normalize_all_findings(artifacts, scan_id)
+    for f in _findings_cache[scan_id]:
+        if f.get("id") == finding_id:
+            return CodeFindingOut(**f)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+
+@router.get("/scans/{scan_id}/sbom")
+async def get_scan_sbom(
+    scan_id: str,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(require_approved_user),
+):
+    """Return SBOM components for the scan (from sbom artifact)."""
+    if not current_user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+    scan = _get_scan_and_ensure_access(scan_id, db, tenant, current_user)
+    artifacts = (scan.meta_json or {}).get("artifacts") or {}
+    sbom_data = artifacts.get("sbom")
+    from app.services.code_scan_normalizer import get_sbom_components
+    components = get_sbom_components(sbom_data)
+    return {"scan_id": scan_id, "total": len(components), "components": components}
 
 
 def _unlink_repo_by_id(
