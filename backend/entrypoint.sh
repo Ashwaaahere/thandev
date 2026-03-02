@@ -32,13 +32,17 @@ if [ $# -gt 0 ]; then
   fi
 fi
 
-# Run database migrations before starting the server
-echo "Running database migrations..."
-cd /app
-python -m alembic upgrade head || {
-  echo "Warning: Migrations failed, but continuing startup..."
-}
-echo "Migrations completed!"
+# Run database migrations before starting the server (skip on Fly: release_command runs them)
+if [ -z "${FLY_APP_NAME}" ]; then
+  echo "Running database migrations..."
+  cd /app
+  python -m alembic upgrade head || {
+    echo "Warning: Migrations failed, but continuing startup..."
+  }
+  echo "Migrations completed!"
+else
+  echo "Fly detected (FLY_APP_NAME set); migrations run via release_command, skipping."
+fi
 
 # ----------------------------
 # Runtime mode

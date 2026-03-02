@@ -1,0 +1,344 @@
+name: Thandev Code Scan
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: ["main"]
+  pull_request: {}
+
+jobs:
+  code-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      THANDEV_BASE_URL: https://thandev-backend.fly.dev
+
+      # Tool cache directory inside repo workspace (safe to cache)
+      TOOLS_DIR: .tools
+
+      # Pin versions for reproducibility (best practice)
+      GITLEAKS_VERSION: 8.24.3
+      OSV_SCANNER_VERSION: 1.9.2
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ping Thandev code-scan API
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Pinging: ${THANDEV_BASE_URL}/api/code-scans/ping"
+          curl -sS -i "${THANDEV_BASE_URL}/api/code-scans/ping" | head -n 30 || true
+      # -------------------------------
+      # OIDC: get GitHub Actions ID token
+      # -------------------------------
+      - name: Request OIDC token (GitHub native)
+        id: oidc
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = await core.getIDToken('thandev');
+            core.setOutput('id_token', token);
+      - name: Inspect OIDC token claims (debug)
+        shell: bash
+        env:
+          TOKEN: ${{ steps.oidc.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, json, base64
+          t = os.environ["TOKEN"]
+          h,p,_ = t.split(".")
+          def b64(s):
+            s += "=" * (-len(s) % 4)
+            return json.loads(base64.urlsafe_b64decode(s.encode()).decode())
+          header = b64(h)
+          payload = b64(p)
+          safe = {k: payload.get(k) for k in ["iss","aud","sub","repository","ref","sha","actor","iat","exp"]}
+          print("HEADER:", json.dumps({k: header.get(k) for k in ["alg","kid","typ"]}, indent=2))
+          print("PAYLOAD subset:", json.dumps(safe, indent=2))
+          PY
+      - name: Get Thandev ingest token (OIDC exchange)
+        id: token
+        shell: bash
+        env:
+          OIDC_TOKEN: ${{ steps.oidc.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          URL="${THANDEV_BASE_URL}/api/code-scans/oidc/exchange/github"
+          echo "Exchange URL: $URL"
+          JSON_BODY="$(python - <<'PY'
+          import json, os
+          print(json.dumps({"oidc_token": os.environ["OIDC_TOKEN"]}))
+          PY
+          )"
+          RESP="$(
+            curl -sS -w "\nHTTP_STATUS=%{http_code}\n" \
+              -X POST "$URL" \
+              -H "Content-Type: application/json" \
+              -d "$JSON_BODY"
+          )"
+          STATUS="$(echo "$RESP" | sed -n 's/^HTTP_STATUS=//p')"
+          BODY="$(echo "$RESP" | sed '/^HTTP_STATUS=/d')"
+          echo "Exchange HTTP: $STATUS"
+          echo "Exchange body: $BODY"
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ OIDC exchange failed."
+            exit 1
+          fi
+          ACCESS_TOKEN="$(python -c "import json,sys; print(json.loads(sys.argv[1])['access_token'])" "$BODY")"
+          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+      # -------------------------------
+      # Caching: pip + downloaded binaries
+      # -------------------------------
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-semgrep-v1-${{ hashFiles('.github/workflows/*.yml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-semgrep-v1-
+            ${{ runner.os }}-pip-
+      - name: Cache security tool binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.TOOLS_DIR }}
+          key: ${{ runner.os }}-sec-tools-gitleaks-${{ env.GITLEAKS_VERSION }}-osv-${{ env.OSV_SCANNER_VERSION }}
+
+      - name: Ensure tool directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "${TOOLS_DIR}"
+      # -------------------------------
+      # Semgrep
+      # -------------------------------
+      - name: Install Semgrep
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install semgrep
+      - name: Semgrep (SAST)
+        shell: bash
+        run: |
+          set -euo pipefail
+          semgrep scan --config=auto --json --output semgrep-output.json . || true
+          test -f semgrep-output.json || echo '{}' > semgrep-output.json
+      - name: Debug Semgrep output (count)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Semgrep file size:"
+          wc -c semgrep-output.json || true
+          echo "Semgrep results count:"
+          python - <<'PY'
+          import json
+          d=json.load(open("semgrep-output.json"))
+          print("keys:", list(d.keys())[:10] if isinstance(d, dict) else type(d))
+          print("results:", len(d.get("results", [])) if isinstance(d, dict) else "n/a")
+          print("errors_present:", bool(d.get("errors")) if isinstance(d, dict) else "n/a")
+          PY
+      # -------------------------------
+      # Gitleaks
+      # -------------------------------
+      - name: Install Gitleaks (cached)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "${TOOLS_DIR}/gitleaks" ]; then
+            echo "Downloading gitleaks v${GITLEAKS_VERSION}..."
+            curl -sSfL \
+              "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+              -o "${TOOLS_DIR}/gitleaks.tgz"
+            tar -xzf "${TOOLS_DIR}/gitleaks.tgz" -C "${TOOLS_DIR}" gitleaks
+            chmod +x "${TOOLS_DIR}/gitleaks"
+            rm -f "${TOOLS_DIR}/gitleaks.tgz"
+          fi
+          "${TOOLS_DIR}/gitleaks" version
+      - name: Gitleaks (Secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${TOOLS_DIR}/gitleaks" detect \
+            --source . \
+            --no-git \
+            --report-format json \
+            --report-path gitleaks.json || true
+          test -f gitleaks.json || echo '[]' > gitleaks.json
+      - name: Debug Gitleaks output (count)
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c gitleaks.json || true
+          python - <<'PY'
+          import json
+          d=json.load(open("gitleaks.json"))
+          if isinstance(d, list):
+            print("leaks:", len(d))
+          else:
+            print("keys:", list(d.keys())[:10])
+          PY
+      # -------------------------------
+      # OSV-Scanner
+      # -------------------------------
+      - name: Install OSV-Scanner (cached)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -x "${TOOLS_DIR}/osv-scanner" ]; then
+            echo "Downloading osv-scanner v${OSV_SCANNER_VERSION}..."
+            curl -sSfL \
+              "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64" \
+              -o "${TOOLS_DIR}/osv-scanner"
+            chmod +x "${TOOLS_DIR}/osv-scanner"
+          fi
+          "${TOOLS_DIR}/osv-scanner" --version || true
+      - name: OSV-Scanner (Dependencies)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prefer lockfile scanning for best results (npm/pnpm/yarn)
+          if [ -f package-lock.json ]; then
+            echo "OSV scanning lockfile: package-lock.json"
+            "${TOOLS_DIR}/osv-scanner" scan --lockfile=package-lock.json --format=json --output osv.json . || true
+          elif [ -f pnpm-lock.yaml ]; then
+            echo "OSV scanning lockfile: pnpm-lock.yaml"
+            "${TOOLS_DIR}/osv-scanner" scan --lockfile=pnpm-lock.yaml --format=json --output osv.json . || true
+          elif [ -f yarn.lock ]; then
+            echo "OSV scanning lockfile: yarn.lock"
+            "${TOOLS_DIR}/osv-scanner" scan --lockfile=yarn.lock --format=json --output osv.json . || true
+          else
+            echo "No JS lockfile found; scanning repo for supported manifests"
+            if ls requirements.txt poetry.lock Pipfile.lock go.mod Cargo.lock 2>/dev/null; then
+              "${TOOLS_DIR}/osv-scanner" scan --format=json --output osv.json . || true
+            else
+              echo "No supported manifests found. Creating empty osv.json"
+              echo '{}' > osv.json
+            fi
+          fi
+          test -f osv.json || echo '{}' > osv.json
+      - name: Debug OSV output (count)
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c osv.json || true
+          python - <<'PY'
+          import json
+          d=json.load(open("osv.json"))
+          if isinstance(d, dict):
+            print("keys:", list(d.keys())[:20])
+            if "results" in d:
+              print("results_len:", len(d["results"]))
+          else:
+            print("type:", type(d))
+          PY
+      # -------------------------------
+      # Trivy
+      # -------------------------------
+      - name: Trivy FS (Vuln + Misconfig)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: json
+          output: trivy.json
+          scanners: vuln,misconfig
+          ignore-unfixed: true
+
+      - name: Ensure Trivy output exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f trivy.json || echo '{}' > trivy.json
+      - name: Debug Trivy output (count)
+        shell: bash
+        run: |
+          set -euo pipefail
+          wc -c trivy.json || true
+          python - <<'PY'
+          import json
+          d=json.load(open("trivy.json"))
+          vul=0; mis=0
+          for r in d.get("Results", []) if isinstance(d, dict) else []:
+            vul += len(r.get("Vulnerabilities", []) or [])
+            mis += len(r.get("Misconfigurations", []) or [])
+          print("trivy vulns:", vul)
+          print("trivy misconfigs:", mis)
+          PY
+      # -------------------------------
+      # SBOM (Syft)
+      # -------------------------------
+      - name: Syft (SBOM - CycloneDX JSON)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: syft_sbom.json
+
+      - name: Normalize SBOM filename
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "syft_sbom.json" ]; then
+            echo "✅ SBOM exists: syft_sbom.json"
+            exit 0
+          fi
+          echo "syft_sbom.json missing. Looking for Anchore-generated CycloneDX file..."
+          CANDIDATE="$(ls -1 *.cyclonedx.json 2>/dev/null | head -n 1 || true)"
+          if [ -n "$CANDIDATE" ]; then
+            echo "✅ Found: $CANDIDATE → copying to syft_sbom.json"
+            cp "$CANDIDATE" syft_sbom.json
+            exit 0
+          fi
+          echo "❌ No *.cyclonedx.json found either. Creating empty SBOM to unblock ingest."
+          echo '{}' > syft_sbom.json
+      # -------------------------------
+      # Verify artifacts
+      # -------------------------------
+      - name: Verify artifacts exist (debug)
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "=== workspace files ==="
+          ls -lah
+          echo "=== expected artifacts ==="
+          for f in semgrep-output.json gitleaks.json osv.json trivy.json syft_sbom.json; do
+            if [ -f "$f" ]; then
+              echo "✅ $f exists ($(wc -c < "$f") bytes)"
+            else
+              echo "❌ MISSING: $f"
+            fi
+          done
+      # -------------------------------
+      # Ingest to Thandev
+      # -------------------------------
+      - name: Ingest to Thandev
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${THANDEV_BASE_URL}/api/code-scans/ingest"
+          echo "Ingest URL: $URL"
+          curl -sS -i -X POST "$URL" \
+            -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
+            -F "repo=${{ github.repository }}" \
+            -F "provider=github" \
+            -F "ref=${{ github.ref }}" \
+            -F "sha=${{ github.sha }}" \
+            -F "run_id=${{ github.run_id }}" \
+            -F "run_url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            -F "semgrep_json=@semgrep-output.json" \
+            -F "gitleaks_json=@gitleaks.json" \
+            -F "osv_json=@osv.json" \
+            -F "trivy_json=@trivy.json" \
+            -F "sbom_json=@syft_sbom.json" \
+            | head -n 120

@@ -543,7 +543,7 @@ app.include_router(websocket.router)
 
 
 @app.get(f"{settings.API_V1_PREFIX}/debug/code-scans")
-async def debug_code_scans(repo: Optional[str] = None, limit: int = 20):
+async def debug_code_scans(repo: str | None = None, limit: int = 20):
     """
     Debug endpoint: list recent code scans (IDs + basic metadata) for a repo.
 
