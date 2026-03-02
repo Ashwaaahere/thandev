@@ -159,7 +159,9 @@ function getGitleaksRows(data: unknown): GitleaksRow[] {
   const rows: GitleaksRow[] = [];
   for (const run of runs) {
     const results = (run.results as Record<string, unknown>[]) ?? [];
-    const rules = (run.tool?.driver?.rules as Record<string, unknown>[]) ?? [];
+    const tool = run.tool as Record<string, unknown> | undefined;
+    const driver = tool?.driver as Record<string, unknown> | undefined;
+    const rules = (driver?.rules as Record<string, unknown>[]) ?? [];
     const ruleMap = new Map(rules.map((r) => [r.id, r]));
     for (const res of results) {
       const ruleId = res.ruleId as string;
@@ -172,7 +174,12 @@ function getGitleaksRows(data: unknown): GitleaksRow[] {
         secretType: ruleId ?? '—',
         file: String(file),
         line: Number(line) || 0,
-        description: String(res.message?.text ?? (rule?.shortDescription?.text ?? rule?.fullDescription?.text) ?? '—'),
+        description: String(
+          (res.message as Record<string, unknown>)?.text ??
+            (rule?.shortDescription as Record<string, unknown>)?.text ??
+            (rule?.fullDescription as Record<string, unknown>)?.text ??
+            '—'
+        ),
       });
     }
   }
