@@ -84,37 +84,30 @@ export default function DashboardSidebar({
           <nav className="flex-1 px-3 py-5 space-y-5 overflow-y-auto">
             {/* CORE PLATFORM Section */}
             <div>
-              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
                 CORE PLATFORM
               </h3>
               <div className="space-y-1">
                 {corePlatformNav.map((item) => {
-                  // Check if pathname starts with item.href for active state (handles /projects and /projects/[id])
                   const isActive = pathname === item.href || (item.href !== '/dashboard' && pathname?.startsWith(item.href));
                   return (
                     <Link
                       key={item.name}
                       href={item.href}
-                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border-l-2 min-h-[2.25rem] hover:opacity-90"
                       style={{
-                        background: isActive ? '#3b82f6' : 'transparent',
-                        color: isActive ? 'white' : 'white'
+                        background: isActive ? 'var(--brand)' : 'transparent',
+                        color: isActive ? 'white' : 'var(--fg)',
+                        borderLeftColor: isActive ? 'var(--brand)' : 'transparent',
+                        marginLeft: isActive ? 0 : '2px',
                       }}
                       onClick={() => handleClose()}
                       aria-current={isActive ? 'page' : undefined}
                     >
-                      <svg 
-                        className="w-4 h-4" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24"
-                        style={{
-                          color: isActive ? 'white' : '#9ca3af'
-                        }}
-                      >
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
                       </svg>
-                      {item.name}
+                      <span className="truncate">{item.name}</span>
                     </Link>
                   );
                 })}
@@ -123,7 +116,7 @@ export default function DashboardSidebar({
 
             {/* ACCOUNT Section */}
             <div>
-              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+              <h3 className="px-2.5 mb-2.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>
                 ACCOUNT
               </h3>
               <div className="space-y-1">
@@ -133,25 +126,19 @@ export default function DashboardSidebar({
                     <Link
                       key={item.name}
                       href={item.href}
-                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                      className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border-l-2 min-h-[2.25rem] hover:opacity-90"
                       style={{
-                        background: isActive ? '#3b82f6' : 'transparent',
-                        color: isActive ? 'white' : 'white'
+                        background: isActive ? 'var(--brand)' : 'transparent',
+                        color: isActive ? 'white' : 'var(--fg)',
+                        borderLeftColor: isActive ? 'var(--brand)' : 'transparent',
+                        marginLeft: isActive ? 0 : '2px',
                       }}
                       onClick={() => handleClose()}
                     >
-                      <svg 
-                        className="w-4 h-4" 
-                        fill="none" 
-                        stroke="currentColor" 
-                        viewBox="0 0 24 24"
-                        style={{
-                          color: isActive ? 'white' : '#9ca3af'
-                        }}
-                      >
+                      <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={item.icon} />
                       </svg>
-                      {item.name}
+                      <span className="truncate">{item.name}</span>
                     </Link>
                   );
                 })}

@@ -5,8 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { thandevFetchJSON } from '@/lib/thandevApi';
-import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
-import DashboardHeader from '@/components/Dashboard/DashboardHeader';
+import AppShell from '@/components/layout/AppShell';
 
 // Types matching backend response
 type ProjectWithStats = {
@@ -242,118 +241,63 @@ export default function ProjectsListClient() {
   // Show skeleton only when loading and no error
   if (loading && !error) {
     return (
-      <div className="flex h-screen overflow-hidden">
-        <DashboardSidebar 
-          isOpen={sidebarOpen} 
-          onClose={() => setSidebarOpen(false)} 
-          showLogo={!sidebarOpen}
-        />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader 
-            user={session?.user} 
-            onMenuClick={() => setSidebarOpen(true)}
-            showLogo={sidebarOpen}
-          />
-          <main className="flex-1 overflow-y-auto p-5" style={{ background: 'var(--bg)' }}>
-            <div className="max-w-7xl mx-auto">
-          <div className="mb-6">
-            <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-1.5 animate-pulse"></div>
-            <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 animate-pulse"></div>
-          </div>
-          <div className="space-y-3">
-            {[...Array(4)].map((_, i) => (
-              <div key={i} className="rounded-xl border p-5 animate-pulse" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
-                <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-1.5"></div>
-                <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
-                <div className="grid grid-cols-4 gap-4">
-                  {[...Array(4)].map((_, j) => (
-                    <div key={j}>
-                      <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded w-16 mb-1"></div>
-                      <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12"></div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+      <AppShell user={session?.user} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}>
+        <div className="mb-6">
+          <div className="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/4 mb-1.5 animate-pulse" />
+          <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/3 animate-pulse" />
         </div>
-      </main>
-      </div>
-    </div>
+        <div className="space-y-3">
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="rounded-xl border p-5 animate-pulse" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+              <div className="h-5 bg-gray-200 dark:bg-gray-700 rounded w-1/3 mb-1.5" />
+              <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4" />
+              <div className="grid grid-cols-4 gap-4">
+                {[...Array(4)].map((_, j) => (
+                  <div key={j}>
+                    <div className="h-2.5 bg-gray-200 dark:bg-gray-700 rounded w-16 mb-1" />
+                    <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-12" />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </AppShell>
     );
   }
 
   // Show error state
   if (error && !loading) {
     return (
-      <div className="flex h-screen overflow-hidden">
-        <DashboardSidebar 
-          isOpen={sidebarOpen} 
-          onClose={() => setSidebarOpen(false)} 
-          showLogo={!sidebarOpen}
-        />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader 
-            user={session?.user} 
-            onMenuClick={() => setSidebarOpen(true)}
-            showLogo={sidebarOpen}
-          />
-          <main className="flex-1 overflow-y-auto p-5" style={{ background: 'var(--bg)' }}>
-            <div className="max-w-7xl mx-auto">
-          <div className="mb-6">
-            <h1 className="text-3xl font-bold mb-1.5 text-white">
-              Projects
-            </h1>
-            <p className="text-base text-white">
-              Manage your security scanning targets
-            </p>
-          </div>
-          <div className="mt-8 flex flex-col items-center text-sm">
-            <p className="text-red-400 mb-3">{error}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-opacity"
-              style={{ background: 'var(--brand)' }}
-            >
-              Retry
-            </button>
-          </div>
+      <AppShell user={session?.user} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}>
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold mb-1.5" style={{ color: 'var(--text)' }}>Projects</h1>
+          <p className="text-base" style={{ color: 'var(--muted)' }}>Manage your security scanning targets</p>
         </div>
-      </main>
-      </div>
-    </div>
+        <div className="mt-8 flex flex-col items-center text-sm">
+          <p className="mb-3" style={{ color: 'var(--danger)' }}>{error}</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-opacity"
+            style={{ background: 'var(--brand)' }}
+          >
+            Retry
+          </button>
+        </div>
+      </AppShell>
     );
   }
 
   // Show empty state
   if (!loading && !error && projects.length === 0) {
     return (
-      <div className="flex h-screen overflow-hidden">
-        <DashboardSidebar 
-          isOpen={sidebarOpen} 
-          onClose={() => setSidebarOpen(false)} 
-          showLogo={!sidebarOpen}
-        />
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <DashboardHeader 
-            user={session?.user} 
-            onMenuClick={() => setSidebarOpen(true)}
-            showLogo={sidebarOpen}
-          />
-          <main className="flex-1 overflow-y-auto p-5" style={{ background: 'var(--bg)' }}>
-            <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-6">
-            <h1 className="text-3xl font-bold mb-1.5 text-white">
-              Projects
-            </h1>
-            <p className="text-base text-white">
-              Manage your security scanning targets
-            </p>
-          </div>
+      <AppShell user={session?.user} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}>
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold mb-1.5" style={{ color: 'var(--text)' }}>Projects</h1>
+          <p className="text-base" style={{ color: 'var(--muted)' }}>Manage your security scanning targets</p>
+        </div>
 
-          {/* Search and Filters */}
-          <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             {/* Search Bar */}
             <div className="relative flex-1 max-w-lg">
               <input
@@ -426,44 +370,22 @@ export default function ProjectsListClient() {
             </div>
           </div>
 
-          {/* Empty State */}
-          <div className="mt-8 rounded-xl border px-6 py-8 text-sm" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
-            <p className="font-medium mb-1 text-white">No projects yet</p>
-            <p className="mt-1 text-gray-400">
-              Create a project or run a quick scan from the dashboard to get started.
-            </p>
-          </div>
+        <div className="mt-8 rounded-xl border px-6 py-8 text-sm" style={{ background: 'var(--surface-2)', borderColor: 'var(--border)' }}>
+          <p className="font-medium mb-1" style={{ color: 'var(--text)' }}>No projects yet</p>
+          <p className="mt-1" style={{ color: 'var(--muted)' }}>
+            Create a project or run a quick scan from the dashboard to get started.
+          </p>
         </div>
-      </main>
-      </div>
-    </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      <DashboardSidebar 
-        isOpen={sidebarOpen} 
-        onClose={() => setSidebarOpen(false)} 
-        showLogo={!sidebarOpen}
-      />
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <DashboardHeader 
-          user={session?.user} 
-          onMenuClick={() => setSidebarOpen(true)}
-          showLogo={sidebarOpen}
-        />
-        <main className="flex-1 overflow-y-auto p-5" style={{ background: 'var(--bg)' }}>
-          <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold mb-1.5 text-white">
-            Projects
-          </h1>
-          <p className="text-base text-white">
-            Manage your security scanning targets
-          </p>
-        </div>
+    <AppShell user={session?.user} sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen}>
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold mb-1.5" style={{ color: 'var(--text)' }}>Projects</h1>
+        <p className="text-base" style={{ color: 'var(--muted)' }}>Manage your security scanning targets</p>
+      </div>
 
         {/* Search and Filters */}
         <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
@@ -691,10 +613,7 @@ export default function ProjectsListClient() {
             })}
           </div>
         )}
-          </div>
-        </main>
-      </div>
-    </div>
+    </AppShell>
   );
 }
 

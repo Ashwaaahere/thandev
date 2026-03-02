@@ -4,6 +4,7 @@
 :root {
   /* Light (cream) */
   --bg: #fffaf0;              /* page background */
+  --bg-2: #fff7ed;            /* page background alt (gradient end) */
   --fg: #0f172a;              /* main text */
   --muted: #475569;           /* subtext */
   --brand: #3b82f6;           /* buttons/links */
@@ -36,11 +37,20 @@
   /* Selection */
   --selection-bg: #fde68a;    /* amber-200 */
   --selection-fg: #111827;
+
+  /* Dashboard aliases + semantic */
+  --card: var(--surface);
+  --card-2: var(--surface-2);
+  --text: var(--fg);
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 }
 
 .dark {
   /* Dark */
   --bg: #0b1220;
+  --bg-2: #0f172a;
   --fg: #e5e7eb;
   --muted: #94a3b8;
   --brand: #7dd3fc;
@@ -49,8 +59,14 @@
 
   --surface: rgba(255,255,255,.06);
   --surface-2: rgba(255,255,255,.08);
+  --card: var(--surface);
+  --card-2: var(--surface-2);
   --border: rgba(255,255,255,.10);
   --hairline: rgba(255,255,255,.08);
+  --text: var(--fg);
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 
   --shadow-1: 0 1px 2px rgba(0,0,0,.35), 0 10px 24px rgba(0,0,0,.28);
   --shadow-2: 0 14px 36px rgba(0,0,0,.35), 0 4px 10px rgba(0,0,0,.25);
@@ -66,6 +82,12 @@
   --ring: rgba(125,211,252,.45);
   --selection-bg: #1f2937;
   --selection-fg: #e5e7eb;
+}
+
+/* Dashboard app shell: subtle futuristic gradient (low contrast) */
+.dashboard-bg {
+  background: radial-gradient(ellipse 80% 70% at 50% 0%, rgba(56, 189, 248, 0.06) 0%, transparent 50%),
+    linear-gradient(180deg, var(--bg) 0%, var(--bg-2, var(--bg)) 100%);
 }
 
 /* Base */

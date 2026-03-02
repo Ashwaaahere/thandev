@@ -3,8 +3,12 @@
 import { useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
-import DashboardHeader from '@/components/Dashboard/DashboardHeader';
-import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
+import AppShell from '@/components/layout/AppShell';
+import { Card } from '@/components/ui/Card';
+import StatCard from '@/components/ui/StatCard';
+import Badge from '@/components/ui/Badge';
+import { TabList, Tab, TabPanel } from '@/components/ui/Tabs';
+import JsonViewerPanel from '@/components/ui/JsonViewerPanel';
 import SeverityBadge from '@/components/Scans/SeverityBadge';
 import { thandevFetchJSON } from '@/lib/thandevApi';
 
@@ -53,14 +57,16 @@ function computeSecuritySummary(artifacts: Record<string, unknown> | null | unde
   const counts: SeverityCounts = { total: 0, critical: 0, high: 0, medium: 0, low: 0, info: 0, secrets: 0 };
   if (!artifacts || typeof artifacts !== 'object') return counts;
 
-  // Semgrep: results[].extra.severity (or top-level array / matches)
+  // Semgrep: results[].extra.severity (or top-level array / matches / single finding object)
   const semgrep = artifacts.semgrep;
   if (semgrep !== undefined && semgrep !== null) {
     let semgrepResults: Record<string, unknown>[] = [];
     if (Array.isArray(semgrep)) semgrepResults = semgrep as Record<string, unknown>[];
     else if (typeof semgrep === 'object') {
       const obj = semgrep as Record<string, unknown>;
-      semgrepResults = (obj.results as Record<string, unknown>[] | undefined) ?? (obj.matches as Record<string, unknown>[] | undefined) ?? [];
+      const fromKey = (obj.results as Record<string, unknown>[] | undefined) ?? (obj.matches as Record<string, unknown>[] | undefined);
+      if (Array.isArray(fromKey)) semgrepResults = fromKey;
+      else if (obj.path != null && (obj.start != null || obj.line != null)) semgrepResults = [obj];
     }
     for (const r of semgrepResults) {
       const extra = r?.extra as Record<string, unknown> | undefined;
@@ -140,9 +146,14 @@ function getSemgrepRows(data: unknown): SemgrepRow[] {
     results = data as Record<string, unknown>[];
   } else if (data && typeof data === 'object') {
     const obj = data as Record<string, unknown>;
-    results = (obj.results as Record<string, unknown>[] | undefined) ??
-      (obj.matches as Record<string, unknown>[] | undefined) ??
-      [];
+    const fromKey = (obj.results as Record<string, unknown>[] | undefined) ??
+      (obj.matches as Record<string, unknown>[] | undefined);
+    if (Array.isArray(fromKey)) {
+      results = fromKey;
+    } else if (obj.path != null && (obj.start != null || obj.line != null)) {
+      // Single finding object (e.g. { path, start, end } at root)
+      results = [obj];
+    }
   }
   return results.map((r) => {
     const extra = (r.extra as Record<string, unknown>) ?? {};
@@ -284,39 +295,25 @@ function getSarifRows(data: unknown): SarifRow[] {
   return rows;
 }
 
-// --- UI: Empty state ---
+// --- UI: Empty state (matches design system) ---
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-12 px-4 rounded-xl border border-slate-700 bg-slate-900/40">
+    <div
+      className="flex flex-col items-center justify-center py-12 px-4 rounded-xl border"
+      style={{ background: 'var(--card-2)', borderColor: 'var(--border)' }}
+    >
       <span className="text-4xl mb-2" aria-hidden>🎉</span>
-      <p className="text-slate-300 text-center font-medium">No vulnerabilities detected</p>
+      <p className="text-center font-medium" style={{ color: 'var(--text)' }}>
+        No vulnerabilities detected
+      </p>
     </div>
   );
 }
 
-// --- UI: Raw JSON collapsible ---
-function RawJsonSection({ data, label }: { data: unknown; label: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-lg border border-slate-700 bg-slate-900/40 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between px-4 py-2 text-left text-sm text-slate-300 hover:bg-slate-800/60 transition-colors"
-      >
-        <span>View Raw JSON</span>
-        <span className="text-slate-500">{open ? '▼' : '▶'}</span>
-      </button>
-      {open && (
-        <div className="max-h-[400px] overflow-auto border-t border-slate-700">
-          <pre className="p-3 text-xs text-slate-100 whitespace-pre-wrap break-all font-mono">
-            {JSON.stringify(data, null, 2)}
-          </pre>
-        </div>
-      )}
-    </div>
-  );
-}
+const tableHeaderStyle = { background: 'var(--card-2)', borderColor: 'var(--border)', color: 'var(--text)' };
+const tableBorderStyle = { borderColor: 'var(--border)' };
+const tableRowStyle = { color: 'var(--text)' };
+const tableCellMutedStyle = { color: 'var(--muted)' };
 
 export default function CodeScanDetailPage() {
   const { data: session } = useSession();
@@ -383,145 +380,122 @@ export default function CodeScanDetailPage() {
   const runUrl: string | undefined = scan?.meta_json?.pipeline_run_url;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
-      <DashboardHeader user={session?.user} onMenuClick={() => setSidebarOpen(true)} />
-      <div className="flex">
-        <DashboardSidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-        <main className="flex-1 p-8 overflow-y-auto">
-          <div className="max-w-5xl mx-auto space-y-6">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="text-sm text-slate-300 hover:text-white mb-2"
-            >
-              ← Back to Code Scan
-            </button>
-
-            <h1 className="text-2xl font-bold text-white flex items-center gap-3">
-              Code Scan Details
-              {scan && (
-                <>
-                  <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 text-slate-100">
-                    {scan.provider}
-                  </span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium border ${postureStyle[postureBadge]}`}>
-                    {postureBadge === 'critical' ? 'Critical' : postureBadge === 'high' ? 'Needs attention' : 'Good'}
-                  </span>
-                </>
-              )}
-            </h1>
-
-            {loading ? (
-              <p className="text-slate-300">Loading code scan…</p>
-            ) : error ? (
-              <p className="text-red-400 text-sm">{error}</p>
-            ) : !scan ? (
-              <p className="text-slate-300">Code scan not found.</p>
-            ) : (
+    <AppShell
+      user={session?.user}
+      sidebarOpen={sidebarOpen}
+      setSidebarOpen={setSidebarOpen}
+    >
+      <div className="space-y-6">
+        {/* Page title block — same rhythm as Overview/Projects */}
+        <div className="mb-6">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="text-sm mb-2 transition-colors hover:opacity-90"
+            style={{ color: 'var(--muted)' }}
+          >
+            ← Back to Code Scan
+          </button>
+          <h1 className="text-3xl font-bold mb-1.5 flex items-center gap-3 flex-wrap" style={{ color: 'var(--text)' }}>
+            Code Scan Details
+            {scan && (
               <>
-                {/* Security summary cards */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-                  <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-                    <p className="text-xs text-slate-400 uppercase tracking-wide">Total Issues</p>
-                    <p className="text-xl font-bold text-white mt-0.5">{summary.total}</p>
-                  </div>
-                  <div className="rounded-xl border border-red-900/50 bg-slate-900/60 p-4">
-                    <p className="text-xs text-red-300/80 uppercase tracking-wide">Critical</p>
-                    <p className="text-xl font-bold text-red-200 mt-0.5">{summary.critical}</p>
-                  </div>
-                  <div className="rounded-xl border border-amber-900/50 bg-slate-900/60 p-4">
-                    <p className="text-xs text-amber-300/80 uppercase tracking-wide">High</p>
-                    <p className="text-xl font-bold text-amber-200 mt-0.5">{summary.high}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-600 bg-slate-900/60 p-4">
-                    <p className="text-xs text-slate-400 uppercase tracking-wide">Medium</p>
-                    <p className="text-xl font-bold text-slate-200 mt-0.5">{summary.medium}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-600 bg-slate-900/60 p-4">
-                    <p className="text-xs text-slate-400 uppercase tracking-wide">Low</p>
-                    <p className="text-xl font-bold text-slate-200 mt-0.5">{summary.low}</p>
-                  </div>
-                  <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
-                    <p className="text-xs text-slate-400 uppercase tracking-wide">Secrets</p>
-                    <p className="text-xl font-bold text-orange-200 mt-0.5">{summary.secrets}</p>
-                  </div>
-                </div>
+                <Badge variant="neutral" size="md">{scan.provider}</Badge>
+                <Badge
+                  variant={postureBadge === 'critical' ? 'critical' : postureBadge === 'high' ? 'high' : 'good'}
+                  size="md"
+                >
+                  {postureBadge === 'critical' ? 'Critical' : postureBadge === 'high' ? 'Needs attention' : 'Good'}
+                </Badge>
+              </>
+            )}
+          </h1>
+          <p className="text-base" style={{ color: 'var(--muted)' }}>
+            Security findings and raw artifacts from this scan
+          </p>
+        </div>
 
-                {/* Header summary */}
-                <div className="rounded-xl border border-slate-700 bg-slate-900/60 p-5 space-y-2">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm text-slate-100">{scan.repo_full_name}</span>
-                    {scan.ref && <span className="text-xs text-slate-400">{scan.ref}</span>}
-                    {scan.sha && (
-                      <span className="text-xs font-mono text-slate-500" title={scan.sha}>
-                        {scan.sha.slice(0, 7)}
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-                    <span>Status: {scan.status}</span>
-                    <span>Created: {new Date(scan.created_at).toLocaleString()}</span>
-                    {scan.completed_at && <span>Completed: {new Date(scan.completed_at).toLocaleString()}</span>}
-                    {runUrl && (
-                      <a href={runUrl} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-300 underline">
-                        View CI run
-                      </a>
-                    )}
-                  </div>
-                  {scan.summary_json && Array.isArray(scan.summary_json.sources) && (
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-                      <span className="text-slate-400">Sources:</span>
-                      {(scan.summary_json.sources as string[]).map((src) => (
-                        <span
-                          key={src}
-                          className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-600 text-[11px] uppercase tracking-wide"
-                        >
-                          {src}
-                        </span>
-                      ))}
-                    </div>
+        {loading ? (
+          <p style={{ color: 'var(--muted)' }}>Loading code scan…</p>
+        ) : error ? (
+          <p className="text-sm" style={{ color: 'var(--danger)' }}>{error}</p>
+        ) : !scan ? (
+          <p style={{ color: 'var(--muted)' }}>Code scan not found.</p>
+        ) : (
+          <>
+            {/* Security summary — StatCards same size/spacing as Overview */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-5 mb-6">
+              <StatCard label="Total Issues" value={summary.total} />
+              <StatCard label="Critical" value={summary.critical} accent="critical" />
+              <StatCard label="High" value={summary.high} accent="high" />
+              <StatCard label="Medium" value={summary.medium} />
+              <StatCard label="Low" value={summary.low} />
+              <StatCard label="Secrets" value={summary.secrets} accent="high" />
+            </div>
+
+            {/* Scan metadata card */}
+            <Card className="mb-6">
+              <div className="p-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{scan.repo_full_name}</span>
+                  {scan.ref && <span className="text-xs" style={{ color: 'var(--muted)' }}>{scan.ref}</span>}
+                  {scan.sha && (
+                    <span className="text-xs font-mono" style={{ color: 'var(--muted)' }} title={scan.sha}>
+                      {scan.sha.slice(0, 7)}
+                    </span>
                   )}
                 </div>
-
-                {/* Tool tabs */}
-                <div className="rounded-xl border border-slate-700 bg-slate-900/60">
-                  <div className="border-b border-slate-700 px-4 pt-3">
-                    <div className="flex flex-wrap gap-2">
-                      {TOOL_TABS.map((tool) => {
-                        const count = getTabCount(tool);
-                        return (
-                          <button
-                            key={tool}
-                            type="button"
-                            onClick={() => setActiveTab(tool)}
-                            className={`px-3 py-2 text-xs font-medium rounded-t-lg ${
-                              activeTab === tool
-                                ? 'bg-slate-800 text-white border-x border-t border-slate-700'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            {tool.toUpperCase()}
-                            {count > 0 && (
-                              <span className="ml-1.5 text-slate-400">({count})</span>
-                            )}
-                          </button>
-                        );
-                      })}
-                    </div>
+                <div className="flex flex-wrap items-center gap-4 text-xs mt-2" style={{ color: 'var(--muted)' }}>
+                  <span>Status: {scan.status}</span>
+                  <span>Created: {new Date(scan.created_at).toLocaleString()}</span>
+                  {scan.completed_at && <span>Completed: {new Date(scan.completed_at).toLocaleString()}</span>}
+                  {runUrl && (
+                    <a href={runUrl} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--brand)' }}>
+                      View CI run
+                    </a>
+                  )}
+                </div>
+                {scan.summary_json && Array.isArray(scan.summary_json.sources) && (
+                  <div className="flex flex-wrap items-center gap-2 text-xs mt-2">
+                    <span style={{ color: 'var(--muted)' }}>Sources:</span>
+                    {(scan.summary_json.sources as string[]).map((src) => (
+                      <Badge key={src} variant="neutral" size="sm">{src}</Badge>
+                    ))}
                   </div>
-                  <div className="p-4 space-y-4">
-                    {!currentToolData ? (
-                      <p className="text-sm text-slate-400">No data uploaded for this tool.</p>
-                    ) : (
+                )}
+              </div>
+            </Card>
+
+            {/* Tool tabs — Card + Tabs primitive */}
+            <Card>
+              <TabList>
+                {TOOL_TABS.map((tool) => {
+                  const count = getTabCount(tool);
+                  return (
+                    <Tab
+                      key={tool}
+                      active={activeTab === tool}
+                      onClick={() => setActiveTab(tool)}
+                    >
+                      {tool.toUpperCase()}
+                      {count > 0 && <span className="ml-1.5 opacity-70">({count})</span>}
+                    </Tab>
+                  );
+                })}
+              </TabList>
+              <TabPanel className="space-y-4">
+                {!currentToolData ? (
+                  <p className="text-sm" style={{ color: 'var(--muted)' }}>No data uploaded for this tool.</p>
+                ) : (
                       <>
                         {/* Structured view per tool */}
                         {activeTab === 'semgrep' && (() => {
                           const rows = getSemgrepRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
                           return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                            <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+                                <thead className="border-b" style={tableHeaderStyle}>
                                   <tr>
                                     <th className="px-3 py-2 font-medium">Rule ID</th>
                                     <th className="px-3 py-2 font-medium">Severity</th>
@@ -530,16 +504,16 @@ export default function CodeScanDetailPage() {
                                     <th className="px-3 py-2 font-medium">Message</th>
                                   </tr>
                                 </thead>
-                                <tbody className="text-slate-200 divide-y divide-slate-700">
+                                <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
                                   {rows.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/40">
+                                    <tr key={i} className="hover:opacity-90 transition-opacity">
                                       <td className="px-3 py-2 font-mono text-xs">{row.ruleId}</td>
                                       <td className="px-3 py-2">
                                         <SeverityBadge severity={row.severity} size="sm" />
                                       </td>
                                       <td className="px-3 py-2 font-mono text-xs truncate max-w-[200px]" title={row.file}>{row.file}</td>
                                       <td className="px-3 py-2">{row.line || '—'}</td>
-                                      <td className="px-3 py-2 text-slate-300 max-w-md truncate" title={row.message}>{row.message}</td>
+                                      <td className="px-3 py-2 max-w-md truncate" style={tableCellMutedStyle} title={row.message}>{row.message}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -551,9 +525,9 @@ export default function CodeScanDetailPage() {
                           const rows = getGitleaksRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
                           return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                            <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+                                <thead className="border-b" style={tableHeaderStyle}>
                                   <tr>
                                     <th className="px-3 py-2 font-medium">Secret Type</th>
                                     <th className="px-3 py-2 font-medium">File</th>
@@ -561,13 +535,13 @@ export default function CodeScanDetailPage() {
                                     <th className="px-3 py-2 font-medium">Description</th>
                                   </tr>
                                 </thead>
-                                <tbody className="text-slate-200 divide-y divide-slate-700">
+                                <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
                                   {rows.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/40">
+                                    <tr key={i} className="hover:opacity-90 transition-opacity">
                                       <td className="px-3 py-2 font-mono text-xs">{row.secretType}</td>
                                       <td className="px-3 py-2 font-mono text-xs truncate max-w-[200px]" title={row.file}>{row.file}</td>
                                       <td className="px-3 py-2">{row.line || '—'}</td>
-                                      <td className="px-3 py-2 text-slate-300 max-w-md truncate" title={row.description}>{row.description}</td>
+                                      <td className="px-3 py-2 max-w-md truncate" style={tableCellMutedStyle} title={row.description}>{row.description}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -579,9 +553,9 @@ export default function CodeScanDetailPage() {
                           const rows = getTrivyRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
                           return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                            <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+                                <thead className="border-b" style={tableHeaderStyle}>
                                   <tr>
                                     <th className="px-3 py-2 font-medium">CVE</th>
                                     <th className="px-3 py-2 font-medium">Package</th>
@@ -590,16 +564,16 @@ export default function CodeScanDetailPage() {
                                     <th className="px-3 py-2 font-medium">Fixed Version</th>
                                   </tr>
                                 </thead>
-                                <tbody className="text-slate-200 divide-y divide-slate-700">
+                                <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
                                   {rows.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/40">
+                                    <tr key={i} className="hover:opacity-90 transition-opacity">
                                       <td className="px-3 py-2 font-mono text-xs">{row.cve}</td>
                                       <td className="px-3 py-2 font-mono text-xs">{row.package}</td>
-                                      <td className="px-3 py-2 text-slate-300">{row.installedVersion}</td>
+                                      <td className="px-3 py-2" style={tableCellMutedStyle}>{row.installedVersion}</td>
                                       <td className="px-3 py-2">
                                         <SeverityBadge severity={row.severity} size="sm" />
                                       </td>
-                                      <td className="px-3 py-2 text-slate-300">{row.fixedVersion}</td>
+                                      <td className="px-3 py-2" style={tableCellMutedStyle}>{row.fixedVersion}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -611,9 +585,9 @@ export default function CodeScanDetailPage() {
                           const rows = getOsvRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
                           return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                            <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+                                <thead className="border-b" style={tableHeaderStyle}>
                                   <tr>
                                     <th className="px-3 py-2 font-medium">Package</th>
                                     <th className="px-3 py-2 font-medium">ID</th>
@@ -621,15 +595,15 @@ export default function CodeScanDetailPage() {
                                     <th className="px-3 py-2 font-medium">Fixed Version</th>
                                   </tr>
                                 </thead>
-                                <tbody className="text-slate-200 divide-y divide-slate-700">
+                                <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
                                   {rows.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/40">
+                                    <tr key={i} className="hover:opacity-90 transition-opacity">
                                       <td className="px-3 py-2 font-mono text-xs">{row.pkg}</td>
                                       <td className="px-3 py-2 font-mono text-xs">{row.id}</td>
                                       <td className="px-3 py-2">
                                         <SeverityBadge severity={row.severity} size="sm" />
                                       </td>
-                                      <td className="px-3 py-2 text-slate-300">{row.fixedVersion}</td>
+                                      <td className="px-3 py-2" style={tableCellMutedStyle}>{row.fixedVersion}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -643,26 +617,22 @@ export default function CodeScanDetailPage() {
                           return (
                             <div className="space-y-4">
                               <div className="flex flex-wrap items-center gap-4">
-                                <div className="rounded-lg border border-slate-700 bg-slate-800/40 px-4 py-3">
-                                  <p className="text-xs text-slate-400 uppercase tracking-wide">Total components</p>
-                                  <p className="text-xl font-bold text-white">{sbom.totalComponents}</p>
+                                <div className="rounded-xl border px-4 py-3" style={{ background: 'var(--card-2)', borderColor: 'var(--border)' }}>
+                                  <p className="text-xs uppercase tracking-wide" style={{ color: 'var(--muted)' }}>Total components</p>
+                                  <p className="text-xl font-bold" style={{ color: 'var(--text)' }}>{sbom.totalComponents}</p>
                                 </div>
                                 {ecosystems.length > 0 && (
                                   <div className="flex flex-wrap gap-2">
                                     {ecosystems.map(([name, count]) => (
-                                      <span
-                                        key={name}
-                                        className="px-2 py-1 rounded bg-slate-800 border border-slate-600 text-xs text-slate-300"
-                                      >
-                                        {name}: {count}
-                                      </span>
+                                      <Badge key={name} variant="neutral" size="md">{name}: {count}</Badge>
                                     ))}
                                   </div>
                                 )}
                                 <a
                                   href={`data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(currentToolData, null, 2))}`}
                                   download={`sbom-${scanId}.json`}
-                                  className="inline-flex items-center px-3 py-2 rounded-lg border border-slate-600 bg-slate-800 text-slate-200 text-sm hover:bg-slate-700 transition-colors"
+                                  className="inline-flex items-center px-3 py-2 rounded-lg border text-sm transition-colors hover:opacity-90"
+                                  style={{ borderColor: 'var(--border)', background: 'var(--card-2)', color: 'var(--text)' }}
                                 >
                                   Download SBOM
                                 </a>
@@ -675,9 +645,9 @@ export default function CodeScanDetailPage() {
                           const rows = getSarifRows(currentToolData);
                           if (rows.length === 0) return <EmptyState />;
                           return (
-                            <div className="overflow-x-auto rounded-lg border border-slate-700">
+                            <div className="overflow-x-auto rounded-lg border" style={tableBorderStyle}>
                               <table className="w-full text-left text-sm">
-                                <thead className="bg-slate-800/80 text-slate-300 border-b border-slate-700">
+                                <thead className="border-b" style={tableHeaderStyle}>
                                   <tr>
                                     <th className="px-3 py-2 font-medium">Rule ID</th>
                                     <th className="px-3 py-2 font-medium">Level</th>
@@ -686,16 +656,16 @@ export default function CodeScanDetailPage() {
                                     <th className="px-3 py-2 font-medium">Message</th>
                                   </tr>
                                 </thead>
-                                <tbody className="text-slate-200 divide-y divide-slate-700">
+                                <tbody className="divide-y" style={{ ...tableRowStyle, borderColor: 'var(--border)' }}>
                                   {rows.map((row, i) => (
-                                    <tr key={i} className="hover:bg-slate-800/40">
+                                    <tr key={i} className="hover:opacity-90 transition-opacity">
                                       <td className="px-3 py-2 font-mono text-xs">{row.ruleId}</td>
                                       <td className="px-3 py-2">
                                         <SeverityBadge severity={row.level} size="sm" />
                                       </td>
                                       <td className="px-3 py-2 font-mono text-xs truncate max-w-[200px]" title={row.file}>{row.file}</td>
                                       <td className="px-3 py-2">{row.line || '—'}</td>
-                                      <td className="px-3 py-2 text-slate-300 max-w-md truncate" title={row.message}>{row.message}</td>
+                                      <td className="px-3 py-2 max-w-md truncate" style={tableCellMutedStyle} title={row.message}>{row.message}</td>
                                     </tr>
                                   ))}
                                 </tbody>
@@ -704,16 +674,14 @@ export default function CodeScanDetailPage() {
                           );
                         })()}
 
-                        <RawJsonSection data={currentToolData} label={activeTab} />
+                        <JsonViewerPanel data={currentToolData} title="View Raw JSON" maxHeight="400px" />
                       </>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        </main>
+                )}
+              </TabPanel>
+            </Card>
+          </>
+        )}
       </div>
-    </div>
+    </AppShell>
   );
 }
