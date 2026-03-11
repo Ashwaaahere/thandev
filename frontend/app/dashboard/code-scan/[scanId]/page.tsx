@@ -323,7 +323,10 @@ const tableRowStyle = { color: 'var(--text)' };
 const tableCellMutedStyle = { color: 'var(--muted)' };
 
 export default function CodeScanDetailPage() {
-  const { data: session } = useSession();
+  const { data: session } = useSession({
+    required: true,
+    refetchOnWindowFocus: false,
+  });
   const router = useRouter();
   const params = useParams<{ scanId: string }>();
   const scanId = params?.scanId;

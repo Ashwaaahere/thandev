@@ -63,27 +63,24 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
   return (
     <>
       <div
-        className="fixed inset-0 z-40 transition-opacity"
-        style={{ background: 'rgba(0,0,0,0.5)' }}
+        className="fixed inset-0 z-40 bg-black/60"
         aria-hidden
         onClick={onClose}
       />
       <div
-        className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-lg overflow-y-auto shadow-xl"
-        style={{ background: 'var(--card)', borderLeft: '1px solid var(--border)' }}
+        className="fixed top-0 right-0 bottom-0 z-50 w-full max-w-lg overflow-y-auto shadow-xl bg-slate-950 text-slate-100 border-l border-slate-800"
         role="dialog"
         aria-modal
         aria-labelledby="drawer-title"
       >
-        <div className="sticky top-0 flex items-center justify-between border-b px-4 py-3" style={{ background: 'var(--card)', borderColor: 'var(--border)' }}>
-          <h2 id="drawer-title" className="text-lg font-semibold truncate pr-4" style={{ color: 'var(--text)' }}>
+        <div className="sticky top-0 flex items-center justify-between border-b border-slate-800 px-4 py-3 bg-slate-950">
+          <h2 id="drawer-title" className="text-lg font-semibold truncate pr-4">
             Finding details
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg transition-colors hover:opacity-80"
-            style={{ color: 'var(--muted)' }}
+            className="p-2 rounded-lg text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
             aria-label="Close"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -92,14 +89,14 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
           </button>
         </div>
 
-        <div className="p-4 space-y-5">
+        <div className="p-4 space-y-5 text-sm">
           {!finding ? (
-            <p className="text-sm" style={{ color: 'var(--muted)' }}>No finding selected.</p>
+            <p className="text-slate-400">No finding selected.</p>
           ) : (
             <>
               {/* A) Header: Title + badges */}
               <div>
-                <h3 className="text-base font-semibold mb-2" style={{ color: 'var(--text)' }}>{finding.title}</h3>
+                <h3 className="text-base font-semibold mb-2 text-slate-50">{finding.title}</h3>
                 <div className="flex flex-wrap gap-2">
                   <Badge variant="neutral" size="sm">{finding.source_tool}</Badge>
                   <Badge variant="neutral" size="sm">{finding.category}</Badge>
@@ -112,8 +109,8 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
 
               {/* B) Where found */}
               <section>
-                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Where found</h4>
-                <div className="rounded-lg border px-3 py-2 text-sm font-mono" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Where found</h4>
+                <div className="rounded-lg border border-slate-800 px-3 py-2 text-xs font-mono bg-slate-900 text-slate-100">
                   {finding.location.file_path && (
                     <div className="truncate" title={finding.location.file_path}>{finding.location.file_path}</div>
                   )}
@@ -121,10 +118,10 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
                     <div className="truncate" title={finding.location.manifest_path}>{finding.location.manifest_path}</div>
                   )}
                   {(!finding.location.file_path && !finding.location.manifest_path) && (
-                    <span style={{ color: 'var(--muted)' }}>—</span>
+                    <span className="text-slate-500">—</span>
                   )}
                   {(finding.location.start_line != null || finding.location.end_line != null) && (
-                    <div className="text-xs mt-0.5" style={{ color: 'var(--muted)' }}>
+                    <div className="text-[11px] mt-0.5 text-slate-400">
                       Line {finding.location.start_line ?? '?'}
                       {finding.location.end_line != null && finding.location.end_line !== finding.location.start_line && ` – ${finding.location.end_line}`}
                       {finding.location.start_col != null && `, col ${finding.location.start_col}`}
@@ -135,41 +132,41 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
 
               {/* C) Evidence: snippet (code block or redacted) */}
               <section>
-                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Evidence</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Evidence</h4>
                 {finding.evidence?.snippet != null ? (
-                  <div className="rounded-lg border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
-                    <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto" style={{ color: 'var(--text)', background: 'var(--card-2)' }}>
+                  <div className="rounded-lg border border-slate-800 overflow-hidden">
+                    <pre className="p-3 text-xs font-mono whitespace-pre-wrap break-words overflow-x-auto bg-slate-900 text-slate-100">
                       {finding.evidence.snippet}
                     </pre>
                     {finding.evidence.snippet_start_line != null && (
-                      <div className="px-3 py-1 text-[10px]" style={{ color: 'var(--muted)', borderTop: '1px solid var(--border)' }}>
+                      <div className="px-3 py-1 text-[10px] text-slate-400 border-t border-slate-800">
                         Line {finding.evidence.snippet_start_line}
                       </div>
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm" style={{ color: 'var(--muted)' }}>No snippet (redacted or not available).</p>
+                  <p className="text-slate-400">No snippet (redacted or not available).</p>
                 )}
               </section>
 
               {/* D) Impact / Summary */}
               {finding.summary && (
                 <section>
-                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Summary</h4>
-                  <p className="text-sm" style={{ color: 'var(--text)' }}>{finding.summary}</p>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Summary</h4>
+                  <p className="text-slate-100 leading-relaxed">{finding.summary}</p>
                 </section>
               )}
 
               {/* E) Dependency */}
               {(finding.dependency?.package || finding.dependency?.installed_version || finding.dependency?.fixed_version) && (
                 <section>
-                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Dependency</h4>
-                  <div className="rounded-lg border px-3 py-2 text-sm space-y-1" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
-                    {finding.dependency.package && <div><span style={{ color: 'var(--muted)' }}>Package:</span> {finding.dependency.package}</div>}
-                    {finding.dependency.installed_version && <div><span style={{ color: 'var(--muted)' }}>Installed:</span> {finding.dependency.installed_version}</div>}
-                    {finding.dependency.fixed_version && <div><span style={{ color: 'var(--muted)' }}>Fixed:</span> {finding.dependency.fixed_version}</div>}
+                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Dependency</h4>
+                  <div className="rounded-lg border border-slate-800 px-3 py-2 text-xs space-y-1 bg-slate-900 text-slate-100">
+                    {finding.dependency.package && <div><span className="text-slate-400">Package:</span> {finding.dependency.package}</div>}
+                    {finding.dependency.installed_version && <div><span className="text-slate-400">Installed:</span> {finding.dependency.installed_version}</div>}
+                    {finding.dependency.fixed_version && <div><span className="text-slate-400">Fixed:</span> {finding.dependency.fixed_version}</div>}
                     {finding.dependency.dependency_chain && finding.dependency.dependency_chain.length > 0 && (
-                      <div><span style={{ color: 'var(--muted)' }}>Chain:</span> {finding.dependency.dependency_chain.join(' → ')}</div>
+                      <div><span className="text-slate-400">Chain:</span> {finding.dependency.dependency_chain.join(' → ')}</div>
                     )}
                   </div>
                 </section>
@@ -178,11 +175,11 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
               {/* F) Remediation */}
               {(finding.remediation?.recommendation || finding.remediation?.command) && (
                 <section>
-                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Remediation</h4>
-                  <div className="rounded-lg border px-3 py-2 text-sm space-y-1" style={{ borderColor: 'var(--border)', color: 'var(--text)' }}>
+                  <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Remediation</h4>
+                  <div className="rounded-lg border border-slate-800 px-3 py-2 text-xs space-y-1 bg-slate-900 text-slate-100">
                     {finding.remediation.recommendation && <p>{finding.remediation.recommendation}</p>}
                     {finding.remediation.command && (
-                      <pre className="font-mono text-xs mt-1 p-2 rounded" style={{ background: 'var(--card-2)' }}>{finding.remediation.command}</pre>
+                      <pre className="font-mono text-[11px] mt-1 p-2 rounded bg-slate-950">{finding.remediation.command}</pre>
                     )}
                   </div>
                 </section>
@@ -190,7 +187,7 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
 
               {/* G) Identifiers + References */}
               <section>
-                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5" style={{ color: 'var(--muted)' }}>Identifiers & references</h4>
+                <h4 className="text-xs font-semibold uppercase tracking-wide mb-1.5 text-slate-400">Identifiers & references</h4>
                 <div className="flex flex-wrap gap-2 mb-2">
                   {finding.identifiers.rule_id && <Badge variant="neutral" size="sm">{finding.identifiers.rule_id}</Badge>}
                   {[...(finding.identifiers.cve || []), ...(finding.identifiers.ghsa || []), ...(finding.identifiers.osv || [])].map((id) => (
@@ -207,13 +204,13 @@ export default function CodeScanFindingDetailsDrawer({ finding, open, onClose }:
                   ))}
                 </div>
                 {finding.references && finding.references.length > 0 && (
-                  <ul className="list-disc list-inside text-sm space-y-0.5" style={{ color: 'var(--text)' }}>
+                  <ul className="list-disc list-inside text-xs space-y-0.5 text-slate-100">
                     {finding.references.slice(0, 10).map((url, i) => (
                       <li key={i}>
                         <a href={url} target="_blank" rel="noreferrer" className="underline break-all" style={{ color: 'var(--brand)' }}>{url}</a>
                       </li>
                     ))}
-                    {finding.references.length > 10 && <li style={{ color: 'var(--muted)' }}>+{finding.references.length - 10} more</li>}
+                    {finding.references.length > 10 && <li className="text-slate-500">+{finding.references.length - 10} more</li>}
                   </ul>
                 )}
               </section>
