@@ -149,20 +149,36 @@ export default function CodeScanPage() {
     }
     let cancelled = false;
     setLoadingScans(true);
-    (async () => {
+
+    const loadScans = async () => {
       try {
         const data = await thandevFetchJSON<{ items: CodeScanItem[] }>(
           `/api/code-scans/scans?project_id=${encodeURIComponent(selectedProjectId)}&limit=10`,
           session
         );
-        if (!cancelled) setCodeScans(data?.items ?? []);
+        const next = data?.items ?? [];
+        if (cancelled) return;
+        setCodeScans((prev) => {
+          if (prev.length === next.length && JSON.stringify(prev) === JSON.stringify(next)) {
+            return prev;
+          }
+          return next;
+        });
       } catch {
         if (!cancelled) setCodeScans([]);
       } finally {
         if (!cancelled) setLoadingScans(false);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+
+    // Initial load + gentle polling for new data
+    loadScans();
+    const intervalId = window.setInterval(loadScans, 30000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
   }, [session, selectedProjectId]);
 
   const handleLinkRepo = async () => {
@@ -257,21 +273,28 @@ export default function CodeScanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+    <div className="min-h-screen bg-slate-950">
       <DashboardHeader user={session?.user} onMenuClick={() => setSidebarOpen(true)} />
       <div className="flex">
         <DashboardSidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-        <main className="flex-1 p-8 overflow-y-auto">
-          <div className="max-w-4xl mx-auto space-y-8">
-            <h1 className="text-3xl font-bold text-white">Code Scan</h1>
-            <p className="text-slate-300">
-              Connect your CI (GitHub Actions, Bitbucket, GitLab, etc.) to ingest code scan results into Thandev.
-              Link a repo below, then use the workflow snippet in your pipeline.
-            </p>
+        <main className="flex-1 overflow-y-auto">
+          <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
+            <div>
+              <h1 className="text-3xl font-bold text-white">Code Security Scans</h1>
+              <p className="mt-2 text-slate-300 max-w-2xl">
+                Turn every CI run into a security gate. Connect your pipelines once, and Thandev will
+                continuously ingest, normalize, and surface code vulnerabilities for every push.
+              </p>
+            </div>
 
             {/* CI Provider */}
-            <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
-              <h2 className="text-lg font-semibold text-white mb-3">CI Provider</h2>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-3 mb-3">
+                <h2 className="text-lg font-semibold text-white">Connect your CI</h2>
+                <p className="text-xs text-slate-400">
+                  Select where your pipelines run. GitHub Actions is fully supported today.
+                </p>
+              </div>
               <div className="flex flex-wrap gap-3">
                 {CI_PROVIDERS.map((p) => (
                   <button
@@ -294,8 +317,14 @@ export default function CodeScanPage() {
             </div>
 
             {/* Link repo */}
-            <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
-              <h2 className="text-lg font-semibold text-white mb-4">Link repository</h2>
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h2 className="text-lg font-semibold text-white">Authorize repositories</h2>
+                <p className="text-xs text-slate-400 max-w-sm text-right">
+                  Only linked repos can send findings. This prevents noise from untrusted projects and
+                  keeps your code security data clean.
+                </p>
+              </div>
               {loadingProjects ? (
                 <p className="text-slate-400">Loading projects...</p>
               ) : projects.length === 0 ? (
@@ -363,32 +392,61 @@ export default function CodeScanPage() {
             </div>
 
             {/* Recent code scans (provider badge) */}
-            <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-white mb-3">Recent code scans</h2>
               {loadingScans ? (
                 <p className="text-slate-400">Loading...</p>
               ) : codeScans.length === 0 ? (
-                <p className="text-slate-400">No code scans yet. Link a repo and run your CI pipeline.</p>
+                <p className="text-slate-400">
+                  No code scans yet. Link a repository and run your CI pipeline to establish a baseline.
+                </p>
               ) : (
                 <ul className="space-y-2">
                   {codeScans.map((s) => (
                     <li key={s.id}>
                       <Link
                         href={`/dashboard/code-scan/${encodeURIComponent(s.id)}`}
-                        className="flex items-center gap-2 flex-wrap text-slate-200 hover:text-white hover:bg-slate-700/40 rounded-lg px-2 py-1 transition-colors"
+                        className="flex items-center justify-between gap-4 rounded-lg border border-slate-800/80 bg-slate-900/80 px-4 py-3 text-slate-200 hover:border-slate-500 hover:bg-slate-800/80 transition-colors"
                       >
-                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-600">{s.provider}</span>
-                        <span className="font-mono text-sm">{s.repo_full_name}</span>
-                        {s.ref && <span className="text-slate-400 text-xs">{s.ref}</span>}
-                        {s.sha && (
-                          <span
-                            className="text-slate-500 font-mono text-xs truncate max-w-[8ch]"
-                            title={s.sha}
-                          >
-                            {s.sha.slice(0, 7)}
-                          </span>
-                        )}
-                        <span className="text-xs text-slate-500">{s.status}</span>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-700 text-slate-50">
+                              {s.provider}
+                            </span>
+                            <span className="font-mono text-sm truncate max-w-[220px]">
+                              {s.repo_full_name}
+                            </span>
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-400">
+                            <span>
+                              Started: {new Date(s.created_at).toLocaleString()}
+                            </span>
+                            {s.completed_at && (
+                              <span>
+                                Completed: {new Date(s.completed_at).toLocaleString()}
+                              </span>
+                            )}
+                            {s.ref && <span>Ref: {s.ref}</span>}
+                            {s.sha && (
+                              <span className="font-mono" title={s.sha}>
+                                SHA: {s.sha.slice(0, 7)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span
+                          className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                            s.status === 'completed'
+                              ? 'bg-emerald-900/60 text-emerald-200 border border-emerald-600/70'
+                              : s.status === 'running'
+                                ? 'bg-blue-900/60 text-blue-200 border border-blue-600/70'
+                                : s.status === 'failed'
+                                  ? 'bg-red-900/60 text-red-200 border border-red-600/70'
+                                  : 'bg-slate-800 text-slate-200 border border-slate-600/70'
+                          }`}
+                        >
+                          {s.status}
+                        </span>
                       </Link>
                     </li>
                   ))}
@@ -397,7 +455,7 @@ export default function CodeScanPage() {
             </div>
 
             {/* Linked repos list */}
-            <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
+            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-white mb-3">Linked repos</h2>
               {loadingLinked ? (
                 <p className="text-slate-400">Loading...</p>
@@ -504,7 +562,7 @@ export default function CodeScanPage() {
 
             {/* GitHub workflow snippet */}
             {provider === 'github' && (
-              <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-white mb-3">GitHub Actions workflow</h2>
                 <p className="text-slate-400 text-sm mb-3">
                   Set <code className="bg-slate-900 px-1 rounded">THANDEV_BASE_URL</code> in your repo secrets (e.g. https://api.thandev.com).
@@ -518,7 +576,7 @@ export default function CodeScanPage() {
 
             {/* Placeholder for other providers */}
             {provider !== 'github' && (
-              <div className="rounded-xl border p-6 bg-slate-800/50 border-slate-700">
+              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-white mb-2">Setup for {CI_PROVIDERS.find((p) => p.id === provider)?.label ?? provider}</h2>
                 <p className="text-slate-400">Coming soon. Use GitHub Actions for now.</p>
               </div>

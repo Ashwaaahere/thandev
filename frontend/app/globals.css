@@ -210,10 +210,12 @@ select option:hover {
 .cursor-glow{ position:absolute; left:0; top:0; width:0; height:0; pointer-events:none; z-index:1; }
 .cursor-glow::before{
   content:""; position:absolute; left:-120px; top:-120px; width:240px; height:240px; border-radius:9999px;
-  background: radial-gradient(closest-side, rgba(56,189,248,.20), rgba(99,102,241,.18) 55%, transparent 70%);
+  background: radial-gradient(closest-side at 50% 50%, rgba(56,189,248,.20), rgba(99,102,241,.18) 55%, transparent 70%);
   filter: blur(2px);
 }
-.dark .cursor-glow::before{ background: radial-gradient(closest-side, rgba(56,189,248,.25), rgba(99,102,241,.22) 55%, transparent 70%); }
+.dark .cursor-glow::before{
+  background: radial-gradient(closest-side at 50% 50%, rgba(56,189,248,.25), rgba(99,102,241,.22) 55%, transparent 70%);
+}
 
 /* Light mode tweaks for hero aurora to avoid muddy look */
 .hero-aurora { filter: saturate(1.05); }
