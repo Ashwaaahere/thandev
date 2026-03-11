@@ -3,8 +3,7 @@
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
 import { useState, useEffect } from 'react';
-import DashboardHeader from '@/components/Dashboard/DashboardHeader';
-import DashboardSidebar from '@/components/Dashboard/DashboardSidebar';
+import AppShell from '@/components/layout/AppShell';
 import { thandevFetchJSON } from '@/lib/thandevApi';
 
 type Project = { id: string; name: string; target_url?: string };
@@ -273,22 +272,22 @@ export default function CodeScanPage() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950">
-      <DashboardHeader user={session?.user} onMenuClick={() => setSidebarOpen(true)} />
-      <div className="flex">
-        <DashboardSidebar sidebarOpen={sidebarOpen} setSidebarOpen={setSidebarOpen} />
-        <main className="flex-1 overflow-y-auto">
-          <div className="max-w-5xl mx-auto px-8 py-8 space-y-8">
-            <div>
-              <h1 className="text-3xl font-bold text-white">Code Security Scans</h1>
-              <p className="mt-2 text-slate-300 max-w-2xl">
-                Turn every CI run into a security gate. Connect your pipelines once, and Thandev will
-                continuously ingest, normalize, and surface code vulnerabilities for every push.
-              </p>
-            </div>
+    <AppShell
+      user={session?.user}
+      sidebarOpen={sidebarOpen}
+      setSidebarOpen={setSidebarOpen}
+    >
+      <div className="max-w-5xl mx-auto space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold text-white">Code Security Scans</h1>
+          <p className="mt-2 text-slate-300 max-w-2xl">
+            Turn every CI run into a security gate. Connect your pipelines once, and Thandev will
+            continuously ingest, normalize, and surface code vulnerabilities for every push.
+          </p>
+        </div>
 
-            {/* CI Provider */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+        {/* CI Provider */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-3">
                 <h2 className="text-lg font-semibold text-white">Connect your CI</h2>
                 <p className="text-xs text-slate-400">
@@ -316,8 +315,8 @@ export default function CodeScanPage() {
               </div>
             </div>
 
-            {/* Link repo */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+        {/* Link repo */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <div className="flex items-center justify-between gap-3 mb-4">
                 <h2 className="text-lg font-semibold text-white">Authorize repositories</h2>
                 <p className="text-xs text-slate-400 max-w-sm text-right">
@@ -391,8 +390,8 @@ export default function CodeScanPage() {
               )}
             </div>
 
-            {/* Recent code scans (provider badge) */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+        {/* Recent code scans (provider badge) */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-white mb-3">Recent code scans</h2>
               {loadingScans ? (
                 <p className="text-slate-400">Loading...</p>
@@ -454,8 +453,8 @@ export default function CodeScanPage() {
               )}
             </div>
 
-            {/* Linked repos list */}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+        {/* Linked repos list */}
+        <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
               <h2 className="text-lg font-semibold text-white mb-3">Linked repos</h2>
               {loadingLinked ? (
                 <p className="text-slate-400">Loading...</p>
@@ -482,8 +481,8 @@ export default function CodeScanPage() {
               )}
             </div>
 
-            {/* New Project modal */}
-            {newProjectOpen && (
+        {/* New Project modal */}
+        {newProjectOpen && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => !creatingProject && setNewProjectOpen(false)}>
                 <div className="rounded-xl border border-slate-700 bg-slate-800 p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
                   <h3 className="text-lg font-semibold text-white mb-4">New Project</h3>
@@ -531,8 +530,8 @@ export default function CodeScanPage() {
               </div>
             )}
 
-            {/* Unlink confirm modal */}
-            {unlinkConfirm && (
+        {/* Unlink confirm modal */}
+        {unlinkConfirm && (
               <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60" onClick={() => !unlinking && setUnlinkConfirm(null)}>
                 <div className="rounded-xl border border-slate-700 bg-slate-800 p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
                   <h3 className="text-lg font-semibold text-white mb-2">Unlink repo?</h3>
@@ -560,8 +559,8 @@ export default function CodeScanPage() {
               </div>
             )}
 
-            {/* GitHub workflow snippet */}
-            {provider === 'github' && (
+        {/* GitHub workflow snippet */}
+        {provider === 'github' && (
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
                 <h2 className="text-lg font-semibold text-white mb-3">GitHub Actions workflow</h2>
                 <p className="text-slate-400 text-sm mb-3">
@@ -574,16 +573,14 @@ export default function CodeScanPage() {
               </div>
             )}
 
-            {/* Placeholder for other providers */}
-            {provider !== 'github' && (
-              <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-white mb-2">Setup for {CI_PROVIDERS.find((p) => p.id === provider)?.label ?? provider}</h2>
-                <p className="text-slate-400">Coming soon. Use GitHub Actions for now.</p>
-              </div>
-            )}
+        {/* Placeholder for other providers */}
+        {provider !== 'github' && (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-sm">
+            <h2 className="text-lg font-semibold text-white mb-2">Setup for {CI_PROVIDERS.find((p) => p.id === provider)?.label ?? provider}</h2>
+            <p className="text-slate-400">Coming soon. Use GitHub Actions for now.</p>
           </div>
-        </main>
+        )}
       </div>
-    </div>
+    </AppShell>
   );
 }
