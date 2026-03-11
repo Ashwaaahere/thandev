@@ -80,10 +80,7 @@ jobs:
 `;
 
 export default function CodeScanPage() {
-  const { data: session } = useSession({
-    required: true,
-    refetchOnWindowFocus: false,
-  });
+  const { data: session } = useSession();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<string>('');
