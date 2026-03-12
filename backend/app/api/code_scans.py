@@ -10,10 +10,12 @@ import json
 import logging
 import os
 import secrets
+import io
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Header, status, Form, UploadFile, File, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -26,6 +28,7 @@ from app.models.tenant import Tenant
 from app.models.project import Project
 from app.models.linked_repo import LinkedRepo
 from app.models.code_scan import CodeScan
+from app.services.pdf_reports import generate_code_scan_report_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -715,6 +718,45 @@ async def get_scan_finding(
         if f.get("id") == finding_id:
             return CodeFindingOut(**f)
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Finding not found")
+
+
+@router.get("/scans/{scan_id}/report.pdf")
+async def download_code_scan_report_pdf(
+    scan_id: str,
+    mode: str = Query("full", pattern="^(full|executive)$"),
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(require_tenant),
+    current_user: User = Depends(require_approved_user),
+):
+    """
+    Download PDF report for a code scan.
+
+    Requires X-Thandev-Tenant-Id / X-Thandev-User-Id and enforces tenant/project ownership.
+    """
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    # Ensure scan exists and belongs to tenant/user
+    scan = _get_scan_and_ensure_access(scan_id, db, tenant, current_user)
+
+    try:
+        pdf_bytes = generate_code_scan_report_pdf(db, scan.id, tenant, mode=mode)  # type: ignore[arg-type]
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception:
+        logger.exception("Failed to generate PDF report for code scan %s", scan_id)
+        raise HTTPException(status_code=500, detail="Failed to generate code scan PDF report")
+
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename=\"code-scan-{scan_id}-{mode}.pdf\"'
+        },
+    )
 
 
 @router.get("/scans/{scan_id}/sbom")

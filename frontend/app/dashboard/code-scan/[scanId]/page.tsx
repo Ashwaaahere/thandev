@@ -11,7 +11,7 @@ import { TabList, Tab, TabPanel } from '@/components/ui/Tabs';
 import JsonViewerPanel from '@/components/ui/JsonViewerPanel';
 import SeverityBadge from '@/components/Scans/SeverityBadge';
 import CodeScanFindingDetailsDrawer, { type CodeFindingOut } from '@/components/Dashboard/CodeScanFindingDetailsDrawer';
-import { thandevFetchJSON } from '@/lib/thandevApi';
+import { thandevFetchJSON, thandevFetchPDF } from '@/lib/thandevApi';
 
 type FindingsListResponse = {
   counts: { total: number; critical: number; high: number; medium: number; low: number; info: number; secrets: number };
@@ -340,6 +340,38 @@ export default function CodeScanDetailPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [severityFilter, setSeverityFilter] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('');
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+
+  const handleDownloadPdf = async (mode: 'full' | 'executive' = 'full') => {
+    if (!session || !scanId) {
+      alert('Session required. Please log in again.');
+      return;
+    }
+    try {
+      setDownloadingPdf(true);
+      const url =
+        mode === 'executive'
+          ? `/api/code-scans/scans/${encodeURIComponent(scanId)}/report.pdf?mode=executive`
+          : `/api/code-scans/scans/${encodeURIComponent(scanId)}/report.pdf`;
+      const blob = await thandevFetchPDF(url, session);
+      const fileUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = fileUrl;
+      a.download =
+        mode === 'executive'
+          ? `thandev-code-scan-${scanId}-executive.pdf`
+          : `thandev-code-scan-${scanId}-full.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(fileUrl);
+    } catch (e) {
+      console.error('Error downloading code scan PDF:', e);
+      alert('Failed to download code scan report. Please try again.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
 
   useEffect(() => {
     if (!session || !scanId) return;
@@ -502,34 +534,56 @@ export default function CodeScanDetailPage() {
 
             {/* Scan metadata card */}
             <Card className="mb-6">
-              <div className="p-5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{scan.repo_full_name}</span>
-                  {scan.ref && <span className="text-xs" style={{ color: 'var(--muted)' }}>{scan.ref}</span>}
-                  {scan.sha && (
-                    <span className="text-xs font-mono" style={{ color: 'var(--muted)' }} title={scan.sha}>
-                      {scan.sha.slice(0, 7)}
-                    </span>
-                  )}
-                </div>
-                <div className="flex flex-wrap items-center gap-4 text-xs mt-2" style={{ color: 'var(--muted)' }}>
-                  <span>Status: {scan.status}</span>
-                  <span>Created: {new Date(scan.created_at).toLocaleString()}</span>
-                  {scan.completed_at && <span>Completed: {new Date(scan.completed_at).toLocaleString()}</span>}
-                  {runUrl && (
-                    <a href={runUrl} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--brand)' }}>
-                      View CI run
-                    </a>
-                  )}
-                </div>
-                {scan.summary_json && Array.isArray(scan.summary_json.sources) && (
-                  <div className="flex flex-wrap items-center gap-2 text-xs mt-2">
-                    <span style={{ color: 'var(--muted)' }}>Sources:</span>
-                    {(scan.summary_json.sources as string[]).map((src) => (
-                      <Badge key={src} variant="neutral" size="sm">{src}</Badge>
-                    ))}
+              <div className="p-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-sm" style={{ color: 'var(--text)' }}>{scan.repo_full_name}</span>
+                    {scan.ref && <span className="text-xs" style={{ color: 'var(--muted)' }}>{scan.ref}</span>}
+                    {scan.sha && (
+                      <span className="text-xs font-mono" style={{ color: 'var(--muted)' }} title={scan.sha}>
+                        {scan.sha.slice(0, 7)}
+                      </span>
+                    )}
                   </div>
-                )}
+                  <div className="flex flex-wrap items-center gap-4 text-xs mt-2" style={{ color: 'var(--muted)' }}>
+                    <span>Status: {scan.status}</span>
+                    <span>Created: {new Date(scan.created_at).toLocaleString()}</span>
+                    {scan.completed_at && <span>Completed: {new Date(scan.completed_at).toLocaleString()}</span>}
+                    {runUrl && (
+                      <a href={runUrl} target="_blank" rel="noreferrer" className="underline" style={{ color: 'var(--brand)' }}>
+                        View CI run
+                      </a>
+                    )}
+                  </div>
+                  {scan.summary_json && Array.isArray(scan.summary_json.sources) && (
+                    <div className="flex flex-wrap items-center gap-2 text-xs mt-2">
+                      <span style={{ color: 'var(--muted)' }}>Sources:</span>
+                      {(scan.summary_json.sources as string[]).map((src) => (
+                        <Badge key={src} variant="neutral" size="sm">{src}</Badge>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadPdf('executive')}
+                    disabled={downloadingPdf}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ borderColor: 'var(--border)', color: 'var(--fg)' }}
+                  >
+                    {downloadingPdf ? 'Preparing…' : 'Download executive PDF'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadPdf('full')}
+                    disabled={downloadingPdf}
+                    className="px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    style={{ borderColor: 'var(--border)', color: 'var(--fg)' }}
+                  >
+                    {downloadingPdf ? 'Preparing…' : 'Download full PDF'}
+                  </button>
+                </div>
               </div>
             </Card>
 

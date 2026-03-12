@@ -2496,3 +2496,195 @@ def generate_scan_report_pdf(
     pdf_bytes = buf.getvalue()
     buf.close()
     return pdf_bytes
+
+
+def generate_code_scan_report_pdf(
+    db: Session,
+    code_scan_id: str,
+    tenant: Tenant,
+    mode: ReportMode = "full",
+) -> bytes:
+    """
+    Generate a concise PDF report for a CI-ingested code scan.
+
+    The layout is intentionally lighter than full web scan reports:
+    - Cover with repository + pipeline metadata
+    - Severity summary and tool sources
+    - Tabular listing of normalized findings (title, severity, location, identifiers)
+    """
+    from app.models.project import Project
+    from app.models.code_scan import CodeScan
+    from app.services.code_scan_normalizer import normalize_all_findings, get_counts
+
+    # Scope by tenant via project relationship
+    scan = (
+        db.query(CodeScan)
+        .join(Project, CodeScan.project_id == Project.id)
+        .filter(
+            CodeScan.id == code_scan_id,
+            Project.tenant_id == tenant.id,
+        )
+        .first()
+    )
+    if not scan:
+        raise ValueError("Code scan not found for this tenant")
+
+    # Normalized findings from artifacts
+    artifacts = (scan.meta_json or {}).get("artifacts") or {}
+    findings_raw = normalize_all_findings(artifacts, scan.id)
+    counts = get_counts(findings_raw)
+
+    styles = _build_styles()
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=32 * mm,
+        bottomMargin=22 * mm,
+        title="Thandev Code Security Scan Report",
+    )
+
+    story: list = []
+
+    # Cover / summary
+    title_style = styles["Heading1"]
+    subtitle_style = styles["BodyText"]
+    subtitle_style.textColor = COLOR_TEXT_MUTED
+
+    story.append(Paragraph("Thandev Code Security Scan Report", title_style))
+    story.append(Spacer(1, 8))
+
+    repo_text = f"{scan.provider.upper()} · {scan.repo_full_name}"
+    story.append(Paragraph(repo_text, subtitle_style))
+
+    meta_lines = []
+    if scan.ref:
+        meta_lines.append(f"Ref: {scan.ref}")
+    if scan.sha:
+        meta_lines.append(f"Commit: {scan.sha[:7]}")
+    if (scan.meta_json or {}).get("pipeline_run_url"):
+        meta_lines.append(f"Pipeline: {(scan.meta_json or {}).get('pipeline_run_url')}")
+
+    created = scan.created_at.isoformat() if scan.created_at else ""
+    completed = scan.completed_at.isoformat() if scan.completed_at else ""
+    meta_lines.append(f"Started: {created}")
+    if completed:
+        meta_lines.append(f"Completed: {completed}")
+
+    story.append(Spacer(1, 6))
+    for line in meta_lines:
+        story.append(Paragraph(line, subtitle_style))
+    story.append(Spacer(1, 12))
+
+    # Severity summary table
+    sev_header_style = ParagraphStyle(
+        "sev_header",
+        parent=styles["BodyText"],
+        textColor=COLOR_TEXT_PRIMARY,
+        fontSize=10,
+        leading=12,
+        spaceAfter=4,
+    )
+    story.append(Paragraph("Severity summary", sev_header_style))
+
+    sev_rows = [
+        ["Total findings", str(counts.get("total", 0))],
+        ["Critical", str(counts.get("critical", 0))],
+        ["High", str(counts.get("high", 0))],
+        ["Medium", str(counts.get("medium", 0))],
+        ["Low", str(counts.get("low", 0))],
+        ["Info", str(counts.get("info", 0))],
+        ["Secrets (Gitleaks)", str(counts.get("secrets", 0))],
+    ]
+    sev_table = Table(sev_rows, colWidths=[80 * mm, 30 * mm])
+    sev_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), COLOR_LABEL_BG),
+                ("TEXTCOLOR", (0, 0), (-1, 0), COLOR_TEXT_PRIMARY),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica"),
+                ("FONTSIZE", (0, 0), (-1, -1), 9),
+                ("BOTTOMPADDING", (0, 0), (-1, 0), 4),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+                ("BACKGROUND", (0, 1), (-1, -1), COLOR_CARD_BG),
+            ]
+        )
+    )
+    story.append(sev_table)
+    story.append(Spacer(1, 16))
+
+    # Findings table (limited for readability)
+    if findings_raw:
+        story.append(Paragraph("Findings", styles["Heading2"]))
+        story.append(Spacer(1, 6))
+
+        table_data: list = [
+            ["Severity", "Title", "Location", "Identifier"],
+        ]
+        max_rows = 120
+        for f in findings_raw[:max_rows]:
+            sev_key = _severity_label(f.get("severity"))
+            sev_label = sev_key.upper()
+            loc = f.get("location") or {}
+            path = loc.get("file_path") or loc.get("manifest_path") or ""
+            line = loc.get("start_line")
+            location_str = path or ""
+            if line:
+                location_str = f"{location_str}:{line}" if location_str else f"Line {line}"
+
+            identifiers = f.get("identifiers") or {}
+            rule_id = identifiers.get("rule_id")
+            cve = (identifiers.get("cve") or [None])[0]
+            ghsa = (identifiers.get("ghsa") or [None])[0]
+            ident = rule_id or cve or ghsa or ""
+
+            table_data.append(
+                [
+                    sev_label,
+                    f.get("title") or "",
+                    location_str,
+                    ident,
+                ]
+            )
+
+        col_widths = [22 * mm, 70 * mm, 50 * mm, 30 * mm]
+        findings_table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+        # Style: severity pill-like first column, alternating rows
+        ts_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), COLOR_HEADER_BG),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, 0), 9),
+            ("ALIGN", (0, 0), (-1, 0), "LEFT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.lightgrey),
+        ]
+
+        for row_idx in range(1, len(table_data)):
+            if row_idx % 2 == 0:
+                ts_commands.append(
+                    ("BACKGROUND", (0, row_idx), (-1, row_idx), COLOR_ROW_ALT)
+                )
+
+            sev_label = str(table_data[row_idx][0]).lower()
+            sev_key = _severity_label(sev_label)
+            bg = SEVERITY_BG_COLORS.get(sev_key, COLOR_LABEL_BG)
+            fg = SEVERITY_TEXT_COLORS.get(sev_key, COLOR_TEXT_PRIMARY)
+            ts_commands.append(
+                ("BACKGROUND", (0, row_idx), (0, row_idx), bg)
+            )
+            ts_commands.append(
+                ("TEXTCOLOR", (0, row_idx), (0, row_idx), fg)
+            )
+
+        findings_table.setStyle(TableStyle(ts_commands))
+        story.append(findings_table)
+
+    doc.build(story)
+    pdf_bytes = buf.getvalue()
+    buf.close()
+    return pdf_bytes
