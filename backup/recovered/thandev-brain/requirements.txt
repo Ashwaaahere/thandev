@@ -2,7 +2,7 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # RAG Storage (optional - install based on RAG_STORE_TYPE)
 qdrant-client>=1.7.0  # For Qdrant (default)
