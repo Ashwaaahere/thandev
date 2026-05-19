@@ -13,13 +13,13 @@ psycopg2-binary>=2.9.0  # PostgreSQL
 
 # HTTP client (for API calls if needed)
 httpx>=0.27.0
-requests>=2.31.0  # Required for ffuf baseline detection
+requests>=2.33.0  # Required for ffuf baseline detection
 
 # JSON Schema validation (for param validation)
 jsonschema>=4.19.0
 
 # Logging
-python-dotenv>=1.0.0
+python-dotenv>=1.2.2
 
 # Testing
 pytest>=7.4.0
