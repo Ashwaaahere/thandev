@@ -47,7 +47,11 @@ export default function Navbar() {
         </Link>
 
         {/* Desktop Navigation */}
-        <nav className="hidden gap-6 text-sm opacity-80 md:flex">
+        <nav className="hidden gap-6 text-sm opacity-80 md:flex items-center">
+          <Link href="/portfolio" className="text-cyan-400 font-semibold hover:text-cyan-300 transition-colors flex items-center gap-1.5 bg-cyan-950/40 px-2.5 py-1 rounded-md border border-cyan-500/30">
+            <span className="inline-block w-2 h-2 rounded-full bg-cyan-400 animate-pulse"></span>
+            Portfolio
+          </Link>
           {user && <Link href="/dashboard" className="hover:opacity-100">Dashboard</Link>}
           <Link href="/news" className="hover:opacity-100">News</Link>
           {/* Exploit feed button disabled but page kept */}
@@ -124,6 +128,13 @@ export default function Navbar() {
                 📊 Dashboard
               </Link>
             )}
+            <Link
+              href="/portfolio"
+              onClick={closeMobileMenu}
+              className="block px-4 py-3 rounded-lg bg-cyan-950/40 border border-cyan-500/30 text-cyan-300 transition-colors text-sm font-semibold"
+            >
+              🛡️ Security Portfolio
+            </Link>
             <Link
               href="/news"
               onClick={closeMobileMenu}

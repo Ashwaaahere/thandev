@@ -32,7 +32,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Pinging: ${THANDEV_BASE_URL}/api/code-scans/ping"
-          curl -sS -i "${THANDEV_BASE_URL}/api/code-scans/ping" | head -n 30 || true
+          curl -sS -i --connect-timeout 10 --max-time 20 "${THANDEV_BASE_URL}/api/code-scans/ping" | head -n 30 || true
       # -------------------------------
       # OIDC: get GitHub Actions ID token
       # -------------------------------
@@ -77,21 +77,24 @@ jobs:
           PY
           )"
           RESP="$(
-            curl -sS -w "\nHTTP_STATUS=%{http_code}\n" \
+            curl -sS --connect-timeout 10 --max-time 30 --retry 2 --retry-delay 2 -w "\nHTTP_STATUS=%{http_code}\n" \
               -X POST "$URL" \
               -H "Content-Type: application/json" \
-              -d "$JSON_BODY"
+              -d "$JSON_BODY" || echo "HTTP_STATUS=000"
           )"
           STATUS="$(echo "$RESP" | sed -n 's/^HTTP_STATUS=//p')"
           BODY="$(echo "$RESP" | sed '/^HTTP_STATUS=/d')"
           echo "Exchange HTTP: $STATUS"
           echo "Exchange body: $BODY"
           if [ "$STATUS" != "200" ]; then
-            echo "❌ OIDC exchange failed."
-            exit 1
+            echo "⚠️ OIDC exchange failed or backend unreachable (status: $STATUS). Skipping ingest token."
+            echo "access_token=" >> "$GITHUB_OUTPUT"
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+          else
+            ACCESS_TOKEN="$(python -c "import json,sys; print(json.loads(sys.argv[1]).get('access_token',''))" "$BODY")"
+            echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
+            echo "skipped=false" >> "$GITHUB_OUTPUT"
           fi
-          ACCESS_TOKEN="$(python -c "import json,sys; print(json.loads(sys.argv[1])['access_token'])" "$BODY")"
-          echo "access_token=$ACCESS_TOKEN" >> "$GITHUB_OUTPUT"
       # -------------------------------
       # Caching: pip + downloaded binaries
       # -------------------------------
@@ -246,7 +249,7 @@ jobs:
       # Trivy
       # -------------------------------
       - name: Trivy FS (Vuln + Misconfig)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -323,12 +326,13 @@ jobs:
       # Ingest to Thandev
       # -------------------------------
       - name: Ingest to Thandev
+        if: ${{ steps.token.outputs.skipped != 'true' && steps.token.outputs.access_token != '' }}
         shell: bash
         run: |
           set -euo pipefail
           URL="${THANDEV_BASE_URL}/api/code-scans/ingest"
           echo "Ingest URL: $URL"
-          curl -sS -i -X POST "$URL" \
+          curl -sS -i --connect-timeout 10 --max-time 45 -X POST "$URL" \
             -H "Authorization: Bearer ${{ steps.token.outputs.access_token }}" \
             -F "repo=${{ github.repository }}" \
             -F "provider=github" \
@@ -341,4 +345,4 @@ jobs:
             -F "osv_json=@osv.json" \
             -F "trivy_json=@trivy.json" \
             -F "sbom_json=@syft_sbom.json" \
-            | head -n 120
+            | head -n 120 || echo "⚠️ Ingest request failed or timed out."
